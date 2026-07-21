@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="i18n/en.json">../i18n/en.json</file>
+        <file alias="assets/sshit.png">../assets/sshit.png</file>
+    </qresource>
+</RCC>
