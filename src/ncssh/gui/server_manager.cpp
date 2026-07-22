@@ -3,10 +3,11 @@
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/importers.hpp"
 #include "ncssh/core/secrets.hpp"
+#include "ncssh/gui/key_dialog.hpp"
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QFileDialog>
+#include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -22,7 +23,8 @@ namespace ncssh::gui {
 using core::_t;
 using core::ServerProfile;
 
-ServerManagerDialog::ServerManagerDialog(QWidget *parent) : QDialog(parent)
+ServerManagerDialog::ServerManagerDialog(AsyncBridge *bridge, QWidget *parent)
+    : QDialog(parent), m_bridge(bridge)
 {
     setWindowTitle(_t("Server-Profile"));
     resize(720, 480);
@@ -61,11 +63,24 @@ ServerManagerDialog::ServerManagerDialog(QWidget *parent) : QDialog(parent)
     auto *browse = new QPushButton(QStringLiteral("…"), this);
     browse->setFixedWidth(34);
     connect(browse, &QPushButton::clicked, this, [this] {
-        const QString f = QFileDialog::getOpenFileName(this, _t("SSH-Schlüssel wählen"));
+        const QString f = getOpenFileName(this, _t("SSH-Schlüssel wählen"));
         if (!f.isEmpty())
             m_keyPath->setText(f);
     });
     keyRow->addWidget(browse);
+    // Schluessel erzeugen/konvertieren; danach den Pfad ins Profil uebernehmen.
+    auto *keyToolsBtn = new QPushButton(QStringLiteral("🔑"), this);
+    keyToolsBtn->setFixedWidth(34);
+    keyToolsBtn->setToolTip(_t("SSH-Schlüssel erzeugen oder konvertieren"));
+    connect(keyToolsBtn, &QPushButton::clicked, this, [this] {
+        KeyDialog dlg(m_bridge, this);
+        dlg.exec();
+        if (!dlg.savedKeyPath().isEmpty()) {
+            m_keyPath->setText(dlg.savedKeyPath());
+            m_auth->setCurrentText(QStringLiteral("key"));
+        }
+    });
+    keyRow->addWidget(keyToolsBtn);
     m_password = new QLineEdit(this);
     m_password->setEchoMode(QLineEdit::Password);
     m_policy = new QComboBox(this);

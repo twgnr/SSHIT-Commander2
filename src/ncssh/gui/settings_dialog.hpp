@@ -36,6 +36,7 @@ private:
     QSpinBox *m_paneFont = nullptr;
     QLineEdit *m_dateFormat = nullptr;
     QCheckBox *m_hideHidden = nullptr;
+    QCheckBox *m_showIcons = nullptr;
     QCheckBox *m_restoreTabs = nullptr;
     QLineEdit *m_startPath = nullptr;
 

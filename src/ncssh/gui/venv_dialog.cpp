@@ -4,7 +4,8 @@
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QFileDialog>
+#include <QDir>
+#include "ncssh/gui/file_dialogs.hpp"
 #include <QFont>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -41,7 +42,7 @@ VenvDialog::VenvDialog(AsyncBridge *bridge, const QString &projectDir, const QSt
     auto *browse = new QPushButton(QStringLiteral("…"), setupBox);
     browse->setFixedWidth(34);
     connect(browse, &QPushButton::clicked, this, [this] {
-        const QString d = QFileDialog::getExistingDirectory(this, _t("Projektordner"),
+        const QString d = getExistingDirectory(this, _t("Projektordner"),
                                                             m_project->text());
         if (!d.isEmpty()) {
             m_project->setText(d);

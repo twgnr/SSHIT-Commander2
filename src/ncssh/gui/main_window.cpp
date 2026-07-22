@@ -7,6 +7,7 @@
 #include "ncssh/gui/clipboard_manager.hpp"
 #include "ncssh/gui/command_palette.hpp"
 #include "ncssh/gui/help_dialog.hpp"
+#include "ncssh/gui/icons.hpp"
 #include "ncssh/gui/theme_editor_dialog.hpp"
 #include "ncssh/gui/diff_dialog.hpp"
 #include "ncssh/gui/encoding_converter_dialog.hpp"
@@ -200,6 +201,16 @@ void MainWindow::buildMenus()
         themeMenu->addAction(name, this, [this, name] { applyThemeByName(name); });
     }
     view->addAction(_t("Theme-Editor …"), this, &MainWindow::openThemeEditor);
+    view->addSeparator();
+    QAction *previewAct = view->addAction(_t("Vorschau"));
+    previewAct->setCheckable(true);
+    previewAct->setShortcut(QKeySequence(Qt::Key_F2 | Qt::CTRL));
+    connect(previewAct, &QAction::toggled, this, [this](bool on) {
+        for (int i = 0; i < m_tabs->count(); ++i) {
+            if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i)))
+                ws->setPreviewVisible(on);
+        }
+    });
 
     // --- Hilfe ---
     QMenu *help = menuBar()->addMenu(_t("Hilfe"));
@@ -214,11 +225,28 @@ void MainWindow::buildMenus()
                                           "Backend: libssh2."));
     });
 
-    // --- Toolbar ---
+    // --- Toolbar (gezeichnete Icons in der Textfarbe des Themes) ---
     auto *toolbar = addToolBar(_t("Haupt"));
     toolbar->setMovable(false);
-    toolbar->addAction(_t("★ Verbinden"), this, &MainWindow::openServerManager);
-    toolbar->addAction(_t("➕ Tab"), this, [this] { addTab(); });
+    toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toolbar->addAction(themedIcon(QStringLiteral("connect")), _t("Verbinden"), this,
+                       &MainWindow::openServerManager);
+    toolbar->addAction(themedIcon(QStringLiteral("tab")), _t("Neuer Tab"), this,
+                       [this] { addTab(); });
+    toolbar->addSeparator();
+    toolbar->addAction(themedIcon(QStringLiteral("transfers")), _t("Übertragungen"), this,
+                       &MainWindow::openTransfers);
+    toolbar->addAction(themedIcon(QStringLiteral("palette")), _t("Befehle"), this,
+                       &MainWindow::openCommandPalette);
+    toolbar->addAction(themedIcon(QStringLiteral("history")), _t("Verlauf"), this,
+                       &MainWindow::openHistory);
+    toolbar->addAction(themedIcon(QStringLiteral("search")), _t("Suchen"), this,
+                       [this] { openSearch(QStringLiteral("content")); });
+    toolbar->addSeparator();
+    toolbar->addAction(themedIcon(QStringLiteral("settings")), _t("Einstellungen"), this,
+                       &MainWindow::openSettings);
+    toolbar->addAction(themedIcon(QStringLiteral("help")), _t("Hilfe"), this,
+                       [this] { openHelp(1); });
 }
 
 Workspace *MainWindow::addTab()
@@ -243,7 +271,7 @@ Workspace *MainWindow::currentWorkspace() const
 
 void MainWindow::openServerManager()
 {
-    ServerManagerDialog dlg(this);
+    ServerManagerDialog dlg(m_bridge, this);
     if (dlg.exec() == QDialog::Accepted && dlg.chosen()) {
         Workspace *ws = currentWorkspace();
         if (ws)

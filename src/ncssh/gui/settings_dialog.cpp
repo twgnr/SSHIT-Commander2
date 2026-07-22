@@ -10,7 +10,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
-#include <QFileDialog>
+#include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -87,6 +87,10 @@ QWidget *SettingsDialog::buildGeneralTab()
     m_hideHidden->setChecked(core::getSettingBool(QStringLiteral("hide_hidden"), false));
     form->addRow(QString(), m_hideHidden);
 
+    m_showIcons = new QCheckBox(_t("Programm-Logos vor Dateinamen"), page);
+    m_showIcons->setChecked(core::getSettingBool(QStringLiteral("show_file_icons"), true));
+    form->addRow(QString(), m_showIcons);
+
     m_restoreTabs = new QCheckBox(_t("Tabs beim Start wiederherstellen"), page);
     m_restoreTabs->setChecked(core::getSettingBool(QStringLiteral("restore_tabs"), true));
     form->addRow(QString(), m_restoreTabs);
@@ -96,7 +100,7 @@ QWidget *SettingsDialog::buildGeneralTab()
     auto *browse = new QPushButton(QStringLiteral("…"), page);
     browse->setFixedWidth(34);
     connect(browse, &QPushButton::clicked, this, [this] {
-        const QString d = QFileDialog::getExistingDirectory(this, _t("Standard-Startpfad"));
+        const QString d = getExistingDirectory(this, _t("Standard-Startpfad"));
         if (!d.isEmpty())
             m_startPath->setText(d);
     });
@@ -247,6 +251,7 @@ void SettingsDialog::save()
     core::setSetting(QStringLiteral("pane_font_size"), m_paneFont->value());
     core::setSetting(QStringLiteral("date_format"), m_dateFormat->text());
     core::setSetting(QStringLiteral("hide_hidden"), m_hideHidden->isChecked());
+    core::setSetting(QStringLiteral("show_file_icons"), m_showIcons->isChecked());
     core::setSetting(QStringLiteral("restore_tabs"), m_restoreTabs->isChecked());
     core::setSetting(QStringLiteral("start_path"), m_startPath->text());
     core::setSetting(QStringLiteral("ai_enabled"), m_aiEnabled->isChecked());

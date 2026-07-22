@@ -66,6 +66,13 @@ Stand des 1:1-Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 | `githubalarm_dialog` | Repo-Überwachung auf neue Pushes, Token im Schlüsselbund |
 | `macro_manager_dialog` · `macro_key_editor` | Tastenraster mit Layern, Bearbeiten-/Ausführen-Modus, kontextabhängiger Layerwechsel, Icon/Beschriftung/Aktion je Taste inkl. Sequenz-Editor |
 | `minimap` | Editor-Minimap mit sichtbarem Bereich und farbigen Suchtreffern |
+| `dir_chooser` | Ordner-Browser **über die Provider-Abstraktion** — funktioniert auch auf entfernten Servern |
+| `confirm_dialog` | Bestätigung mit Quelle→Ziel vor Kopieren/Verschieben/Löschen; Zielordner wählbar, bei einer Datei auch der Zielname |
+| `key_dialog` | SSH-Schlüssel erzeugen (Ed25519/RSA/ECDSA) und OpenSSH↔PPK konvertieren |
+| `host_key_dialog` | Host-Key-Bestätigung mit Fingerprint, „nur diesmal" vs. „vertrauen und speichern" |
+| `preview_panel` | Vorschau der markierten Datei (Text/Bild) unter der Pane, über *Ansicht → Vorschau* |
+| `file_dialogs` | erzwingt den nicht-nativen Qt-Dialog, damit das App-Theme greift (projektweit eingesetzt) |
+| `icons` · `file_icons` | gezeichnete Vektor-Icons für die Toolbar + echte Shell-Icons je Dateityp |
 
 ## Build & Toolchain
 - CMake + Ninja + MSVC 2022; Qt 6.8.2 (`C:\Qt\6.8.2\msvc2022_64`)
@@ -77,6 +84,25 @@ Stand des 1:1-Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 Dazu im `file_panel`/`workspace` integriert: **Drag & Drop** (zwischen den Panes,
 auch remote, sowie aus dem Explorer), **abdockbare Konsolen-Spalte** („⤢") und der
 **Netzwerk-Modus** einer Pane (`net://` — Hosts aus dem Scanner, Freigaben, Dateien).
+
+## Vollständigkeit
+
+Jedes Modul des Python-Originals hat ein C++-Gegenstück. Einige kleine Module
+wurden bewusst in die Datei zusammengelegt, zu der sie gehören:
+
+| Original | liegt jetzt in |
+|---|---|
+| `clipboard_dialog` | `clipboard_manager` |
+| `code_editor` | `editor_dialog` |
+| `console_widget` | `console_panel` |
+| `filealarm_manager` | `filealarm_dialog` |
+| `githubalarm_manager` | `githubalarm_dialog` |
+| `image_viewer` | `file_panel` (F3) + `preview_panel` |
+| `tunnel_manager` | `tunnel_dialog` |
+| `user_guide_dialog` | `help_dialog` (30 Themen) |
+
+Nicht portiert wurde `src/ncssh/ui/` (die optionale Textual-TUI) — die Qt-GUI ist
+die einzige Oberfläche.
 
 ## Bekannte Einschränkungen
 

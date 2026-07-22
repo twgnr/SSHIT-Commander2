@@ -7,7 +7,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
-#include <QFileDialog>
+#include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -235,7 +235,7 @@ void MacroManagerDialog::buildUi()
     auto *exportBtn = new QPushButton(_t("Exportieren …"), this);
     auto *importBtn = new QPushButton(_t("Importieren …"), this);
     connect(exportBtn, &QPushButton::clicked, this, [this] {
-        const QString path = QFileDialog::getSaveFileName(
+        const QString path = getSaveFileName(
             this, _t("Layer exportieren"), QStringLiteral("macros.json"),
             QStringLiteral("JSON (*.json)"));
         if (path.isEmpty())
@@ -248,7 +248,7 @@ void MacroManagerDialog::buildUi()
         }
     });
     connect(importBtn, &QPushButton::clicked, this, [this] {
-        const QString path = QFileDialog::getOpenFileName(
+        const QString path = getOpenFileName(
             this, _t("Layer importieren"), QString(), QStringLiteral("JSON (*.json)"));
         if (path.isEmpty())
             return;

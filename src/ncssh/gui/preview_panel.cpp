@@ -1,0 +1,132 @@
+#include "ncssh/gui/preview_panel.hpp"
+
+#include "ncssh/core/i18n.hpp"
+
+#include <QFont>
+#include <QLabel>
+#include <QPixmap>
+#include <QPlainTextEdit>
+#include <QStackedWidget>
+#include <QVBoxLayout>
+
+namespace ncssh::gui {
+
+using core::_t;
+
+namespace {
+// Grenze fuer die Vorschau — groessere Dateien werden abgeschnitten.
+constexpr qint64 kPreviewLimit = 200'000;
+
+bool isImageName(const QString &name)
+{
+    static const QStringList exts = {
+        QStringLiteral(".png"), QStringLiteral(".jpg"), QStringLiteral(".jpeg"),
+        QStringLiteral(".gif"), QStringLiteral(".bmp"), QStringLiteral(".webp"),
+        QStringLiteral(".svg"), QStringLiteral(".ico"),
+    };
+    const QString low = name.toLower();
+    for (const QString &ext : exts) {
+        if (low.endsWith(ext))
+            return true;
+    }
+    return false;
+}
+} // namespace
+
+PreviewPanel::PreviewPanel(AsyncBridge *bridge, QWidget *parent)
+    : QWidget(parent), m_bridge(bridge)
+{
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(4, 4, 4, 4);
+    layout->setSpacing(4);
+
+    m_title = new QLabel(_t("Vorschau"), this);
+    m_title->setObjectName(QStringLiteral("Muted"));
+    layout->addWidget(m_title);
+
+    m_stack = new QStackedWidget(this);
+    m_text = new QPlainTextEdit(m_stack);
+    m_text->setReadOnly(true);
+    m_text->setLineWrapMode(QPlainTextEdit::NoWrap);
+    QFont mono(QStringLiteral("Consolas"));
+    mono.setStyleHint(QFont::Monospace);
+    mono.setPointSize(9);
+    m_text->setFont(mono);
+    m_stack->addWidget(m_text);
+
+    m_image = new QLabel(m_stack);
+    m_image->setAlignment(Qt::AlignCenter);
+    m_image->setScaledContents(false);
+    m_stack->addWidget(m_image);
+
+    layout->addWidget(m_stack, 1);
+}
+
+void PreviewPanel::clearPreview()
+{
+    if (m_task) {
+        m_bridge->cancel(m_task);
+        m_task = nullptr;
+    }
+    m_currentPath.clear();
+    m_title->setText(_t("Vorschau"));
+    m_text->clear();
+    m_image->clear();
+    m_stack->setCurrentWidget(m_text);
+}
+
+void PreviewPanel::preview(core::FileSystemProvider *provider, const QString &path)
+{
+    if (!provider || path.isEmpty()) {
+        clearPreview();
+        return;
+    }
+    if (path == m_currentPath)
+        return;
+    m_currentPath = path;
+    const QString name = provider->basename(path);
+    m_title->setText(name);
+
+    if (m_task) {
+        m_bridge->cancel(m_task);
+        m_task = nullptr;
+    }
+
+    if (isImageName(name)) {
+        m_task = m_bridge->run<QByteArray>(
+            [provider, path] { return provider->readBytes(path, 25'000'000); },
+            [this](const QByteArray &data) {
+                QPixmap pixmap;
+                if (pixmap.loadFromData(data)) {
+                    m_image->setPixmap(pixmap.scaled(m_image->size(), Qt::KeepAspectRatio,
+                                                     Qt::SmoothTransformation));
+                    m_stack->setCurrentWidget(m_image);
+                } else {
+                    m_text->setPlainText(_t("Bild nicht lesbar."));
+                    m_stack->setCurrentWidget(m_text);
+                }
+                m_task = nullptr;
+            },
+            [this](const QString &err) {
+                m_text->setPlainText(err);
+                m_stack->setCurrentWidget(m_text);
+                m_task = nullptr;
+            });
+        return;
+    }
+
+    m_task = m_bridge->run<QString>(
+        [provider, path] { return provider->readText(path, kPreviewLimit); },
+        [this](const QString &text) {
+            m_text->setPlainText(text);
+            m_stack->setCurrentWidget(m_text);
+            m_task = nullptr;
+        },
+        [this](const QString &err) {
+            m_text->setPlainText(err);
+            m_stack->setCurrentWidget(m_text);
+            m_task = nullptr;
+        });
+}
+
+} // namespace ncssh::gui

@@ -7,7 +7,7 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDialogButtonBox>
-#include <QFileDialog>
+#include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -436,7 +436,7 @@ void MacroKeyEditor::onActionChanged()
 
 void MacroKeyEditor::pickIcon()
 {
-    const QString file = QFileDialog::getOpenFileName(
+    const QString file = getOpenFileName(
         this, _t("Icon wählen"), m_icon->text(),
         _t("Bilder") + QStringLiteral(" (*.png *.jpg *.jpeg *.bmp *.gif *.svg)"));
     if (!file.isEmpty())

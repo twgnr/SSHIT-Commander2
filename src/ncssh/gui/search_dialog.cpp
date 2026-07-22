@@ -4,7 +4,7 @@
 #include "ncssh/core/search.hpp"
 
 #include <QCheckBox>
-#include <QFileDialog>
+#include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -34,7 +34,7 @@ SearchDialog::SearchDialog(AsyncBridge *bridge, const QString &mode,
     auto *browse = new QPushButton(QStringLiteral("…"), this);
     browse->setFixedWidth(34);
     connect(browse, &QPushButton::clicked, this, [this] {
-        const QString d = QFileDialog::getExistingDirectory(this, _t("Startordner"),
+        const QString d = getExistingDirectory(this, _t("Startordner"),
                                                             m_root->text());
         if (!d.isEmpty())
             m_root->setText(d);

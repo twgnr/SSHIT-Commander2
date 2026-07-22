@@ -4,6 +4,7 @@
 
 #include "ncssh/core/models.hpp"
 #include "ncssh/core/profiles.hpp"
+#include "ncssh/gui/bridge.hpp"
 
 #include <QDialog>
 #include <optional>
@@ -19,7 +20,7 @@ namespace ncssh::gui {
 class ServerManagerDialog : public QDialog {
     Q_OBJECT
 public:
-    explicit ServerManagerDialog(QWidget *parent = nullptr);
+    explicit ServerManagerDialog(AsyncBridge *bridge, QWidget *parent = nullptr);
 
     // Das zum Verbinden gewaehlte Profil (nach Accepted).
     std::optional<core::ServerProfile> chosen() const { return m_chosen; }
@@ -33,6 +34,7 @@ private:
     void onConnect();
     void onImport();
 
+    AsyncBridge *m_bridge;
     core::ProfileStore m_store;
     std::optional<core::ServerProfile> m_chosen;
 

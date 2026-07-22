@@ -2,8 +2,12 @@
 
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/profiles.hpp"
+#include "ncssh/gui/confirm_dialog.hpp"
 #include "ncssh/gui/console_panel.hpp"
+#include "ncssh/gui/dir_chooser.hpp"
 #include "ncssh/gui/file_panel.hpp"
+#include "ncssh/gui/host_key_dialog.hpp"
+#include "ncssh/gui/preview_panel.hpp"
 #include "ncssh/gui/transfer_manager.hpp"
 #include "ncssh/net/transfer.hpp"
 
@@ -36,21 +40,27 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     auto *leftCol = new QSplitter(Qt::Vertical, columns);
     m_leftColumn = leftCol;
     m_leftPanel = new FilePanel(bridge, _t("Lokal"), leftCol);
+    m_leftPreview = new PreviewPanel(bridge, leftCol);
+    m_leftPreview->setVisible(false);   // ueber Ansicht -> Vorschau einblendbar
     m_leftConsole = new ConsolePanel(bridge, _t("Konsole (lokal)"), leftCol);
     leftCol->addWidget(m_leftPanel);
+    leftCol->addWidget(m_leftPreview);
     leftCol->addWidget(m_leftConsole);
     leftCol->setStretchFactor(0, 3);
-    leftCol->setStretchFactor(1, 2);
+    leftCol->setStretchFactor(2, 2);
 
     // Rechte Spalte: remote Pane + Konsole (bis Connect ebenfalls lokal)
     auto *rightCol = new QSplitter(Qt::Vertical, columns);
     m_rightColumn = rightCol;
     m_rightPanel = new FilePanel(bridge, _t("Remote (nicht verbunden)"), rightCol);
+    m_rightPreview = new PreviewPanel(bridge, rightCol);
+    m_rightPreview->setVisible(false);
     m_rightConsole = new ConsolePanel(bridge, _t("Konsole (remote)"), rightCol);
     rightCol->addWidget(m_rightPanel);
+    rightCol->addWidget(m_rightPreview);
     rightCol->addWidget(m_rightConsole);
     rightCol->setStretchFactor(0, 3);
-    rightCol->setStretchFactor(1, 2);
+    rightCol->setStretchFactor(2, 2);
 
     columns->addWidget(leftCol);
     columns->addWidget(rightCol);
@@ -85,6 +95,16 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     // sudo-Modus der rechten Pane: auf das sudo-Dateisystem umschalten.
     connect(m_rightPanel, &FilePanel::sudoToggled, this, &Workspace::setSudoMode);
 
+    // Vorschau-Panel: zeigt die markierte Datei der jeweiligen Pane.
+    connect(m_leftPanel, &FilePanel::selectionChanged, this, [this](const QString &path) {
+        if (m_leftPreview->isVisible())
+            m_leftPreview->preview(m_leftPanel->provider(), path);
+    });
+    connect(m_rightPanel, &FilePanel::selectionChanged, this, [this](const QString &path) {
+        if (m_rightPreview->isVisible())
+            m_rightPreview->preview(m_rightPanel->provider(), path);
+    });
+
     // Abdocken/Andocken der Konsolen-Spalte.
     for (ConsolePanel *console : {m_leftConsole, m_rightConsole}) {
         connect(console, &ConsolePanel::undockRequested, this,
@@ -112,13 +132,13 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
             });
 
     // Transfer: F5 aus einer Pane -> in das Verzeichnis der anderen Pane.
-    connect(m_leftPanel, &FilePanel::transferRequested, this, [this](const QString &src) {
-        startTransfer(m_leftPanel->provider(), src, m_rightPanel->provider(),
-                      m_rightPanel->currentPath());
+    connect(m_leftPanel, &FilePanel::transferRequested, this, [this](const QString &) {
+        confirmAndTransfer(m_leftPanel->provider(), m_leftPanel->selectedPaths(),
+                           m_rightPanel->provider(), m_rightPanel->currentPath());
     });
-    connect(m_rightPanel, &FilePanel::transferRequested, this, [this](const QString &src) {
-        startTransfer(m_rightPanel->provider(), src, m_leftPanel->provider(),
-                      m_leftPanel->currentPath());
+    connect(m_rightPanel, &FilePanel::transferRequested, this, [this](const QString &) {
+        confirmAndTransfer(m_rightPanel->provider(), m_rightPanel->selectedPaths(),
+                           m_leftPanel->provider(), m_leftPanel->currentPath());
     });
 }
 
@@ -132,6 +152,25 @@ Workspace::~Workspace()
 QString Workspace::connectionLabel() const
 {
     return m_session ? m_session->label() : _t("Lokal");
+}
+
+void Workspace::setPreviewVisible(bool visible)
+{
+    m_leftPreview->setVisible(visible);
+    m_rightPreview->setVisible(visible);
+    if (visible) {
+        // Aktuelle Auswahl gleich anzeigen.
+        m_leftPreview->preview(m_leftPanel->provider(), m_leftPanel->selectedPath());
+        m_rightPreview->preview(m_rightPanel->provider(), m_rightPanel->selectedPath());
+    } else {
+        m_leftPreview->clearPreview();
+        m_rightPreview->clearPreview();
+    }
+}
+
+bool Workspace::previewVisible() const
+{
+    return m_leftPreview->isVisible();
 }
 
 QString Workspace::activeOsType() const
@@ -322,11 +361,9 @@ void Workspace::connectTo(const core::ServerProfile &profile)
             emit statusMessage(QStringLiteral("Verbunden: %1 (%2)")
                                    .arg(session->label(), session->osType));
             if (session->hostKeyStatus == QLatin1String("unknown")) {
-                const auto answer = QMessageBox::question(
-                    this, _t("Unbekannter Host-Key"),
-                    QStringLiteral("Fingerprint:\n%1\n\nVertrauen und speichern?")
-                        .arg(session->hostFingerprint));
-                if (answer == QMessageBox::Yes) {
+                // TOFU: Fingerprint zeigen und auf Wunsch dauerhaft merken.
+                if (HostKeyDialog::ask(profile.host, profile.port, session->hostKeyAlgo,
+                                       session->hostFingerprint, this)) {
                     m_sessions->hostkeys.add(profile.host, profile.port,
                                              session->hostFingerprint, session->hostKeyAlgo);
                     m_sessions->hostkeys.save();
@@ -340,12 +377,41 @@ void Workspace::connectTo(const core::ServerProfile &profile)
         });
 }
 
+void Workspace::confirmAndTransfer(core::FileSystemProvider *src,
+                                   const std::vector<QString> &srcPaths,
+                                   core::FileSystemProvider *dst, const QString &dstDir)
+{
+    if (!src || !dst || srcPaths.empty())
+        return;
+    QStringList names, sources;
+    for (const QString &p : srcPaths) {
+        names << src->basename(p);
+        sources << p;
+    }
+    // Zielordner ist vorbelegt, kann aber editiert oder durchsucht werden —
+    // der Browser laeuft ueber den Provider, funktioniert also auch remote.
+    TransferConfirmDialog dlg(
+        _t("Kopieren / Übertragen"), _t("Kopieren"), names, sources,
+        [dst](const QString &dir, const QString &name) { return dst->join(dir, name); },
+        dstDir,
+        [this, dst](const QString &current) -> QString {
+            DirChooserDialog chooser(m_bridge, dst, current, {}, this);
+            return chooser.exec() == QDialog::Accepted ? chooser.chosen() : QString();
+        },
+        {}, this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    for (const auto &[from, to] : dlg.results())
+        startTransfer(src, from, dst, dst->parent(to), dst->basename(to));
+}
+
 void Workspace::startTransfer(core::FileSystemProvider *src, const QString &srcPath,
-                              core::FileSystemProvider *dst, const QString &dstDir)
+                              core::FileSystemProvider *dst, const QString &dstDir,
+                              const QString &overrideName)
 {
     if (!src || !dst || srcPath.isEmpty() || dstDir.isEmpty())
         return;
-    const QString name = src->basename(srcPath);
+    const QString name = overrideName.isEmpty() ? src->basename(srcPath) : overrideName;
     const QString dstPath = dst->join(dstDir, name);
     // Ueber die Transfer-Queue: Fortschritt/Abbruch/Wiederholen im Dialog.
     const int jobId = m_transfers->enqueue(name, src, srcPath, dst, dstPath);

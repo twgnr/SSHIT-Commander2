@@ -1,8 +1,12 @@
 #include "ncssh/gui/file_panel.hpp"
 
 #include "ncssh/core/dateformat.hpp"
+#include "ncssh/core/execfile.hpp"
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/core/settings.hpp"
+#include "ncssh/gui/file_icons.hpp"
 #include "ncssh/gui/bookmarks_dialog.hpp"
+#include "ncssh/gui/confirm_dialog.hpp"
 #include "ncssh/gui/editor_dialog.hpp"
 #include "ncssh/gui/properties_dialog.hpp"
 
@@ -125,6 +129,10 @@ void FilePanel::buildUi(const QString &title)
     connect(m_table, &QTableWidget::cellDoubleClicked, this, &FilePanel::onDoubleClick);
     connect(m_table, &QTableWidget::customContextMenuRequested, this,
             &FilePanel::openContextMenu);
+    // Auswahl an die Vorschau melden.
+    connect(m_table, &QTableWidget::itemSelectionChanged, this, [this] {
+        emit selectionChanged(selectedPath());
+    });
     // Klickbare Spalten-Sortierung
     m_table->horizontalHeader()->setSectionsClickable(true);
     connect(m_table->horizontalHeader(), &QHeaderView::sectionClicked, this,
@@ -243,6 +251,7 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
             QRegularExpression::CaseInsensitiveOption);
     }
 
+    const bool showIcons = core::getSettingBool(QStringLiteral("show_file_icons"), true);
     m_table->setRowCount(0);
     int row = 0;
     qint64 totalSize = 0;
@@ -254,12 +263,26 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
             && !filterRe.match(e.name).hasMatch())
             continue;
         m_table->insertRow(row);
-        QString icon = e.type == EntryType::Parent ? QStringLiteral("↩ ")
-                       : e.isDir()                 ? QStringLiteral("📁 ")
-                       : e.type == EntryType::Symlink ? QStringLiteral("🔗 ")
-                                                      : QStringLiteral("📄 ");
-        auto *nameItem = new QTableWidgetItem(icon + e.name);
+        auto *nameItem = new QTableWidgetItem(e.name);
         nameItem->setData(Qt::UserRole, e.name);
+        // Programm-Logos vor den Dateinamen (abschaltbar in den Einstellungen).
+        if (showIcons) {
+            if (e.type == EntryType::Parent)
+                nameItem->setText(QStringLiteral("↩ ") + e.name);
+            else if (e.isDir())
+                nameItem->setIcon(fileIcons().folder());
+            else
+                nameItem->setIcon(fileIcons().forName(e.name));
+        } else {
+            const QString prefix = e.type == EntryType::Parent ? QStringLiteral("↩ ")
+                                   : e.isDir()                 ? QStringLiteral("📁 ")
+                                   : e.type == EntryType::Symlink ? QStringLiteral("🔗 ")
+                                                                  : QStringLiteral("📄 ");
+            nameItem->setText(prefix + e.name);
+        }
+        // Ausfuehrbare Dateien farbig markieren.
+        if (core::isExecutable(e))
+            nameItem->setForeground(QColor(QStringLiteral("#3fb950")));
         m_table->setItem(row, 0, nameItem);
         m_table->setItem(row, 1, new QTableWidgetItem(
                                      e.isDir() ? QString() : humanSize(e.size)));
@@ -475,11 +498,18 @@ void FilePanel::opDelete()
     const auto paths = selectedPaths();
     if (paths.empty() || !m_provider)
         return;
-    const auto reply = QMessageBox::question(
-        this, _t("Löschen"),
-        QStringLiteral("%1 Element(e) löschen?").arg(paths.size()),
-        QMessageBox::Yes | QMessageBox::No);
-    if (reply != QMessageBox::Yes)
+    // Betroffene Pfade auflisten (keine Ziel-Spalte beim Loeschen).
+    std::vector<PathPair> pairs;
+    for (const QString &p : paths)
+        pairs.emplace_back(p, QString());
+    PathConfirmDialog::Options options;
+    options.showTarget = false;
+    options.confirmText = _t("Löschen");
+    options.sourceHeader = _t("Wird gelöscht");
+    if (!PathConfirmDialog::confirm(
+            _t("Löschen"),
+            QStringLiteral("%1 Element(e) unwiderruflich löschen?").arg(paths.size()),
+            pairs, options, this))
         return;
     core::FileSystemProvider *provider = m_provider;
     m_bridge->run(

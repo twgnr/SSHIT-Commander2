@@ -4,7 +4,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QFileDialog>
+#include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -49,7 +49,7 @@ PluginsDialog::PluginsDialog(QWidget *parent) : QDialog(parent)
     auto *browse = new QPushButton(QStringLiteral("…"), this);
     browse->setFixedWidth(34);
     connect(browse, &QPushButton::clicked, this, [this] {
-        const QString f = QFileDialog::getOpenFileName(this, _t("Programm wählen"),
+        const QString f = getOpenFileName(this, _t("Programm wählen"),
                                                        core::plugins::pluginsDir());
         if (!f.isEmpty())
             m_exe->setText(f);

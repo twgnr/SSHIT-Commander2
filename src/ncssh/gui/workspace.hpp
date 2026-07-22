@@ -23,6 +23,7 @@ namespace ncssh::gui {
 
 class FilePanel;
 class ConsolePanel;
+class PreviewPanel;
 class TransferManager;
 
 class Workspace : public QWidget {
@@ -36,6 +37,10 @@ public:
     void connectTo(const core::ServerProfile &profile);
     bool isConnected() const { return static_cast<bool>(m_session); }
     QString connectionLabel() const;
+
+    // Vorschau-Panels beider Seiten ein-/ausblenden.
+    void setPreviewVisible(bool visible);
+    bool previewVisible() const;
 
     // OS der aktiven Seite ("posix"/"windows") — fuer die Befehlspalette.
     QString activeOsType() const;
@@ -67,7 +72,12 @@ protected:
 
 private:
     void startTransfer(core::FileSystemProvider *src, const QString &srcPath,
-                       core::FileSystemProvider *dst, const QString &dstDir);
+                       core::FileSystemProvider *dst, const QString &dstDir,
+                       const QString &overrideName = {});
+    // F5: Bestaetigungsdialog mit waehlbarem Zielordner, dann uebertragen.
+    void confirmAndTransfer(core::FileSystemProvider *src,
+                            const std::vector<QString> &srcPaths,
+                            core::FileSystemProvider *dst, const QString &dstDir);
     void setSudoMode(bool on);
     // Konsole in ein eigenes Fenster loesen bzw. zurueckholen.
     void undockConsole(ConsolePanel *console);
@@ -91,6 +101,8 @@ private:
 
     FilePanel *m_leftPanel = nullptr;
     FilePanel *m_rightPanel = nullptr;
+    PreviewPanel *m_leftPreview = nullptr;
+    PreviewPanel *m_rightPreview = nullptr;
     ConsolePanel *m_leftConsole = nullptr;
     ConsolePanel *m_rightConsole = nullptr;
     bool m_rightActive = false;  // zuletzt fokussierte Seite

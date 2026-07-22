@@ -4,7 +4,7 @@
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
-#include <QFileDialog>
+#include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -117,7 +117,7 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
     auto *browse = new QPushButton(QStringLiteral("…"), &dlg);
     browse->setFixedWidth(34);
     QObject::connect(browse, &QPushButton::clicked, &dlg, [&dlg, path] {
-        const QString d = QFileDialog::getExistingDirectory(&dlg, _t("Ordner überwachen"),
+        const QString d = getExistingDirectory(&dlg, _t("Ordner überwachen"),
                                                             path->text());
         if (!d.isEmpty())
             path->setText(d);

@@ -2,7 +2,7 @@
 
 #include "ncssh/core/i18n.hpp"
 
-#include <QFileDialog>
+#include "ncssh/gui/file_dialogs.hpp"
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
@@ -77,7 +77,7 @@ void BookmarksDialog::removeSelected()
 
 void BookmarksDialog::exportBookmarks()
 {
-    const QString path = QFileDialog::getSaveFileName(
+    const QString path = getSaveFileName(
         this, _t("Lesezeichen exportieren"), QStringLiteral("bookmarks.json"),
         QStringLiteral("JSON (*.json)"));
     if (path.isEmpty())
@@ -92,7 +92,7 @@ void BookmarksDialog::exportBookmarks()
 
 void BookmarksDialog::importBookmarks()
 {
-    const QString path = QFileDialog::getOpenFileName(
+    const QString path = getOpenFileName(
         this, _t("Lesezeichen importieren"), QString(), QStringLiteral("JSON (*.json)"));
     if (path.isEmpty())
         return;

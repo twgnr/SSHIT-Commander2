@@ -50,6 +50,8 @@ signals:
     void transferRequested(const QString &srcPath);  // F5 aus dieser Pane
     void statusMessage(const QString &msg);
     void sudoToggled(bool on);                    // sudo-Chip umgeschaltet
+    // Auswahl geaendert (fuer das Vorschau-Panel); leer = nichts markiert.
+    void selectionChanged(const QString &path);
     // Drop aus der anderen Pane bzw. aus dem Explorer (lokale Pfade).
     void filesDropped(const QStringList &paths, bool fromExplorer);
 
