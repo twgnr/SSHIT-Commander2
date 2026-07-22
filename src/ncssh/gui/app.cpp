@@ -1,14 +1,17 @@
-// GUI-Einstiegspunkt.  (Port von gui/app.py)
-// HINWEIS: Uebergangsversion fuer den Skelett-Build — wird durch den vollen
-// Port ersetzt, sobald MainWindow und Style portiert sind.
+// GUI-Einstiegspunkt: QApplication + Async-Bruecke + Hauptfenster.
+// (Port von gui/app.py)
 #include "ncssh/gui/app.hpp"
 
+#include "ncssh/core/assets.hpp"
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/bridge.hpp"
+#include "ncssh/gui/main_window.hpp"
+#include "ncssh/gui/style.hpp"
 
 #include <QApplication>
-#include <QMainWindow>
+#include <QIcon>
+#include <QPixmap>
 
 #ifdef Q_OS_WIN
 #  include <windows.h>
@@ -32,14 +35,20 @@ int appMain(int argc, char *argv[])
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("SSHIT-Commander"));
     app.setApplicationDisplayName(QStringLiteral("SSHIT-Commander"));
+
     ncssh::core::setLanguage(ncssh::core::getSettingString(
         QStringLiteral("language"), QStringLiteral("de")));  // vor dem UI-Aufbau
+    applyTheme(&app, ncssh::core::getSettingString(QStringLiteral("theme"),
+                                                   defaultTheme()));
+
+    const QString iconPath = ncssh::core::assetPath(QStringLiteral("sshit.png"));
+    if (!iconPath.isEmpty())
+        app.setWindowIcon(QIcon(QPixmap(iconPath)));
 
     AsyncBridge bridge;
     bridge.start();
 
-    QMainWindow window;  // TODO: MainWindow(bridge) nach Port von main_window.py
-    window.setWindowTitle(QStringLiteral("SSHIT-Commander"));
+    MainWindow window(&bridge);
     window.show();
 
     const int exitCode = app.exec();
