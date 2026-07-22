@@ -14,12 +14,18 @@ namespace ncssh::gui {
 
 class Workspace;
 class TransferManager;
+class ClipboardManager;
+class FileAlarmManager;
+class GithubAlarmManager;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(AsyncBridge *bridge, QWidget *parent = nullptr);
     ~MainWindow() override;
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
 
 private:
     void buildMenus();
@@ -41,11 +47,22 @@ private:
     void openEncodingConverter();
     void openSecurityAudit();
     void openPlugins();
+    void openThemeEditor();
+    void openClipboard();
+    void openHelp(int tab);
+    void openTabFavorites();
+    void openFileAlarms();
+    void openGithubAlarms();
+    void saveSession();      // offene Tabs fuer die Wiederherstellung sichern
+    void restoreSession();
     void applyThemeByName(const QString &name);
 
     AsyncBridge *m_bridge;
     std::unique_ptr<net::SessionManager> m_sessions;
     TransferManager *m_transfers = nullptr;
+    ClipboardManager *m_clipboard = nullptr;
+    FileAlarmManager *m_fileAlarms = nullptr;
+    GithubAlarmManager *m_githubAlarms = nullptr;
     QTabWidget *m_tabs = nullptr;
 };
 

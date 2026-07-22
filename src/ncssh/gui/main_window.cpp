@@ -4,14 +4,20 @@
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/bulk_rename_dialog.hpp"
+#include "ncssh/gui/clipboard_manager.hpp"
 #include "ncssh/gui/command_palette.hpp"
+#include "ncssh/gui/help_dialog.hpp"
+#include "ncssh/gui/theme_editor_dialog.hpp"
 #include "ncssh/gui/diff_dialog.hpp"
 #include "ncssh/gui/encoding_converter_dialog.hpp"
 #include "ncssh/gui/file_panel.hpp"
+#include "ncssh/gui/filealarm_dialog.hpp"
 #include "ncssh/gui/filediff_dialog.hpp"
+#include "ncssh/gui/githubalarm_dialog.hpp"
 #include "ncssh/gui/netscan_dialog.hpp"
 #include "ncssh/gui/plugins_dialog.hpp"
 #include "ncssh/gui/security_dialog.hpp"
+#include "ncssh/gui/tab_favorites_dialog.hpp"
 #include "ncssh/gui/venv_dialog.hpp"
 #include "ncssh/gui/history_dialog.hpp"
 #include "ncssh/gui/known_hosts_dialog.hpp"
@@ -25,8 +31,10 @@
 #include "ncssh/gui/workspace.hpp"
 
 #include <QApplication>
+#include <QCloseEvent>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QIcon>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -45,6 +53,21 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
     m_sessions = std::make_unique<net::SessionManager>();
     m_sessions->hostkeys.load();
     m_transfers = new TransferManager(bridge, this);
+    m_clipboard = new ClipboardManager(this);
+    // Alarme laufen im Hintergrund und melden sich in der Statusleiste.
+    m_fileAlarms = new FileAlarmManager(bridge, this);
+    connect(m_fileAlarms, &FileAlarmManager::event, this,
+            [this](const QString &kind, const QString &path, const QString &name) {
+                statusBar()->showMessage(
+                    QStringLiteral("[%1] %2 — %3").arg(name, kind, path), 15000);
+            });
+    m_githubAlarms = new GithubAlarmManager(bridge, this);
+    connect(m_githubAlarms, &GithubAlarmManager::repoChanged, this,
+            [this](const QString &fullName, const QString &pushedAt) {
+                statusBar()->showMessage(
+                    QStringLiteral("GitHub: %1 — neue Daten (%2)").arg(fullName, pushedAt),
+                    15000);
+            });
 
     setWindowTitle(QStringLiteral("SSHIT-Commander"));
     const QString iconPath = core::assetPath(QStringLiteral("sshit.png"));
@@ -66,7 +89,38 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
 
     buildMenus();
     statusBar()->showMessage(_t("Bereit."));
-    addTab();
+    restoreSession();
+    if (m_tabs->count() == 0)
+        addTab();
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    saveSession();
+    QMainWindow::closeEvent(event);
+}
+
+void MainWindow::saveSession()
+{
+    if (!core::getSettingBool(QStringLiteral("restore_tabs"), true))
+        return;
+    QJsonArray tabs;
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i)))
+            tabs.append(ws->toJson());
+    }
+    core::setSetting(QStringLiteral("session_tabs"), tabs);
+}
+
+void MainWindow::restoreSession()
+{
+    if (!core::getSettingBool(QStringLiteral("restore_tabs"), true))
+        return;
+    const QVariantList saved = core::getSetting(QStringLiteral("session_tabs")).toList();
+    for (const QVariant &v : saved) {
+        Workspace *ws = addTab();
+        ws->restoreFrom(QJsonObject::fromVariantMap(v.toMap()));
+    }
 }
 
 MainWindow::~MainWindow()
@@ -95,6 +149,7 @@ void MainWindow::buildMenus()
     historyAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+H")));
     QAction *tunnelAct = actions->addAction(_t("SSH-Tunnel"), this, &MainWindow::openTunnels);
     tunnelAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+T")));
+    actions->addAction(_t("Tab-Favoriten"), this, &MainWindow::openTabFavorites);
     actions->addSeparator();
     QAction *quitAct = actions->addAction(_t("Beenden"), this, &QWidget::close);
     quitAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Q")));
@@ -124,10 +179,17 @@ void MainWindow::buildMenus()
     tools->addAction(_t("Sicherheits-Audit (CVE)"), this, &MainWindow::openSecurityAudit);
     tools->addAction(_t("Plugins"), this, &MainWindow::openPlugins);
     tools->addSeparator();
+    tools->addAction(_t("Datei-Alarm"), this, &MainWindow::openFileAlarms);
+    tools->addAction(_t("GitHub-Alarm"), this, &MainWindow::openGithubAlarms);
+    tools->addSeparator();
     tools->addAction(_t("Bekannte Host-Keys"), this, &MainWindow::openKnownHosts);
     QAction *settingsAct = tools->addAction(_t("Einstellungen"), this,
                                             &MainWindow::openSettings);
     settingsAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+,")));
+
+    // --- Clipboard ---
+    QMenu *clipboard = menuBar()->addMenu(_t("Clipboard"));
+    clipboard->addAction(_t("Clipboard-Manager"), this, &MainWindow::openClipboard);
 
     // --- Ansicht: Theme ---
     QMenu *view = menuBar()->addMenu(_t("Ansicht"));
@@ -135,9 +197,14 @@ void MainWindow::buildMenus()
     for (const QString &name : themeNames()) {
         themeMenu->addAction(name, this, [this, name] { applyThemeByName(name); });
     }
+    view->addAction(_t("Theme-Editor …"), this, &MainWindow::openThemeEditor);
 
     // --- Hilfe ---
     QMenu *help = menuBar()->addMenu(_t("Hilfe"));
+    QAction *helpAct = help->addAction(_t("Hilfe"), this, [this] { openHelp(1); });
+    helpAct->setShortcut(QKeySequence(Qt::Key_F1));
+    help->addAction(_t("Tastenkürzel"), this, [this] { openHelp(0); });
+    help->addSeparator();
     help->addAction(_t("Über"), this, [this] {
         QMessageBox::about(this, QStringLiteral("SSHIT-Commander"),
                            QStringLiteral("<b>SSHIT-Commander</b> (C++/Qt6-Port)<br>"
@@ -364,6 +431,61 @@ void MainWindow::openPlugins()
 {
     PluginsDialog dlg(this);
     dlg.exec();
+}
+
+void MainWindow::openThemeEditor()
+{
+    ThemeEditorDialog dlg(this);
+    dlg.exec();
+    // Ein gerade gespeichertes Theme sofort anwenden.
+    if (!dlg.savedTheme().isEmpty())
+        applyThemeByName(dlg.savedTheme());
+}
+
+void MainWindow::openClipboard()
+{
+    ClipboardDialog dlg(m_clipboard, this);
+    if (dlg.exec() == QDialog::Accepted && !dlg.chosenText().isEmpty()) {
+        // Gewaehlten Text in die aktive Konsole einfuegen.
+        if (Workspace *ws = currentWorkspace())
+            ws->sendToActiveConsole(dlg.chosenText(), false);
+    }
+}
+
+void MainWindow::openFileAlarms()
+{
+    FileAlarmDialog dlg(m_fileAlarms, this);
+    dlg.exec();
+}
+
+void MainWindow::openGithubAlarms()
+{
+    GithubAlarmDialog dlg(m_githubAlarms, this);
+    dlg.exec();
+}
+
+void MainWindow::openTabFavorites()
+{
+    std::vector<QJsonObject> currentTabs;
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i)))
+            currentTabs.push_back(ws->toJson());
+    }
+    TabFavoritesDialog dlg(currentTabs, this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    // Favorit wiederherstellen: fuer jeden gesicherten Tab einen neuen anlegen.
+    for (const QJsonObject &state : dlg.chosenTabs()) {
+        Workspace *ws = addTab();
+        ws->restoreFrom(state);
+    }
+}
+
+void MainWindow::openHelp(int tab)
+{
+    auto *dlg = new HelpDialog(tab, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->show();
 }
 
 void MainWindow::openTunnels()

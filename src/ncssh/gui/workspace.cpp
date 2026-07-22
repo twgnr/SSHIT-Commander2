@@ -1,6 +1,7 @@
 #include "ncssh/gui/workspace.hpp"
 
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/core/profiles.hpp"
 #include "ncssh/gui/console_panel.hpp"
 #include "ncssh/gui/file_panel.hpp"
 #include "ncssh/gui/transfer_manager.hpp"
@@ -119,6 +120,42 @@ void Workspace::sendToActiveConsole(const QString &command, bool execute)
 FilePanel *Workspace::activePanel() const
 {
     return m_rightActive ? m_rightPanel : m_leftPanel;
+}
+
+QJsonObject Workspace::toJson() const
+{
+    // Nur der Profilname wird gesichert — Geheimnisse bleiben im Keyring.
+    return QJsonObject{
+        {QStringLiteral("profile"), m_session ? m_session->profile.name : QString()},
+        {QStringLiteral("left_path"), m_leftPanel->currentPath()},
+        {QStringLiteral("right_path"), m_rightPanel->currentPath()},
+    };
+}
+
+void Workspace::restoreFrom(const QJsonObject &state)
+{
+    const QString leftPath = state.value(QStringLiteral("left_path")).toString();
+    if (!leftPath.isEmpty())
+        m_leftPanel->navigateTo(leftPath);
+
+    const QString profileName = state.value(QStringLiteral("profile")).toString();
+    if (profileName.isEmpty()) {
+        const QString rightPath = state.value(QStringLiteral("right_path")).toString();
+        if (!rightPath.isEmpty())
+            m_rightPanel->navigateTo(rightPath);
+        return;
+    }
+    // Verbindung aus dem gespeicherten Profil wiederherstellen.
+    core::ProfileStore store;
+    store.load();
+    if (const auto profile = store.get(profileName)) {
+        core::ServerProfile p = *profile;
+        store.hydrate(p);  // Secrets aus dem Keyring nachladen
+        const QString rightPath = state.value(QStringLiteral("right_path")).toString();
+        if (!rightPath.isEmpty())
+            p.startPath = rightPath;
+        connectTo(p);
+    }
 }
 
 void Workspace::connectTo(const core::ServerProfile &profile)

@@ -58,6 +58,12 @@ Stand des 1:1-Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 | `security_dialog` | CVE-Audit: OS/Pakete/sshd/ufw/Ports/Konten + OSV.dev-Abgleich |
 | `plugins_dialog` | Externe Plugins verwalten und testen |
 | `ai_chat_panel` | KI-Chat (lokales Ollama) mit Folgefragen; Buttons in Konsole und Editor |
+| `theme_editor_dialog` | eigene Farbschemata anlegen/bearbeiten/löschen mit Live-Vorschau |
+| `clipboard_manager` | Historie kopierter Texte, Eintrag aktiv setzen/einfügen |
+| `help_dialog` | Tastenkürzel-Übersicht + Handbuch mit Themenliste und Volltextsuche |
+| `tab_favorites_dialog` | Tab-Konstellationen sichern/wiederherstellen |
+| `filealarm_dialog` | Verzeichnis-Überwachung (Polling) mit Ereignisliste |
+| `githubalarm_dialog` | Repo-Überwachung auf neue Pushes, Token im Schlüsselbund |
 
 ## Build & Toolchain
 - CMake + Ninja + MSVC 2022; Qt 6.8.2 (`C:\Qt\6.8.2\msvc2022_64`)
@@ -72,13 +78,11 @@ Die Logik dieser Funktionen ist in `core/` bzw. `net/` **fertig portiert**; es f
 nur die jeweilige Qt-Oberfläche:
 
 - Makro-Manager & Key-Editor (`core/macros` + `core/macroactions` stehen)
-- Datei-/GitHub-Alarm-Dialoge (`core/filealarm` + `core/githubalarm` stehen)
-- Clipboard-Manager, Tab-Favoriten-Dialog (`core/tabfavorites` steht)
-- Theme-Editor-Dialog (`gui/style` bietet die komplette API)
-- Hilfe-/Handbuch-Dialog, Bild-Vorschau, Minimap
+- Bild-Vorschau und Editor-Minimap
 - Netzwerk-Modus einer Pane (`core/netfs` steht; der Scanner-Dialog liefert die Hosts)
 - sudo-Chip pro Pane (`net/sudofs` steht)
 - Drag & Drop zwischen Panes und aus dem Explorer
+- Abdockbare Konsolen-Spalte, Pane-Filter (`Strg+F`), Spalten-Sortierung per Klick
 
 Diese sind reine UI-Schichten auf bereits portierter Logik und lassen sich
 inkrementell ergänzen, ohne die Architektur zu ändern.

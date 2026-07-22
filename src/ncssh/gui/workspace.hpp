@@ -9,6 +9,7 @@
 #include "ncssh/net/session.hpp"
 #include "ncssh/net/ssh.hpp"
 
+#include <QJsonObject>
 #include <QWidget>
 #include <memory>
 
@@ -42,6 +43,10 @@ public:
     // Aktive SSH-Sitzung (leer wenn nicht verbunden) — fuer Tunnel/sudo.
     net::SSHSessionPtr session() const { return m_session; }
     TunnelManager *tunnels() { return &m_tunnels; }
+
+    // Zustand des Tabs fuer Tab-Favoriten / Sitzungswiederherstellung.
+    QJsonObject toJson() const;
+    void restoreFrom(const QJsonObject &state);
 
 signals:
     void statusMessage(const QString &msg);
