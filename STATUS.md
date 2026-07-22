@@ -2,14 +2,14 @@
 
 Stand des 1:1-Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 
-## Vollständig portiert (1:1)
+## Vollständig portiert
 
 ### Fundament
 - `config` · `core/models` · `core/settings` · `core/secrets` (Windows Credential Manager)
 - `core/i18n` (deutscher Quelltext als Schlüssel, EN-Katalog aus `:/i18n/en.json`)
 - `gui/bridge` (Worker-Thread-Pool statt asyncio-Loop, Qt-Signal-Rückgabe + Abbruch-Token)
 
-### core/ (Logik, UI- und netzwerkfrei) — alle Module
+### core/ — alle Module
 `filesystem` · `runner` · `commands` (kompletter Befehlskatalog) · `dataproviders` ·
 `lsparse` · `dateformat` · `natsort` · `profiles` · `history` · `bookmarks` ·
 `hostkeys` · `tabfavorites` · `shortcuts` · `configio` · `bulkrename` · `diff` ·
@@ -21,46 +21,60 @@ Stand des 1:1-Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 `execfile`
 
 ### net/ (asyncssh → libssh2)
-- `ssh` — Verbindung, Host-Key-Prüfung (TOFU/strict/ignore, MITM-Schutz vor der Auth),
+- `ssh` — Verbindung, Host-Key-Prüfung (TOFU/strict/ignore, MITM-Schutz **vor** der Auth),
   Auth per Key/Passwort/Agent, PPK-Auto-Konvertierung, **SFTP-Dateisystem**,
   **Remote-Runner** (Befehl→Ausgabe + echtes PTY), **interaktive PTY-Shell**
-- `session` — Session-Manager · `sudofs` — sudo-Dateisystem · `transfer` — Up-/Download/lokal
-  mit gestreamtem SFTP + Fortschritt · `tunnels` — -L / -R / -D(SOCKS5) über eigene Pump-Threads
-- `ollama` · `cve` (OSV.dev) — HTTP über QNetworkAccessManager
+- `session` · `sudofs` (sudo-Dateisystem) · `transfer` (gestreamtes SFTP mit Fortschritt) ·
+  `tunnels` (-L / -R / -D mit SOCKS5, eigene Pump-Threads)
+- `ollama` · `cve` (OSV.dev)
 
 ### gui/ (PySide6 → Qt6 Widgets)
-- `style` — alle 4 Themes + Theme-Editor-API + QSS 1:1, benutzerdefinierte Themes
-- `bridge` · `app` (Einstiegspunkt) · `main_window` (Tabs, Menüs, Toolbar, Statusleiste, Theme-Wechsel)
-- `workspace` (Tab = zwei Panes + zwei Konsolen + Verbindung, CWD-Sync bidirektional, Transfer per F5)
-- `file_panel` (Pfadzeile, Dateitabelle, Navigation, F3 Ansehen / F4 Bearbeiten /
-  F5 Übertragen / F6 Umbenennen / F7 Ordner / F8 Löschen, Kontextmenü, versteckte Dateien)
-- `console_panel` (Befehl→Ausgabe über den Runner, Historie ↑/↓, CWD-Sync, `cd`-Auflösung, Strg+C)
-- `server_manager` (Profile anlegen/bearbeiten/löschen, Verbinden, Import aus PuTTY/WinSCP/ssh-config)
+| Modul | Inhalt |
+|---|---|
+| `style` | alle 4 Themes + benutzerdefinierte, QSS 1:1, Theme-Editor-API |
+| `app` · `main_window` | Tabs, Menüs (Aktionen/Tools/Ansicht/Hilfe), Toolbar, Statusleiste |
+| `workspace` | Tab = zwei Panes + zwei Konsolen + Verbindung, CWD-Sync bidirektional |
+| `file_panel` | Navigation, F3–F8, Kontextmenü, Eigenschaften, **Lesezeichen ☆/★ pro Server** |
+| `console_panel` | **Modus „Befehle“ ⇄ „Terminal“**, Historie ↑/↓, `cd`-Auflösung, Strg+C |
+| `ansi` | ANSI/VT-Renderer (SGR 16/256/Truecolor, CR/LF, Zeile löschen) |
+| `shell_backends` | lokales PTY über **Windows ConPTY** (ersetzt pywinpty), Remote via SSH-Shell |
+| `terminal_widget` | echtes interaktives Terminal: Farben, Tasten/Steuerzeichen, Scrollback, Copy/Paste |
+| `transfer_manager` · `transfer_dialog` | Queue mit Fortschritt, Tempo, ETA, Verifikation, Abbrechen/Wiederholen |
+| `command_palette` · `command_builder` | sortierbarer Katalog mit OS-Filter + Assistent mit Live-Vorschau und sudo |
+| `history_dialog` | Verlauf & Favoriten |
+| `search_dialog` | Datei-/Inhalts-Suche mit Live-Ergebnissen, Abbruch |
+| `bulk_rename_dialog` | alle Regeln, Live-Vorschau, Konflikte, gefahrlose Reihenfolge |
+| `filediff_dialog` | farbiger Unified-Diff |
+| `settings_dialog` | Allgemein · KI (Ollama testen/Modelle laden) · Tastenkürzel (Dublettenprüfung) |
+| `known_hosts_dialog` | TOFU-Store ansehen/bereinigen |
+| `properties_dialog` | Größe/Owner/Datum + chmod-Editor (rwx + Oktal) |
+| `editor_dialog` · `highlighter` | Editor mit Zeilennummern, Syntax-Highlighting (JSON/XML/YAML/Python/INI/Shell), Suchen/Ersetzen, Gehe-zu-Zeile, Großdatei-Schutz |
+| `tunnel_dialog` | SSH-Tunnel öffnen/stoppen (-L/-R/-D) |
+| `bookmarks_dialog` | Lesezeichen anspringen/entfernen/exportieren/importieren |
 
 ## Build & Toolchain
 - CMake + Ninja + MSVC 2022; Qt 6.8.2 (`C:\Qt\6.8.2\msvc2022_64`)
-- libssh2 1.11 wird via CMake FetchContent gebaut (WinCNG-Crypto, kein OpenSSL nötig)
+- libssh2 1.11 via CMake FetchContent (WinCNG-Crypto, kein OpenSSL nötig)
 - `windeployqt` läuft automatisch nach dem Build
 - Bauen: `.\build.ps1` (bzw. `-Fresh` für Neubau)
+- Konfiguration unter `%APPDATA%\ncssh` — **formatkompatibel** mit der Python-Version
 
-## Bewusst vereinfacht bzw. noch offen (GUI-Detaildialoge)
+## Noch offen (GUI-Zusatzdialoge)
 
-Die **Kern-Architektur und die komplette Logik-/Netzwerkschicht** sind vollständig
-und 1:1 portiert. Bei der Qt-Oberfläche wurde die **tragende Struktur** (Hauptfenster,
-Tabs, Dual-Pane, Konsole, Verbindung, Transfer, Themes) vollständig umgesetzt; einige
-der zahlreichen **Zusatz-Dialoge** des Originals sind noch nicht als eigene C++-Widgets
-ausgeführt und werden über die vorhandenen Menüs/Backends erreichbar gemacht:
+Die Logik dieser Funktionen ist in `core/` bzw. `net/` **fertig portiert**; es fehlt
+nur die jeweilige Qt-Oberfläche:
 
-- Befehlspalette & Befehlsassistent (Backend `core/commands` steht)
-- Massen-Umbenennen-Dialog (Backend `core/bulkrename` steht)
-- Datei-/Inhalts-Suche-Dialog (Backend `core/filesearch` + `core/search` steht)
-- Encoding-Konverter-, Diff-, Sicherheits-Audit-, venv-, Netzscan-, Makro-Manager-,
-  Tunnel-, Transfer-Queue-, Einstellungs-, KI-Chat-, Plugins-, Hilfe-Dialog
-  (jeweiliges Backend ist portiert und aufrufbar)
+- Netzwerk-Scanner-Dialog (`core/netscan` + `core/netfs` stehen)
+- Sicherheits-Audit-Dialog (`core/secaudit` + OSV-Abfrage stehen)
+- venv-Dialog (`core/venvtools` steht)
+- Encoding-Konverter-Dialog (`core/encodings` steht)
+- Verzeichnis-Diff/Sync-Dialog (`core/diff` steht)
+- Makro-Manager & Key-Editor (`core/macros` + `core/macroactions` stehen)
+- KI-Chat-Panel (`core/ai` + `net/ollama` stehen)
+- Datei-/GitHub-Alarm-Dialoge (`core/filealarm` + `core/githubalarm` stehen)
+- Plugins-Dialog (`core/plugins` steht)
+- Clipboard-Manager, Tab-Favoriten-, Theme-Editor-, Hilfe-/Handbuch-Dialog
+- Bild-Vorschau, Minimap, Drag & Drop zwischen Panes
 
-Diese Dialoge sind reine UI-Schichten auf bereits portierter Logik — sie lassen sich
+Diese sind reine UI-Schichten auf bereits portierter Logik und lassen sich
 inkrementell ergänzen, ohne die Architektur zu ändern.
-
-> Hinweis zur Portierung: Die parallele Erstellung mehrerer GUI-Dialoge durch
-> Hintergrund-Agenten wurde durch ein Konto-Ausgabenlimit unterbrochen; der Kern
-> (core + net + tragende GUI) wurde anschließend direkt fertiggestellt und baut sauber.

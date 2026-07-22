@@ -2,6 +2,9 @@
 
 #include "ncssh/core/dateformat.hpp"
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/gui/bookmarks_dialog.hpp"
+#include "ncssh/gui/editor_dialog.hpp"
+#include "ncssh/gui/properties_dialog.hpp"
 
 #include <QComboBox>
 #include <QDateTime>
@@ -66,10 +69,22 @@ void FilePanel::buildUi(const QString &title)
     reload->setFixedWidth(34);
     reload->setToolTip(_t("Neu laden"));
     connect(reload, &QPushButton::clicked, this, &FilePanel::refresh);
+    // Lesezeichen: aktuellen Pfad merken (☆/★) bzw. Liste oeffnen
+    m_starButton = new QPushButton(QStringLiteral("☆"), this);
+    m_starButton->setFixedWidth(34);
+    m_starButton->setToolTip(_t("Pfad als Lesezeichen merken"));
+    connect(m_starButton, &QPushButton::clicked, this, &FilePanel::toggleBookmark);
+    auto *bookmarksBtn = new QPushButton(QStringLiteral("▾"), this);
+    bookmarksBtn->setFixedWidth(28);
+    bookmarksBtn->setToolTip(_t("Lesezeichen"));
+    connect(bookmarksBtn, &QPushButton::clicked, this, &FilePanel::openBookmarks);
     pathRow->addWidget(up);
     pathRow->addWidget(m_pathEdit, 1);
+    pathRow->addWidget(m_starButton);
+    pathRow->addWidget(bookmarksBtn);
     pathRow->addWidget(reload);
     layout->addLayout(pathRow);
+    m_bookmarks.load();
 
     m_table = new QTableWidget(0, 4, this);
     m_table->setHorizontalHeaderLabels(
@@ -148,6 +163,7 @@ void FilePanel::loadDir(const QString &path)
             m_pathEdit->setText(path);
             m_entries = entries;
             populate(entries);
+            updateBookmarkButton();
             emit pathChanged(path);
         },
         [this](const QString &err) {
@@ -249,6 +265,8 @@ void FilePanel::openContextMenu(const QPoint &pos)
     menu.addAction(_t("Umbenennen") + QStringLiteral("\tF6"), this, &FilePanel::opRename);
     menu.addAction(_t("Neuer Ordner") + QStringLiteral("\tF7"), this, &FilePanel::opMkdir);
     menu.addAction(_t("Löschen") + QStringLiteral("\tF8"), this, &FilePanel::opDelete);
+    menu.addSeparator();
+    menu.addAction(_t("Eigenschaften"), this, &FilePanel::opProperties);
     menu.exec(m_table->viewport()->mapToGlobal(pos));
 }
 
@@ -281,32 +299,10 @@ void FilePanel::opEdit()
     const QString path = selectedPath();
     if (path.isEmpty() || !m_provider)
         return;
-    core::FileSystemProvider *provider = m_provider;
-    m_bridge->run<QString>(
-        [provider, path] { return provider->readText(path); },
-        [this, path, provider](const QString &text) {
-            auto *dlg = new QDialog(this);
-            dlg->setAttribute(Qt::WA_DeleteOnClose);
-            dlg->setWindowTitle(_t("Bearbeiten") + QStringLiteral(" — ") + provider->basename(path));
-            dlg->resize(760, 560);
-            auto *lay = new QVBoxLayout(dlg);
-            auto *edit = new QTextEdit(dlg);
-            edit->setPlainText(text);
-            edit->setLineWrapMode(QTextEdit::NoWrap);
-            lay->addWidget(edit);
-            auto *box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, dlg);
-            lay->addWidget(box);
-            connect(box, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
-            connect(box, &QDialogButtonBox::accepted, dlg, [this, dlg, edit, provider, path] {
-                const QString content = edit->toPlainText();
-                m_bridge->run(
-                    [provider, path, content] { provider->writeText(path, content); },
-                    [this, dlg] { emit statusMessage(_t("Gespeichert.")); dlg->accept(); },
-                    [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
-            });
-            dlg->show();
-        },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+    auto *dlg = new EditorDialog(m_bridge, m_provider, path, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    connect(dlg, &QDialog::finished, this, &FilePanel::refresh);
+    dlg->show();
 }
 
 void FilePanel::opMkdir()
@@ -365,6 +361,55 @@ void FilePanel::opDelete()
         },
         [this] { refresh(); },
         [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+}
+
+void FilePanel::opProperties()
+{
+    const QString path = selectedPath();
+    if (path.isEmpty() || !m_provider)
+        return;
+    const QString name = m_provider->basename(path);
+    for (const FileEntry &e : m_entries) {
+        if (e.name == name) {
+            auto *dlg = new PropertiesDialog(m_bridge, m_provider, path, e, this);
+            dlg->setAttribute(Qt::WA_DeleteOnClose);
+            connect(dlg, &QDialog::accepted, this, &FilePanel::refresh);
+            dlg->show();
+            return;
+        }
+    }
+}
+
+void FilePanel::setBookmarkKey(const QString &key)
+{
+    m_bookmarkKey = key;
+    updateBookmarkButton();
+}
+
+void FilePanel::updateBookmarkButton()
+{
+    if (!m_starButton)
+        return;
+    const bool marked = !m_path.isEmpty() && m_bookmarks.contains(m_bookmarkKey, m_path);
+    m_starButton->setText(marked ? QStringLiteral("★") : QStringLiteral("☆"));
+}
+
+void FilePanel::toggleBookmark()
+{
+    if (m_path.isEmpty())
+        return;
+    const bool nowMarked = m_bookmarks.toggle(m_bookmarkKey, m_path);
+    m_bookmarks.save();
+    updateBookmarkButton();
+    emit statusMessage(nowMarked ? _t("Lesezeichen gesetzt.") : _t("Lesezeichen entfernt."));
+}
+
+void FilePanel::openBookmarks()
+{
+    BookmarksDialog dlg(&m_bookmarks, m_bookmarkKey, this);
+    if (dlg.exec() == QDialog::Accepted && !dlg.chosenPath().isEmpty())
+        navigateTo(dlg.chosenPath());
+    updateBookmarkButton();
 }
 
 void FilePanel::toggleHidden()

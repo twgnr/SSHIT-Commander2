@@ -3,8 +3,10 @@
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/gui/console_panel.hpp"
 #include "ncssh/gui/file_panel.hpp"
+#include "ncssh/gui/transfer_manager.hpp"
 #include "ncssh/net/transfer.hpp"
 
+#include <algorithm>
 #include <QDir>
 #include <QMessageBox>
 #include <QSplitter>
@@ -14,8 +16,9 @@ namespace ncssh::gui {
 
 using core::_t;
 
-Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions, QWidget *parent)
-    : QWidget(parent), m_bridge(bridge), m_sessions(sessions)
+Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
+                     TransferManager *transfers, QWidget *parent)
+    : QWidget(parent), m_bridge(bridge), m_sessions(sessions), m_transfers(transfers)
 {
     m_localFs = std::make_unique<core::LocalFileSystem>();
     m_localRunner = std::make_unique<core::LocalCommandRunner>();
@@ -67,6 +70,12 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions, QWidget
     for (ConsolePanel *c : {m_leftConsole, m_rightConsole})
         connect(c, &ConsolePanel::statusMessage, this, &Workspace::statusMessage);
 
+    // Aktive Seite merken (bestimmt Ziel von Befehlspalette/Werkzeugen).
+    connect(m_leftPanel, &FilePanel::activated, this, [this] { m_rightActive = false; });
+    connect(m_rightPanel, &FilePanel::activated, this, [this] { m_rightActive = true; });
+    connect(m_leftConsole, &ConsolePanel::activated, this, [this] { m_rightActive = false; });
+    connect(m_rightConsole, &ConsolePanel::activated, this, [this] { m_rightActive = true; });
+
     // Transfer: F5 aus einer Pane -> in das Verzeichnis der anderen Pane.
     connect(m_leftPanel, &FilePanel::transferRequested, this, [this](const QString &src) {
         startTransfer(m_leftPanel->provider(), src, m_rightPanel->provider(),
@@ -80,6 +89,7 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions, QWidget
 
 Workspace::~Workspace()
 {
+    m_tunnels.stopAll();  // Weiterleitungen vor dem Sessionende schliessen
     if (m_session)
         m_sessions->close(m_session);
 }
@@ -87,6 +97,28 @@ Workspace::~Workspace()
 QString Workspace::connectionLabel() const
 {
     return m_session ? m_session->label() : _t("Lokal");
+}
+
+QString Workspace::activeOsType() const
+{
+    if (m_rightActive && m_session)
+        return m_session->osType;
+#ifdef Q_OS_WIN
+    return QStringLiteral("windows");
+#else
+    return QStringLiteral("posix");
+#endif
+}
+
+void Workspace::sendToActiveConsole(const QString &command, bool execute)
+{
+    ConsolePanel *console = m_rightActive ? m_rightConsole : m_leftConsole;
+    console->runCommand(command, execute);
+}
+
+FilePanel *Workspace::activePanel() const
+{
+    return m_rightActive ? m_rightPanel : m_leftPanel;
 }
 
 void Workspace::connectTo(const core::ServerProfile &profile)
@@ -99,9 +131,13 @@ void Workspace::connectTo(const core::ServerProfile &profile)
             m_remoteFs = session->filesystem();
             m_remoteRunner = session->runner();
             m_rightPanel->setHeaderTitle(session->label());
+            // Lesezeichen getrennt je Verbindung (Profilname).
+            m_rightPanel->setBookmarkKey(profile.name.isEmpty() ? session->label()
+                                                                : profile.name);
             m_rightPanel->setProvider(m_remoteFs.get());
             // Konsole-CWD folgt spaeter dem Pane-Home.
             m_rightConsole->setRunner(m_remoteRunner.get(), QStringLiteral("."));
+            m_rightConsole->setSession(session);  // Terminal-Modus nutzt die SSH-Shell
             emit statusMessage(QStringLiteral("Verbunden: %1 (%2)")
                                    .arg(session->label(), session->osType));
             if (session->hostKeyStatus == QLatin1String("unknown")) {
@@ -130,24 +166,29 @@ void Workspace::startTransfer(core::FileSystemProvider *src, const QString &srcP
         return;
     const QString name = src->basename(srcPath);
     const QString dstPath = dst->join(dstDir, name);
+    // Ueber die Transfer-Queue: Fortschritt/Abbruch/Wiederholen im Dialog.
+    const int jobId = m_transfers->enqueue(name, src, srcPath, dst, dstPath);
     emit statusMessage(QStringLiteral("Übertrage %1 …").arg(name));
-    m_bridge->run(
-        [src, srcPath, dst, dstPath] {
-            net::transferWithProgress(src, srcPath, dst, dstPath,
-                                      [](qint64, qint64) {});
-        },
-        [this, name, dst] {
-            emit statusMessage(QStringLiteral("Übertragen: %1").arg(name));
-            // Ziel-Pane aktualisieren
-            if (dst == m_leftPanel->provider())
-                m_leftPanel->refresh();
-            if (dst == m_rightPanel->provider())
-                m_rightPanel->refresh();
-        },
-        [this](const QString &err) {
-            QMessageBox::warning(this, _t("Transfer-Fehler"), err);
-            emit statusMessage(err);
-        });
+    // Ziel-Pane nach Abschluss aktualisieren.
+    connect(m_transfers, &TransferManager::jobUpdated, this,
+            [this, jobId, dst](int id) {
+                if (id != jobId)
+                    return;
+                const auto &jobs = m_transfers->jobs();
+                auto it = std::find_if(jobs.begin(), jobs.end(),
+                                       [jobId](const net::TransferJob &j) { return j.id == jobId; });
+                if (it == jobs.end() || it->status == QLatin1String("running"))
+                    return;
+                if (it->status == QLatin1String("done")) {
+                    emit statusMessage(QStringLiteral("Übertragen: %1").arg(it->name));
+                    if (dst == m_leftPanel->provider())
+                        m_leftPanel->refresh();
+                    if (dst == m_rightPanel->provider())
+                        m_rightPanel->refresh();
+                } else if (!it->error.isEmpty()) {
+                    emit statusMessage(it->error);
+                }
+            });
 }
 
 } // namespace ncssh::gui

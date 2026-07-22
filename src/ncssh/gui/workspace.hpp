@@ -5,6 +5,7 @@
 #include "ncssh/core/filesystem.hpp"
 #include "ncssh/core/runner.hpp"
 #include "ncssh/gui/bridge.hpp"
+#include "ncssh/gui/tunnel_dialog.hpp"
 #include "ncssh/net/session.hpp"
 #include "ncssh/net/ssh.hpp"
 
@@ -15,17 +16,32 @@ namespace ncssh::gui {
 
 class FilePanel;
 class ConsolePanel;
+class TransferManager;
 
 class Workspace : public QWidget {
     Q_OBJECT
 public:
-    Workspace(AsyncBridge *bridge, net::SessionManager *sessions, QWidget *parent = nullptr);
+    Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
+              TransferManager *transfers, QWidget *parent = nullptr);
     ~Workspace() override;
 
     // Verbindet die rechte Pane mit einem Server (asynchron).
     void connectTo(const core::ServerProfile &profile);
     bool isConnected() const { return static_cast<bool>(m_session); }
     QString connectionLabel() const;
+
+    // OS der aktiven Seite ("posix"/"windows") — fuer die Befehlspalette.
+    QString activeOsType() const;
+    // Befehl in die aktive Konsole einfuegen bzw. ausfuehren.
+    void sendToActiveConsole(const QString &command, bool execute);
+    // Aktive Pane (fuer Werkzeuge wie Massen-Umbenennen).
+    FilePanel *activePanel() const;
+    FilePanel *leftPanel() const { return m_leftPanel; }
+    FilePanel *rightPanel() const { return m_rightPanel; }
+
+    // Aktive SSH-Sitzung (leer wenn nicht verbunden) — fuer Tunnel/sudo.
+    net::SSHSessionPtr session() const { return m_session; }
+    TunnelManager *tunnels() { return &m_tunnels; }
 
 signals:
     void statusMessage(const QString &msg);
@@ -37,6 +53,7 @@ private:
 
     AsyncBridge *m_bridge;
     net::SessionManager *m_sessions;
+    TransferManager *m_transfers;
 
     // Lokale Seite (immer verfuegbar).
     std::unique_ptr<core::LocalFileSystem> m_localFs;
@@ -51,6 +68,8 @@ private:
     FilePanel *m_rightPanel = nullptr;
     ConsolePanel *m_leftConsole = nullptr;
     ConsolePanel *m_rightConsole = nullptr;
+    bool m_rightActive = false;  // zuletzt fokussierte Seite
+    TunnelManager m_tunnels;     // offene Port-Weiterleitungen dieser Sitzung
 };
 
 } // namespace ncssh::gui

@@ -36,6 +36,9 @@ public:
     // Entfernt einen Eintrag anhand seines exakten Speicher-Schluessels.
     void removeKey(const QString &rawKey);
 
+    // Alle Eintraege (Speicher-Schluessel -> Fingerprint) — fuer die Verwaltung.
+    QHash<QString, QString> entries() const { return m_data; }
+
 private:
     static QString key(const QString &host, int port, const QString &algo = {});
 

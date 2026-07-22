@@ -3,13 +3,17 @@
 #include "ncssh/core/history.hpp"
 #include "ncssh/core/i18n.hpp"
 
+#include "ncssh/gui/terminal_widget.hpp"
+
 #include <QFont>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QScrollBar>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 
 namespace ncssh::gui {
@@ -24,11 +28,30 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(6);
 
+    // Kopfzeile mit Modus-Umschalter (Befehle <-> Terminal)
+    auto *headerRow = new QHBoxLayout();
     m_header = new QLabel(title, this);
     m_header->setObjectName(QStringLiteral("ConsoleHeaderTitle"));
-    layout->addWidget(m_header);
+    m_modeButton = new QPushButton(_t("Terminal"), this);
+    m_modeButton->setObjectName(QStringLiteral("Chip"));
+    m_modeButton->setCheckable(true);
+    connect(m_modeButton, &QPushButton::toggled, this, [this](bool on) {
+        if (on) switchToTerminal(); else switchToCommands();
+    });
+    headerRow->addWidget(m_header, 1);
+    headerRow->addWidget(m_modeButton);
+    layout->addLayout(headerRow);
 
-    m_output = new QPlainTextEdit(this);
+    m_stack = new QStackedWidget(this);
+    layout->addWidget(m_stack, 1);
+
+    // Seite 1: Befehle (Ausgabe + Eingabezeile)
+    m_commandPage = new QWidget(m_stack);
+    auto *cmdLayout = new QVBoxLayout(m_commandPage);
+    cmdLayout->setContentsMargins(0, 0, 0, 0);
+    cmdLayout->setSpacing(6);
+
+    m_output = new QPlainTextEdit(m_commandPage);
     m_output->setObjectName(QStringLiteral("ConsoleOutput"));
     m_output->setReadOnly(true);
     QFont mono(QStringLiteral("Consolas"));
@@ -36,18 +59,23 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     mono.setPointSize(10);
     m_output->setFont(mono);
     m_output->setMaximumBlockCount(20000);
-    layout->addWidget(m_output, 1);
+    cmdLayout->addWidget(m_output, 1);
 
     auto *inputRow = new QHBoxLayout();
-    m_prompt = new QLabel(QStringLiteral("$"), this);
+    m_prompt = new QLabel(QStringLiteral("$"), m_commandPage);
     m_prompt->setObjectName(QStringLiteral("Muted"));
-    m_input = new QLineEdit(this);
+    m_input = new QLineEdit(m_commandPage);
     m_input->setFont(mono);
     m_input->installEventFilter(this);
     connect(m_input, &QLineEdit::returnPressed, this, &ConsolePanel::submit);
     inputRow->addWidget(m_prompt);
     inputRow->addWidget(m_input, 1);
-    layout->addLayout(inputRow);
+    cmdLayout->addLayout(inputRow);
+    m_stack->addWidget(m_commandPage);
+
+    // Seite 2: interaktives Terminal (echtes PTY)
+    m_terminal = new TerminalWidget(bridge, m_stack);
+    m_stack->addWidget(m_terminal);
 
     m_historyStore.load();
     m_history = m_historyStore.history();
@@ -62,8 +90,40 @@ void ConsolePanel::setRunner(core::CommandRunner *runner, const QString &cwd)
 
 void ConsolePanel::setCwd(const QString &cwd)
 {
+    const bool changed = (m_cwd != cwd);
     m_cwd = cwd;
     m_prompt->setText(cwd.isEmpty() ? QStringLiteral("$") : cwd + QStringLiteral(" $"));
+    // Beim Verzeichniswechsel der Pane ein 'cd' ins laufende Terminal senden.
+    if (changed && !cwd.isEmpty() && m_terminal->isRunning())
+        m_terminal->sendText(QStringLiteral("cd \"%1\"\r").arg(cwd));
+}
+
+void ConsolePanel::setSession(const net::SSHSessionPtr &session)
+{
+    m_session = session;
+    // Laeuft bereits ein Terminal, mit der neuen Session neu starten.
+    if (m_terminal->isRunning()) {
+        m_terminal->stop();
+        switchToTerminal();
+    }
+}
+
+void ConsolePanel::switchToTerminal()
+{
+    m_stack->setCurrentWidget(m_terminal);
+    if (!m_terminal->isRunning()) {
+        if (m_session)
+            m_terminal->startRemote(m_session);
+        else
+            m_terminal->startLocal();
+    }
+    m_terminal->setFocus();
+}
+
+void ConsolePanel::switchToCommands()
+{
+    m_stack->setCurrentWidget(m_commandPage);
+    m_input->setFocus();
 }
 
 void ConsolePanel::runCommand(const QString &command, bool execute)

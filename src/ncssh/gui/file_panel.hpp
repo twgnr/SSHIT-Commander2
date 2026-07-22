@@ -3,6 +3,7 @@
 // (Port von gui/file_panel.py; funktional zusammengefasst)
 #pragma once
 
+#include "ncssh/core/bookmarks.hpp"
 #include "ncssh/core/filesystem.hpp"
 #include "ncssh/core/models.hpp"
 #include "ncssh/gui/bridge.hpp"
@@ -15,6 +16,7 @@ class QLineEdit;
 class QTableWidget;
 class QLabel;
 class QComboBox;
+class QPushButton;
 
 namespace ncssh::gui {
 
@@ -26,6 +28,9 @@ public:
     // Provider setzen (Eigentum bleibt beim Aufrufer/Workspace).
     void setProvider(core::FileSystemProvider *provider, const QString &startPath = {});
     core::FileSystemProvider *provider() const { return m_provider; }
+
+    // Lesezeichen-Gruppe dieser Pane (Profilname bzw. "local").
+    void setBookmarkKey(const QString &key);
 
     QString currentPath() const { return m_path; }
     QString selectedPath() const;                 // markierte Datei (Vollpfad) oder ""
@@ -56,7 +61,11 @@ private:
     void opMkdir();
     void opDelete();
     void opRename();
+    void opProperties();
     void toggleHidden();
+    void toggleBookmark();
+    void openBookmarks();
+    void updateBookmarkButton();
 
     AsyncBridge *m_bridge;
     core::FileSystemProvider *m_provider = nullptr;
@@ -64,10 +73,14 @@ private:
     std::vector<core::FileEntry> m_entries;
     bool m_showHidden = true;
 
+    core::BookmarkStore m_bookmarks;
+    QString m_bookmarkKey = QStringLiteral("local");
+
     QLabel *m_header = nullptr;
     QLineEdit *m_pathEdit = nullptr;
     QTableWidget *m_table = nullptr;
     QLabel *m_status = nullptr;
+    QPushButton *m_starButton = nullptr;
 };
 
 } // namespace ncssh::gui

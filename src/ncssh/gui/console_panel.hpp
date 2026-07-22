@@ -7,6 +7,8 @@
 #include "ncssh/core/runner.hpp"
 #include "ncssh/gui/bridge.hpp"
 
+#include "ncssh/net/ssh.hpp"
+
 #include <QStringList>
 #include <QWidget>
 #include <memory>
@@ -14,10 +16,13 @@
 class QPlainTextEdit;
 class QLineEdit;
 class QLabel;
+class QStackedWidget;
+class QPushButton;
 
 namespace ncssh::gui {
 
 class FilePanel;
+class TerminalWidget;
 
 class ConsolePanel : public QWidget {
     Q_OBJECT
@@ -28,6 +33,9 @@ public:
     void setRunner(core::CommandRunner *runner, const QString &cwd);
     void setCwd(const QString &cwd);
     QString cwd() const { return m_cwd; }
+
+    // Session fuer den Terminal-Modus (leer = lokale Shell).
+    void setSession(const net::SSHSessionPtr &session);
 
     void runCommand(const QString &command, bool execute = true);
 
@@ -42,12 +50,19 @@ protected:
 private:
     void submit();
     void appendOutput(const QString &text);
+    void switchToTerminal();
+    void switchToCommands();
 
     AsyncBridge *m_bridge;
     core::CommandRunner *m_runner = nullptr;
+    net::SSHSessionPtr m_session;
     QString m_cwd;
 
     QLabel *m_header = nullptr;
+    QStackedWidget *m_stack = nullptr;
+    QWidget *m_commandPage = nullptr;
+    TerminalWidget *m_terminal = nullptr;
+    QPushButton *m_modeButton = nullptr;
     QPlainTextEdit *m_output = nullptr;
     QLineEdit *m_input = nullptr;
     QLabel *m_prompt = nullptr;
