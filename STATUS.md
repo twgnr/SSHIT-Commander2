@@ -4,17 +4,12 @@ Stand des Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 
 > **Wichtige Einordnung.** Die Architektur steht vollständig: jedes Modul des
 > Originals hat ein C++-Gegenstück, der Kern (`core/`, `net/`) ist inhaltlich
-> nachgezogen und durch **132 Tests** abgesichert — damit sind alle 15
-> Testdateien des Originals abgedeckt. Die **Oberfläche ist noch nicht ganz auf
-> dem Stand des Originals**: der Vergleich der i18n-Kataloge zeigt aktuell 329
-> von 1352 Bedienelementen ohne Entsprechung (erste Erhebung: 620).
-> Abgeschlossen sind `settings_dialog`, `search_dialog`, `netscan_dialog`,
-> `console_panel`, `encoding_converter` und `filealarm_dialog`; weitgehend
-> nachgezogen `file_panel`, `server_manager`, `bulk_rename_dialog`,
-> `terminal_widget`, `security_dialog`, `editor_dialog` und `venv_dialog`.
-> Größte verbliebene Baustellen: `main_window`, die Handbuchtexte im
-> `help_dialog` und `macro_manager_dialog`.
-> Vollständige Liste: [GAPS.md](GAPS.md).
+> nachgezogen und durch **138 Tests** abgesichert — alle 15 Testdateien des
+> Originals sind abgedeckt. Von der Oberfläche sind noch **139 Bedienelemente
+> offen** (erste Erhebung: 620). `file_panel` und `server_manager` liegen beim
+> Zeilenverhältnis inzwischen bei 1,0 bzw. darüber; der größte Rückstand bleibt
+> `main_window` (0,40), gefolgt von den Handbuchtexten im `help_dialog` (0,50)
+> und `macro_manager_dialog` (0,58). Vollständige Liste: [GAPS.md](GAPS.md).
 
 ## Portiert
 
@@ -126,7 +121,7 @@ die einzige Oberfläche.
 
 | Original | Port |
 |---|---|
-| `tests/` (15 Dateien, 120 Tests) | `tests/` — eigenes Harness + CTest, **132 Tests**; alle 15 Testdateien abgedeckt |
+| `tests/` (15 Dateien, 120 Tests) | `tests/` — eigenes Harness + CTest, **138 Tests**; alle 15 Testdateien abgedeckt |
 | `smoke_gui.py` | `tests/test_smoke_gui.cpp` — Offscreen-Test der Oberfläche (Kernlogik deckt der Rest ab) |
 | `tools/i18n_extract.py` | portiert — sucht `_t("…")` in den C++-Quellen |
 | `i18n/en.json` | **1106 Schlüssel, 100 % übersetzt**, keine verwaisten Einträge |
@@ -136,10 +131,10 @@ Tests laufen mit `.\test.ps1` (oder `ctest --test-dir build`).
 
 ## Bekannte Einschränkungen
 
-- **Die GUI ist noch nicht ganz auf dem Funktionsumfang des Originals** — 329 von
-  1352 Bedienelementen fehlen bzw. sind anders formuliert (Start: 620).
-  Vollständige Aufstellung in [GAPS.md](GAPS.md). Wake-on-LAN und „RDP öffnen"
-  liegen weiterhin nur im Kern, ohne Menüanbindung.
+- **Die GUI ist noch nicht ganz auf dem Funktionsumfang des Originals** — 139
+  Bedienelemente fehlen (Start: 620). Vollständige Aufstellung in
+  [GAPS.md](GAPS.md); Schwerpunkt `main_window` und die Handbuchtexte.
+- Systemweite Makro-Hotkeys (außerhalb des Fensters) sind nicht umgesetzt.
 - Die libssh2-Schicht (Auth, SFTP, PTY, Tunnel) ist gegen die Semantik des Originals
   gebaut, aber **noch nicht gegen einen echten Server getestet** — dort ist am ehesten
   Nacharbeit zu erwarten.
