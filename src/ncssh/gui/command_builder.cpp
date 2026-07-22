@@ -23,7 +23,7 @@ CommandBuilder::CommandBuilder(const core::CommandSpec &spec, const QString &osT
                                QWidget *parent)
     : QDialog(parent), m_spec(spec), m_osType(osType)
 {
-    setWindowTitle(_t("Befehlsassistent") + QStringLiteral(" — ") + spec.name);
+    setWindowTitle(_t("Assistent — %1").arg(spec.name));
     resize(640, 560);
 
     auto *layout = new QVBoxLayout(this);
@@ -73,9 +73,9 @@ CommandBuilder::CommandBuilder(const core::CommandSpec &spec, const QString &osT
     if (m_osType != QLatin1String("windows")) {
         auto *box = new QGroupBox(_t("Rechte"), this);
         auto *boxLayout = new QHBoxLayout(box);
-        m_sudo = new QCheckBox(QStringLiteral("sudo"), box);
+        m_sudo = new QCheckBox(_t("mit sudo ausführen"), box);
         m_sudoUser = new QLineEdit(box);
-        m_sudoUser->setPlaceholderText(_t("als Benutzer (optional)"));
+        m_sudoUser->setPlaceholderText(_t("als Benutzer (-u), leer = root"));
         m_sudoUser->setEnabled(false);
         connect(m_sudo, &QCheckBox::toggled, this, [this](bool on) {
             m_sudoUser->setEnabled(on);
@@ -105,7 +105,7 @@ CommandBuilder::CommandBuilder(const core::CommandSpec &spec, const QString &osT
 
     auto *buttons = new QHBoxLayout();
     auto *cancel = new QPushButton(_t("Abbrechen"), this);
-    auto *insert = new QPushButton(_t("Einfügen"), this);
+    auto *insert = new QPushButton(_t("In Konsole einfügen"), this);
     auto *run = new QPushButton(_t("Ausführen"), this);
     run->setDefault(true);
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);

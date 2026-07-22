@@ -43,7 +43,7 @@ TabFavoritesDialog::TabFavoritesDialog(const std::vector<QJsonObject> &currentTa
     layout->addWidget(m_status);
 
     auto *buttons = new QHBoxLayout();
-    auto *saveBtn = new QPushButton(_t("Aktuelle Tabs sichern"), this);
+    auto *saveBtn = new QPushButton(_t("Aktuelle Tabs speichern …"), this);
     auto *renameBtn = new QPushButton(_t("Umbenennen"), this);
     auto *removeBtn = new QPushButton(_t("Löschen"), this);
     auto *cancel = new QPushButton(_t("Schließen"), this);
@@ -75,7 +75,7 @@ void TabFavoritesDialog::reload()
     m_list->clear();
     for (const QString &name : m_store.names()) {
         auto *item = new QListWidgetItem(
-            QStringLiteral("%1  (%2 Tabs)").arg(name).arg(m_store.count(name)), m_list);
+            _t("%1  (%2 Tabs)").arg(name).arg(m_store.count(name)), m_list);
         item->setData(Qt::UserRole, name);
     }
     m_status->setText(QStringLiteral("%1 Favorit(en)").arg(m_list->count()));
@@ -84,17 +84,23 @@ void TabFavoritesDialog::reload()
 void TabFavoritesDialog::saveCurrent()
 {
     if (m_currentTabs.empty()) {
-        QMessageBox::information(this, _t("Sichern"), _t("Es sind keine Tabs offen."));
+        QMessageBox::information(this, _t("Favorit speichern"),
+                                 _t("Keine Tabs zum Speichern."));
         return;
     }
     bool ok = false;
-    const QString name = QInputDialog::getText(this, _t("Tab-Favorit sichern"),
+    const QString name = QInputDialog::getText(this, _t("Favorit speichern"),
                                                _t("Name:"), QLineEdit::Normal, QString(), &ok);
-    if (!ok || name.trimmed().isEmpty())
+    if (!ok)
         return;
+    if (name.trimmed().isEmpty()) {
+        QMessageBox::warning(this, _t("Favorit speichern"),
+                             _t("Name bereits vergeben oder ungültig."));
+        return;
+    }
     if (m_store.contains(name.trimmed())
-        && QMessageBox::question(this, _t("Überschreiben"),
-                                 QStringLiteral("\"%1\" existiert bereits. Überschreiben?")
+        && QMessageBox::question(this, _t("Favorit speichern"),
+                                 _t("„%1“ mit den aktuellen Tabs überschreiben?")
                                      .arg(name.trimmed())) != QMessageBox::Yes)
         return;
     m_store.put(name.trimmed(), m_currentTabs);

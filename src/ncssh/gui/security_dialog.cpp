@@ -60,7 +60,7 @@ SecurityDialog::SecurityDialog(AsyncBridge *bridge, net::SSHSessionPtr session, 
     layout->addWidget(info);
 
     m_tree = new QTreeWidget(this);
-    m_tree->setHeaderLabels({_t("Befund"), _t("Schwere"), _t("Detail")});
+    m_tree->setHeaderLabels({_t("Befund"), _t("Schwere"), _t("CVE / Info")});
     m_tree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_tree->header()->setSectionResizeMode(2, QHeaderView::Stretch);
     m_tree->setAlternatingRowColors(true);
@@ -117,7 +117,7 @@ void SecurityDialog::runAudit()
     m_tree->clear();
     m_progress->setVisible(true);
     m_runBtn->setEnabled(false);
-    m_status->setText(_t("Sammle Systemdaten …"));
+    m_status->setText(_t("Scanne …"));
 
     net::SSHSessionPtr session = m_session;
     m_bridge->run<std::vector<Finding>>(
@@ -151,7 +151,7 @@ void SecurityDialog::runAudit()
                     continue;
                 ++securityCount;
                 findings.push_back({_t("Updates"), up.package, QStringLiteral("security"),
-                                    QStringLiteral("→ %1").arg(up.newVersion), {}});
+                                    _t("Sicherheitsupdate → %1").arg(up.newVersion), {}});
             }
             const auto dnfCves = core::parseDnfCves(
                 run(QStringLiteral("dnf updateinfo list cves 2>/dev/null")));
@@ -247,6 +247,15 @@ void SecurityDialog::runAudit()
 
             // --- Online-CVE-Abgleich (OSV.dev) fuer Kernkomponenten ---
             const auto ecosystem = core::osvEcosystem(osId, versionId);
+            if (!ecosystem) {
+                // Ohne bekanntes Ecosystem laesst sich nichts abgleichen — das
+                // gehoert in die Liste, sonst wirkt der Abschnitt einfach leer.
+                findings.push_back(
+                    {QStringLiteral("CVE (OSV.dev)"), _t("Audit nicht möglich"),
+                     QStringLiteral("info"),
+                     _t("Online-CVE-Abgleich (OSV) für diese Distribution nicht verfügbar."),
+                     {}});
+            }
             if (ecosystem) {
                 QJsonArray queries;
                 for (const QString &pkg : core::keyPackages()) {
@@ -260,6 +269,12 @@ void SecurityDialog::runAudit()
                             {QStringLiteral("name"), pkg},
                             {QStringLiteral("ecosystem"), *ecosystem}}},
                         {QStringLiteral("version"), version}});
+                }
+                if (queries.isEmpty()) {
+                    findings.push_back(
+                        {QStringLiteral("CVE (OSV.dev)"), _t("Audit nicht möglich"),
+                         QStringLiteral("info"),
+                         _t("Keine Versionsdaten für den OSV-Abgleich gefunden."), {}});
                 }
                 if (!queries.isEmpty()) {
                     try {
@@ -280,8 +295,10 @@ void SecurityDialog::runAudit()
                             }
                         }
                     } catch (const std::exception &exc) {
-                        findings.push_back({QStringLiteral("CVE (OSV.dev)"), _t("Abfrage fehlgeschlagen"),
-                                            QStringLiteral("info"), QString::fromUtf8(exc.what()), {}});
+                        findings.push_back({QStringLiteral("CVE (OSV.dev)"), _t("Audit nicht möglich"),
+                                            QStringLiteral("info"),
+                                            _t("OSV-Online-Abgleich nicht möglich: %1")
+                                                .arg(QString::fromUtf8(exc.what())), {}});
                     }
                 }
             }

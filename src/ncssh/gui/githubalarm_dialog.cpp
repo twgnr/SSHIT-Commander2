@@ -85,7 +85,7 @@ void GithubAlarmManager::checkNow()
 GithubAlarmDialog::GithubAlarmDialog(GithubAlarmManager *manager, QWidget *parent)
     : QDialog(parent), m_manager(manager)
 {
-    setWindowTitle(_t("GitHub-Alarm"));
+    setWindowTitle(_t("GitHub Repo Alarm"));
     resize(820, 560);
 
     auto *layout = new QVBoxLayout(this);
@@ -104,7 +104,8 @@ GithubAlarmDialog::GithubAlarmDialog(GithubAlarmManager *manager, QWidget *paren
     auto *tokenRow = new QHBoxLayout();
     m_token = new QLineEdit(this);
     m_token->setEchoMode(QLineEdit::Password);
-    m_token->setPlaceholderText(_t("optional — erhöht das API-Limit"));
+    m_token->setPlaceholderText(
+        _t("GitHub-Token (für private Repos / höheres Limit):"));
     if (!core::githubGetToken().isEmpty())
         m_token->setText(core::githubGetToken());
     auto *tokenBtn = new QPushButton(_t("Token speichern"), this);
@@ -122,7 +123,8 @@ GithubAlarmDialog::GithubAlarmDialog(GithubAlarmManager *manager, QWidget *paren
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     layout->addWidget(m_table, 2);
 
-    layout->addWidget(new QLabel(_t("Ereignisse"), this));
+    layout->addWidget(new QLabel(
+        _t("Überwachte Repositories — Häkchen schaltet an/aus:"), this));
     m_events = new QListWidget(this);
     layout->addWidget(m_events, 1);
     connect(manager, &GithubAlarmManager::repoChanged, this,
@@ -180,7 +182,7 @@ void GithubAlarmDialog::addRepo()
     const auto parsed = core::parseRepoInput(m_input->text());
     if (!parsed) {
         QMessageBox::warning(this, _t("Fehler"),
-                             _t("Eingabe nicht erkannt. Erwartet: owner/repo oder GitHub-URL."));
+                             _t("Bitte ein gültiges Repo angeben (owner/repo)."));
         return;
     }
     RepoSpec spec;

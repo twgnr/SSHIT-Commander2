@@ -22,7 +22,7 @@ static QString statusLabel(const QString &status)
     if (status == QLatin1String("right_only")) return _t("nur rechts");
     if (status == QLatin1String("newer_left")) return _t("links neuer");
     if (status == QLatin1String("newer_right")) return _t("rechts neuer");
-    if (status == QLatin1String("same")) return _t("gleich");
+    if (status == QLatin1String("same")) return _t("identisch");
     if (status == QLatin1String("dir")) return _t("Ordner");
     return status;
 }
@@ -42,11 +42,17 @@ DiffDialog::DiffDialog(AsyncBridge *bridge, TransferManager *transfers,
     : QDialog(parent), m_bridge(bridge), m_transfers(transfers),
       m_left(left), m_leftPath(leftPath), m_right(right), m_rightPath(rightPath)
 {
-    setWindowTitle(_t("Verzeichnis-Vergleich"));
+    setWindowTitle(_t("Verzeichnisvergleich"));
     resize(900, 600);
 
     auto *layout = new QVBoxLayout(this);
-    auto *header = new QLabel(QStringLiteral("%1  ↔  %2").arg(leftPath, rightPath), this);
+    // Beide Seiten mit Provider-Label nennen — bei zwei Remote-Panes ist der
+    // blosse Pfad sonst mehrdeutig.
+    auto *header = new QLabel(
+        _t("Links: [%1] %2    ·    Rechts: [%3] %4")
+            .arg(left ? left->label : QString(), leftPath,
+                 right ? right->label : QString(), rightPath),
+        this);
     header->setObjectName(QStringLiteral("Muted"));
     header->setWordWrap(true);
     layout->addWidget(header);
@@ -77,9 +83,9 @@ DiffDialog::DiffDialog(AsyncBridge *bridge, TransferManager *transfers,
     layout->addWidget(m_status);
 
     auto *buttons = new QHBoxLayout();
-    auto *toRight = new QPushButton(_t("→ nach rechts kopieren"), this);
-    auto *toLeft = new QPushButton(_t("← nach links kopieren"), this);
-    auto *refresh = new QPushButton(_t("Neu vergleichen"), this);
+    auto *toRight = new QPushButton(_t("→ Rechts angleichen"), this);
+    auto *toLeft = new QPushButton(_t("← Links angleichen"), this);
+    auto *refresh = new QPushButton(_t("Aktualisieren"), this);
     auto *closeBtn = new QPushButton(_t("Schließen"), this);
     closeBtn->setDefault(true);
     connect(toRight, &QPushButton::clicked, this, [this] { copySelected(true); });
@@ -98,7 +104,8 @@ DiffDialog::DiffDialog(AsyncBridge *bridge, TransferManager *transfers,
 
 void DiffDialog::compare()
 {
-    m_status->setText(_t("Vergleiche …"));
+    m_status->setText(m_recursive->isChecked() ? _t("Vergleiche rekursiv …")
+                                              : _t("Vergleiche …"));
     core::FileSystemProvider *left = m_left;
     core::FileSystemProvider *right = m_right;
     const QString leftPath = m_leftPath;
@@ -167,7 +174,7 @@ void DiffDialog::copySelected(bool toRight)
         m_transfers->enqueue(name, src, srcPath, dst, dstPath);
         ++queued;
     }
-    m_status->setText(QStringLiteral("%1 Übertragung(en) eingereiht.").arg(queued));
+    m_status->setText(_t("%1 Objekt(e) in die Transfer-Queue gestellt.").arg(queued));
 }
 
 } // namespace ncssh::gui

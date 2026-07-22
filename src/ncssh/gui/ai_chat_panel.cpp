@@ -42,12 +42,12 @@ AiChatPanel::AiChatPanel(AsyncBridge *bridge, const QJsonArray &messages,
 
     auto *inputRow = new QHBoxLayout();
     m_input = new QLineEdit(this);
-    m_input->setPlaceholderText(_t("Folgefrage stellen …"));
+    m_input->setPlaceholderText(_t("Frage eingeben …  (Strg+Enter = senden)"));
     connect(m_input, &QLineEdit::returnPressed, this, &AiChatPanel::ask);
-    auto *askBtn = new QPushButton(_t("Fragen"), this);
+    auto *askBtn = new QPushButton(_t("Senden"), this);
     askBtn->setDefault(true);
     connect(askBtn, &QPushButton::clicked, this, &AiChatPanel::ask);
-    m_stopBtn = new QPushButton(_t("Stopp"), this);
+    m_stopBtn = new QPushButton(_t("■ Stop"), this);
     connect(m_stopBtn, &QPushButton::clicked, this, [this] {
         if (m_task) {
             m_bridge->cancel(m_task);
