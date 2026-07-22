@@ -3,6 +3,7 @@
 #include "ncssh/core/i18n.hpp"
 
 #include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -184,6 +185,79 @@ std::vector<PathPair> TransferConfirmDialog::results() const
 QString TransferConfirmDialog::targetDir() const
 {
     return m_dirEdit->text();
+}
+
+// ---------------------------------------------------------------------------
+// RenameDialog
+// ---------------------------------------------------------------------------
+
+RenameDialog::RenameDialog(const QString &title, const QString &origName,
+                           const QString &sourcePath, const QString &targetDir,
+                           Joiner joiner, BrowseFn onBrowse,
+                           const QStringList &bookmarks, QWidget *parent)
+    : QDialog(parent), m_joiner(std::move(joiner)), m_onBrowse(std::move(onBrowse))
+{
+    setWindowTitle(title);
+    resize(640, 0);
+
+    auto *layout = new QVBoxLayout(this);
+    auto *form = new QFormLayout();
+
+    m_name = new QLineEdit(origName, this);
+    connect(m_name, &QLineEdit::textChanged, this, &RenameDialog::refresh);
+    form->addRow(_t("Name"), m_name);
+
+    auto *dirRow = new QHBoxLayout();
+    m_dir = new QLineEdit(targetDir, this);
+    connect(m_dir, &QLineEdit::textChanged, this, &RenameDialog::refresh);
+    dirRow->addWidget(m_dir, 1);
+    dirRow->addWidget(makeBookmarkButton(
+        bookmarks, [this](const QString &p) { m_dir->setText(p); }, this));
+    auto *browseBtn = new QPushButton(_t("Durchsuchen…"), this);
+    connect(browseBtn, &QPushButton::clicked, this, [this] {
+        if (!m_onBrowse)
+            return;
+        const QString chosen = m_onBrowse(m_dir->text());
+        if (!chosen.isEmpty())
+            m_dir->setText(chosen);
+    });
+    dirRow->addWidget(browseBtn);
+    form->addRow(_t("Zielordner"), dirRow);
+    layout->addLayout(form);
+
+    layout->addWidget(new QLabel(_t("Quelle:"), this));
+    auto *sourceLabel = new QLabel(sourcePath, this);
+    sourceLabel->setObjectName(QStringLiteral("Muted"));
+    sourceLabel->setWordWrap(true);
+    layout->addWidget(sourceLabel);
+    layout->addWidget(new QLabel(_t("Ziel:"), this));
+    m_targetLabel = new QLabel(this);
+    m_targetLabel->setWordWrap(true);
+    layout->addWidget(m_targetLabel);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+                                         this);
+    buttons->button(QDialogButtonBox::Ok)->setText(_t("Ausführen"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(_t("Abbrechen"));
+    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    refresh();
+}
+
+void RenameDialog::refresh()
+{
+    const QString path = resultPath();
+    m_targetLabel->setText(path.isEmpty() ? QStringLiteral("—") : path);
+}
+
+QString RenameDialog::resultPath() const
+{
+    const QString name = m_name->text().trimmed();
+    if (name.isEmpty() || !m_joiner)
+        return {};
+    return m_joiner(m_dir->text(), name);
 }
 
 } // namespace ncssh::gui

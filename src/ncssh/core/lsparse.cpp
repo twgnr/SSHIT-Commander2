@@ -32,6 +32,8 @@ quint32 typeBits(QChar c)
     }
 }
 
+} // namespace  (modeFromPerms ist oeffentlich — der Parser-Test prueft ihn)
+
 // rwx-/Typzeichen einer ls-Spalte (z.B. "drwxr-x---") -> st_mode-Bits.
 quint32 modeFromPerms(const QString &sIn)
 {
@@ -58,6 +60,8 @@ quint32 modeFromPerms(const QString &sIn)
     if (xt == QLatin1Char('t') || xt == QLatin1Char('T')) mode |= kSvtx;
     return mode;
 }
+
+namespace {
 
 QDateTime parseMtime(const QString &date, const QString &time)
 {

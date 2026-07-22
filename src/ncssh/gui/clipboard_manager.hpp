@@ -3,14 +3,29 @@
 // (Port von gui/clipboard_manager.py + clipboard_dialog.py)
 #pragma once
 
+#include <QDateTime>
 #include <QDialog>
 #include <QObject>
 #include <QStringList>
+#include <vector>
 
 class QTableWidget;
 class QLabel;
 
 namespace ncssh::gui {
+
+// Ein Eintrag der Historie: Text ODER Dateien (aus dem Explorer / einer Pane).
+struct ClipEntry {
+    int id = 0;
+    QString kind = QStringLiteral("text");   // "text" | "file"
+    QDateTime timestamp;
+    bool active = false;
+    QString text;                            // kind == "text"
+    QStringList files;                       // kind == "file"
+
+    // Einzeilige Beschreibung fuer die Tabelle.
+    QString preview() const;
+};
 
 // Beobachtet die Zwischenablage und fuehrt die Historie.
 class ClipboardManager : public QObject {
@@ -18,7 +33,7 @@ class ClipboardManager : public QObject {
 public:
     explicit ClipboardManager(QObject *parent = nullptr);
 
-    QStringList entries() const { return m_entries; }
+    const std::vector<ClipEntry> &entries() const { return m_entries; }
     void clear();
     void removeAt(int index);
     // Setzt den Eintrag als aktiven Inhalt der Zwischenablage.
@@ -30,8 +45,9 @@ signals:
 private:
     void onClipboardChanged();
 
-    QStringList m_entries;
+    std::vector<ClipEntry> m_entries;
     QString m_lastSeen;
+    int m_counter = 0;
     static constexpr int kMaxEntries = 100;
 };
 
@@ -40,7 +56,8 @@ class ClipboardDialog : public QDialog {
 public:
     ClipboardDialog(ClipboardManager *manager, QWidget *parent = nullptr);
 
-    // Der zum Einfuegen gewaehlte Text (nach Accepted).
+    // Der zum Einfuegen gewaehlte Text (nach Accepted); bei Datei-Eintraegen
+    // die Pfade zeilenweise.
     QString chosenText() const { return m_chosenText; }
 
 private:

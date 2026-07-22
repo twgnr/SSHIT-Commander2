@@ -17,4 +17,8 @@ namespace ncssh::core {
 // "ls -lnA --time-style=long-iso"-Ausgabe -> [FileEntry] (ohne "..").
 std::vector<FileEntry> parseLsLong(const QString &text);
 
+// Rechte-String ("drwxr-xr-x") -> st_mode inkl. Typ-Bits und setuid/setgid/
+// sticky. Oeffentlich, weil der Parser-Test ihn direkt prueft.
+quint32 modeFromPerms(const QString &perms);
+
 } // namespace ncssh::core

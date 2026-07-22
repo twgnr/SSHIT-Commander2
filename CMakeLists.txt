@@ -33,22 +33,38 @@ FetchContent_MakeAvailable(libssh2)
 # --- Quellen ---------------------------------------------------------------
 file(GLOB_RECURSE NCSSH_SOURCES CONFIGURE_DEPENDS
     src/*.cpp src/*.hpp)
+# main.cpp gehoert nur zur App — die Tests bringen ihr eigenes main mit.
+list(REMOVE_ITEM NCSSH_SOURCES "${CMAKE_SOURCE_DIR}/src/main.cpp")
 
-qt_add_executable(sshit-commander WIN32
-    ${NCSSH_SOURCES}
-    resources/resources.qrc)
-
-target_include_directories(sshit-commander PRIVATE src)
-
-target_link_libraries(sshit-commander PRIVATE
+# Gemeinsame Bibliothek fuer App und Tests (spart doppelte Uebersetzung).
+add_library(ncssh STATIC ${NCSSH_SOURCES})
+target_include_directories(ncssh PUBLIC src "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ncssh PUBLIC
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg
     libssh2::libssh2_static
     ws2_32 crypt32 bcrypt advapi32 iphlpapi ole32 shell32 user32)
 
+qt_add_executable(sshit-commander WIN32
+    src/main.cpp
+    resources/resources.qrc)
+target_link_libraries(sshit-commander PRIVATE ncssh)
+
 if(MSVC)
-    target_compile_options(sshit-commander PRIVATE /utf-8 /EHsc /W3 /Zc:__cplusplus /permissive-)
-    target_compile_definitions(sshit-commander PRIVATE
-        NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+    set(NCSSH_FLAGS /utf-8 /EHsc /W3 /Zc:__cplusplus /permissive-)
+    set(NCSSH_DEFS NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(ncssh PUBLIC ${NCSSH_FLAGS})
+    target_compile_definitions(ncssh PUBLIC ${NCSSH_DEFS})
+endif()
+
+# --- Tests (CTest) ---------------------------------------------------------
+# Bauen mit:  cmake --build --preset default --target sshit-tests
+# Ausfuehren: ctest --test-dir build --output-on-failure
+enable_testing()
+file(GLOB NCSSH_TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp tests/*.hpp)
+if(NCSSH_TEST_SOURCES)
+    add_executable(sshit-tests ${NCSSH_TEST_SOURCES})
+    target_link_libraries(sshit-tests PRIVATE ncssh)
+    add_test(NAME sshit-tests COMMAND sshit-tests)
 endif()
 
 # Windows-Icon

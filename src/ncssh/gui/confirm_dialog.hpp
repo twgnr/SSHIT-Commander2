@@ -13,6 +13,7 @@
 class QLineEdit;
 class QTableWidget;
 class QPushButton;
+class QLabel;
 
 namespace ncssh::gui {
 
@@ -76,6 +77,32 @@ private:
     QLineEdit *m_nameEdit = nullptr;   // nur bei genau einem Objekt
     QLineEdit *m_dirEdit = nullptr;
     QTableWidget *m_table = nullptr;
+};
+
+// Umbenennen und/oder Verschieben eines Eintrags. Namens- und Zielordner-Feld
+// mit Live-Vorschau Quelle -> Ziel: rein umbenennen (Ordner unveraendert),
+// rein verschieben (Name unveraendert) oder beides.
+class RenameDialog : public QDialog {
+    Q_OBJECT
+public:
+    using Joiner = std::function<QString(const QString &, const QString &)>;
+    using BrowseFn = std::function<QString(const QString &)>;
+
+    RenameDialog(const QString &title, const QString &origName, const QString &sourcePath,
+                 const QString &targetDir, Joiner joiner, BrowseFn onBrowse,
+                 const QStringList &bookmarks = {}, QWidget *parent = nullptr);
+
+    // Zielpfad (leer, wenn kein Name eingegeben wurde).
+    QString resultPath() const;
+
+private:
+    void refresh();
+
+    Joiner m_joiner;
+    BrowseFn m_onBrowse;
+    QLineEdit *m_name = nullptr;
+    QLineEdit *m_dir = nullptr;
+    QLabel *m_targetLabel = nullptr;
 };
 
 } // namespace ncssh::gui

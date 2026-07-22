@@ -7,6 +7,7 @@
 #include "ncssh/gui/file_icons.hpp"
 #include "ncssh/gui/bookmarks_dialog.hpp"
 #include "ncssh/gui/confirm_dialog.hpp"
+#include "ncssh/gui/dir_chooser.hpp"
 #include "ncssh/gui/editor_dialog.hpp"
 #include "ncssh/gui/properties_dialog.hpp"
 
@@ -480,13 +481,24 @@ void FilePanel::opRename()
     if (path.isEmpty() || !m_provider)
         return;
     core::FileSystemProvider *provider = m_provider;
-    bool ok = false;
-    const QString oldName = provider->basename(path);
-    const QString name = QInputDialog::getText(this, _t("Umbenennen"),
-                                               _t("Neuer Name:"), QLineEdit::Normal, oldName, &ok);
-    if (!ok || name.isEmpty() || name == oldName)
+    // Umbenennen UND/ODER Verschieben: Name und Zielordner sind frei waehlbar,
+    // die Vorschau zeigt den resultierenden Zielpfad.
+    RenameDialog dlg(
+        _t("Umbenennen / Verschieben"), provider->basename(path), path, m_path,
+        [provider](const QString &dir, const QString &name) {
+            return provider->join(dir, name);
+        },
+        [this, provider](const QString &current) -> QString {
+            DirChooserDialog chooser(m_bridge, provider, current,
+                                     m_bookmarks.list(m_bookmarkKey), this);
+            return chooser.exec() == QDialog::Accepted ? chooser.chosen() : QString();
+        },
+        m_bookmarks.list(m_bookmarkKey), this);
+    if (dlg.exec() != QDialog::Accepted)
         return;
-    const QString target = provider->join(m_path, name);
+    const QString target = dlg.resultPath();
+    if (target.isEmpty() || target == path)
+        return;
     m_bridge->run(
         [provider, path, target] { provider->rename(path, target); },
         [this] { refresh(); },

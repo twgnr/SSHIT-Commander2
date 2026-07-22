@@ -7,6 +7,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialogButtonBox>
 #include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -206,11 +207,86 @@ void ServerManagerDialog::onConnect()
 
 void ServerManagerDialog::onImport()
 {
-    const auto imported = core::importAll();
+    // Gefundene Sitzungen zur Auswahl anbieten; zusaetzlich koennen zuvor
+    // exportierte PuTTY-/WinSCP-Dateien geladen werden.
+    std::vector<core::ServerProfile> found = core::importAll();
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(_t("Sitzungen importieren"));
+    dlg.resize(640, 480);
+    auto *layout = new QVBoxLayout(&dlg);
+    auto *info = new QLabel(
+        _t("Gefundene Sitzungen aus PuTTY, WinSCP und ~/.ssh/config. "
+           "Auswählen, was übernommen werden soll."), &dlg);
+    info->setWordWrap(true);
+    info->setObjectName(QStringLiteral("Muted"));
+    layout->addWidget(info);
+
+    auto *list = new QListWidget(&dlg);
+    const auto fill = [&list, &found] {
+        list->clear();
+        for (int i = 0; i < int(found.size()); ++i) {
+            auto *item = new QListWidgetItem(
+                QStringLiteral("%1  —  %2").arg(found[i].name, found[i].display()), list);
+            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+            item->setCheckState(Qt::Checked);
+            item->setData(Qt::UserRole, i);
+        }
+    };
+    fill();
+    layout->addWidget(list, 1);
+
+    auto *selRow = new QHBoxLayout();
+    auto *allBtn = new QPushButton(_t("Alle"), &dlg);
+    auto *noneBtn = new QPushButton(_t("Keine"), &dlg);
+    auto *fileBtn = new QPushButton(_t("Aus Datei laden …"), &dlg);
+    connect(allBtn, &QPushButton::clicked, &dlg, [list] {
+        for (int i = 0; i < list->count(); ++i)
+            list->item(i)->setCheckState(Qt::Checked);
+    });
+    connect(noneBtn, &QPushButton::clicked, &dlg, [list] {
+        for (int i = 0; i < list->count(); ++i)
+            list->item(i)->setCheckState(Qt::Unchecked);
+    });
+    connect(fileBtn, &QPushButton::clicked, &dlg, [this, &dlg, &found, &fill] {
+        const QString path = getOpenFileName(
+            &dlg, _t("Exportierte Sitzungen laden"), QString(),
+            _t("PuTTY/WinSCP") + QStringLiteral(" (*.reg *.ini)"));
+        if (path.isEmpty())
+            return;
+        const auto extra = core::importFromFile(path);
+        if (extra.empty()) {
+            QMessageBox::information(&dlg, _t("Import"),
+                                     _t("In der Datei wurden keine Sitzungen gefunden."));
+            return;
+        }
+        found.insert(found.end(), extra.begin(), extra.end());
+        fill();
+    });
+    selRow->addWidget(allBtn);
+    selRow->addWidget(noneBtn);
+    selRow->addStretch(1);
+    selRow->addWidget(fileBtn);
+    layout->addLayout(selRow);
+
+    auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    box->button(QDialogButtonBox::Ok)->setText(_t("Importieren"));
+    connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    layout->addWidget(box);
+
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
     int added = 0;
-    for (const auto &p : imported) {
-        m_store.upsert(p);
-        ++added;
+    for (int i = 0; i < list->count(); ++i) {
+        if (list->item(i)->checkState() != Qt::Checked)
+            continue;
+        const int idx = list->item(i)->data(Qt::UserRole).toInt();
+        if (idx >= 0 && idx < int(found.size())) {
+            m_store.upsert(found[idx]);
+            ++added;
+        }
     }
     m_store.save();
     reload();

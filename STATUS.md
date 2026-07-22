@@ -104,6 +104,17 @@ wurden bewusst in die Datei zusammengelegt, zu der sie gehören:
 Nicht portiert wurde `src/ncssh/ui/` (die optionale Textual-TUI) — die Qt-GUI ist
 die einzige Oberfläche.
 
+### Außerhalb von `src/`
+
+| Original | Port |
+|---|---|
+| `tests/` (15 Dateien, 120 Tests) | `tests/` — eigenes Harness + CTest, **55 Tests** portiert (netscan, netfs, bulkrename, lsparse, execfile, filealarm, githubalarm); die restlichen decken Qt-Dialoge bzw. asyncio-Interna ab |
+| `tools/i18n_extract.py` | portiert — sucht `_t("…")` in den C++-Quellen |
+| `i18n/en.json` | **1106 Schlüssel, 100 % übersetzt**, keine verwaisten Einträge |
+| `pyproject.toml`, `Pipfile`, `build-nuitka.ps1` | ersetzt durch `CMakeLists.txt`, `build.ps1`, `test.ps1` |
+
+Tests laufen mit `.\test.ps1` (oder `ctest --test-dir build`).
+
 ## Bekannte Einschränkungen
 
 - Die libssh2-Schicht (Auth, SFTP, PTY, Tunnel) ist gegen die Semantik des Originals
