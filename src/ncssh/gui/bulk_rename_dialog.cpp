@@ -12,6 +12,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -42,11 +43,51 @@ BulkRenameDialog::BulkRenameDialog(AsyncBridge *bridge, core::FileSystemProvider
     m_matchMode->addItem(_t("Platzhalter (* ?)"), QStringLiteral("wildcard"));
     m_matchMode->addItem(_t("Regex"), QStringLiteral("regex"));
     m_ignoreCase = new QCheckBox(_t("Groß/Klein egal"), searchBox);
+    m_replaceAll = new QCheckBox(_t("Alle Vorkommen ersetzen"), searchBox);
+    m_replaceAll->setChecked(true);
+    // Fertige Regex-Vorlagen — sie fuellen Modus/Suchen/Ersetzen und bleiben
+    // danach frei editierbar; die Auswahl springt zurueck (Aktion, kein Zustand).
+    m_preset = new QComboBox(searchBox);
+    for (const auto &preset : regexPresets())
+        m_preset->addItem(preset.label);
+    connect(m_preset, &QComboBox::currentIndexChanged, this,
+            &BulkRenameDialog::applyRegexPreset);
+    m_regexError = new QLabel(searchBox);
+    m_regexError->setObjectName(QStringLiteral("Muted"));
+    m_regexError->setWordWrap(true);
     searchForm->addRow(_t("Suchen"), m_search);
     searchForm->addRow(_t("Ersetzen"), m_replace);
     searchForm->addRow(_t("Modus"), m_matchMode);
+    searchForm->addRow(_t("Regex-Vorlage"), m_preset);
     searchForm->addRow(QString(), m_ignoreCase);
+    searchForm->addRow(QString(), m_replaceAll);
+    searchForm->addRow(QString(), m_regexError);
     top->addWidget(searchBox, 1);
+
+    // --- Entfernen, Zuschneiden, Einfuegen ---
+    auto *editBox = new QGroupBox(_t("Entfernen & Einfügen"), this);
+    auto *editForm = new QFormLayout(editBox);
+    m_removeText = new QLineEdit(editBox);
+    m_removeText->setPlaceholderText(_t("Text, der entfernt wird"));
+    m_trimStart = new QSpinBox(editBox);
+    m_trimStart->setRange(0, 200);
+    m_trimEnd = new QSpinBox(editBox);
+    m_trimEnd->setRange(0, 200);
+    m_insertText = new QLineEdit(editBox);
+    m_insertPos = new QSpinBox(editBox);
+    m_insertPos->setRange(-200, 200);
+    m_insertPos->setToolTip(_t("Position; negativ zählt vom Ende"));
+    m_scope = new QComboBox(editBox);
+    m_scope->addItem(_t("Nur Name"), QStringLiteral("name"));
+    m_scope->addItem(_t("Nur Endung"), QStringLiteral("ext"));
+    m_scope->addItem(_t("Ganzer Name"), QStringLiteral("full"));
+    editForm->addRow(_t("Entfernen"), m_removeText);
+    editForm->addRow(_t("Vorne kürzen"), m_trimStart);
+    editForm->addRow(_t("Hinten kürzen"), m_trimEnd);
+    editForm->addRow(_t("Einfügen"), m_insertText);
+    editForm->addRow(_t("an Position"), m_insertPos);
+    editForm->addRow(_t("Geltungsbereich"), m_scope);
+    top->addWidget(editBox, 1);
 
     // --- Praefix/Suffix, Gross/Klein, Endung ---
     auto *textBox = new QGroupBox(_t("Text & Endung"), this);
@@ -97,6 +138,10 @@ BulkRenameDialog::BulkRenameDialog(AsyncBridge *bridge, core::FileSystemProvider
     m_numPosition = new QComboBox(numBox);
     m_numPosition->addItem(_t("hinten"), QStringLiteral("suffix"));
     m_numPosition->addItem(_t("vorne"), QStringLiteral("prefix"));
+    m_numPosition->addItem(_t("an Position"), QStringLiteral("at"));
+    m_numPosition->addItem(_t("an Position (ersetzt)"), QStringLiteral("at_replace"));
+    m_numPos = new QSpinBox(numBox);
+    m_numPos->setRange(-200, 200);
     m_sortMode = new QComboBox(numBox);
     m_sortMode->addItem(_t("Eingabereihenfolge"), QStringLiteral("none"));
     m_sortMode->addItem(_t("Name"), QStringLiteral("name"));
@@ -109,6 +154,7 @@ BulkRenameDialog::BulkRenameDialog(AsyncBridge *bridge, core::FileSystemProvider
     numForm->addRow(_t("Stellen"), m_width);
     numForm->addRow(_t("Trenner"), m_numSep);
     numForm->addRow(_t("Position"), m_numPosition);
+    numForm->addRow(_t("Zeichenposition"), m_numPos);
     numForm->addRow(_t("Reihenfolge"), m_sortMode);
     top->addWidget(numBox, 1);
 
@@ -132,27 +178,75 @@ BulkRenameDialog::BulkRenameDialog(AsyncBridge *bridge, core::FileSystemProvider
     layout->addWidget(m_status);
 
     auto *buttons = new QHBoxLayout();
-    auto *cancel = new QPushButton(_t("Abbrechen"), this);
-    auto *applyBtn = new QPushButton(_t("Umbenennen"), this);
-    applyBtn->setDefault(true);
+    auto *cancel = new QPushButton(_t("Schließen"), this);
+    m_undoButton = new QPushButton(_t("Rückgängig"), this);
+    m_undoButton->setEnabled(false);
+    m_undoButton->setVisible(false);
+    m_applyButton = new QPushButton(_t("Umbenennen"), this);
+    m_applyButton->setDefault(true);
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
-    connect(applyBtn, &QPushButton::clicked, this, &BulkRenameDialog::apply);
+    connect(m_undoButton, &QPushButton::clicked, this, &BulkRenameDialog::undo);
+    connect(m_applyButton, &QPushButton::clicked, this, &BulkRenameDialog::apply);
     buttons->addStretch(1);
     buttons->addWidget(cancel);
-    buttons->addWidget(applyBtn);
+    buttons->addWidget(m_undoButton);
+    buttons->addWidget(m_applyButton);
     layout->addLayout(buttons);
 
     // Live-Vorschau an alle Eingaben haengen
-    for (QLineEdit *e : {m_search, m_replace, m_prefix, m_suffix, m_numSep, m_extValue})
+    for (QLineEdit *e : {m_search, m_replace, m_prefix, m_suffix, m_numSep, m_extValue,
+                         m_removeText, m_insertText})
         connect(e, &QLineEdit::textChanged, this, &BulkRenameDialog::updatePreview);
-    for (QComboBox *c : {m_matchMode, m_caseMode, m_spaceMode, m_extMode, m_numPosition, m_sortMode})
+    for (QComboBox *c : {m_matchMode, m_caseMode, m_spaceMode, m_extMode, m_numPosition,
+                         m_sortMode, m_scope})
         connect(c, &QComboBox::currentIndexChanged, this, &BulkRenameDialog::updatePreview);
-    for (QCheckBox *c : {m_ignoreCase, m_numbering, m_autoResolve})
+    for (QCheckBox *c : {m_ignoreCase, m_numbering, m_autoResolve, m_replaceAll})
         connect(c, &QCheckBox::toggled, this, &BulkRenameDialog::updatePreview);
-    for (QSpinBox *s : {m_start, m_step, m_width})
+    for (QSpinBox *s : {m_start, m_step, m_width, m_trimStart, m_trimEnd, m_insertPos,
+                        m_numPos})
         connect(s, &QSpinBox::valueChanged, this, &BulkRenameDialog::updatePreview);
 
     updatePreview();
+}
+
+// Fertige Muster fuer haeufige Aufraeumarbeiten — spart dem Nutzer das Regex.
+const std::vector<BulkRenameDialog::RegexPreset> &BulkRenameDialog::regexPresets()
+{
+    static const std::vector<RegexPreset> presets = {
+        {_t("— Vorlage wählen —"), {}, {}, false},
+        {_t("Leerzeichen → Unterstrich"), QStringLiteral("\\s+"), QStringLiteral("_"), false},
+        {_t("Unterstrich → Leerzeichen"), QStringLiteral("_+"), QStringLiteral(" "), false},
+        {_t("Bindestrich → Leerzeichen"), QStringLiteral("-+"), QStringLiteral(" "), false},
+        {_t("Mehrfache Leerzeichen → eins"), QStringLiteral(" {2,}"), QStringLiteral(" "), false},
+        {_t("Leerzeichen am Rand entfernen"), QStringLiteral("^\\s+|\\s+$"), {}, false},
+        {_t("Mehrfach _ oder - → eins"), QStringLiteral("([_-])\\1+"), QStringLiteral("\\1"), false},
+        {_t("Klammern + Inhalt entfernen"), QStringLiteral("\\s*[\\(\\[][^\\)\\]]*[\\)\\]]"), {}, false},
+        {_t("Führende Nummer entfernen"), QStringLiteral("^\\d+[\\s._-]*"), {}, false},
+        {_t("Sonderzeichen → Unterstrich"), QStringLiteral("[^\\w.\\- ]+"), QStringLiteral("_"), false},
+        {_t("Leerzeichen vor Großbuchstaben"), QStringLiteral("(?<=[a-z0-9])(?=[A-Z])"),
+         QStringLiteral(" "), false},
+        {_t("Ziffern entfernen"), QStringLiteral("\\d+"), {}, false},
+        {_t("'- Kopie'-Suffix entfernen"),
+         QStringLiteral("\\s*[-–]\\s*Kopie(\\s*\\(\\d+\\))?$"), {}, true},
+        {_t("'copy'-Suffix entfernen"),
+         QStringLiteral("[\\s_-]*copy(\\s*\\(\\d+\\))?$"), {}, true},
+    };
+    return presets;
+}
+
+void BulkRenameDialog::applyRegexPreset(int index)
+{
+    const auto &presets = regexPresets();
+    if (index <= 0 || index >= int(presets.size()))
+        return;
+    const RegexPreset &preset = presets[size_t(index)];
+    m_matchMode->setCurrentIndex(m_matchMode->findData(QStringLiteral("regex")));
+    m_search->setText(preset.search);
+    m_replace->setText(preset.replace);
+    m_ignoreCase->setChecked(preset.ignoreCase);
+    // Auswahl zuruecksetzen: die Vorlage ist eine Aktion, kein Zustand.
+    QSignalBlocker blocker(m_preset);
+    m_preset->setCurrentIndex(0);
 }
 
 core::RenameOptions BulkRenameDialog::collectOptions() const
@@ -162,6 +256,14 @@ core::RenameOptions BulkRenameDialog::collectOptions() const
     o.replace = m_replace->text();
     o.matchMode = m_matchMode->currentData().toString();
     o.ignoreCase = m_ignoreCase->isChecked();
+    o.replaceAll = m_replaceAll->isChecked();
+    o.removeText = m_removeText->text();
+    o.trimStart = m_trimStart->value();
+    o.trimEnd = m_trimEnd->value();
+    o.insertText = m_insertText->text();
+    o.insertPos = m_insertPos->value();
+    o.scope = m_scope->currentData().toString();
+    o.numPos = m_numPos->value();
     o.prefix = m_prefix->text();
     o.suffix = m_suffix->text();
     o.caseMode = m_caseMode->currentData().toString();
@@ -179,6 +281,20 @@ core::RenameOptions BulkRenameDialog::collectOptions() const
 
 void BulkRenameDialog::updatePreview()
 {
+    // Ungueltiges Regex direkt melden, statt eine leere Vorschau zu zeigen.
+    m_regexError->clear();
+    if (m_matchMode->currentData().toString() == QLatin1String("regex")
+        && !m_search->text().isEmpty()) {
+        if (const auto error = core::validateRegex(m_search->text())) {
+            m_regexError->setText(_t("Regex-Fehler: %1").arg(*error));
+            m_applyButton->setEnabled(false);
+            return;
+        }
+    }
+    // "an Position" braucht die Zeichenposition, sonst ist sie ohne Wirkung.
+    const QString numPosition = m_numPosition->currentData().toString();
+    m_numPos->setEnabled(numPosition.startsWith(QLatin1String("at")));
+
     // Sortierreihenfolge fuer die Nummernvergabe anwenden.
     const QString sortMode = m_sortMode->currentData().toString();
     const std::vector<int> order = core::sortIndices(m_names, sortMode);
@@ -211,6 +327,8 @@ void BulkRenameDialog::updatePreview()
         collisions.isEmpty()
             ? QStringLiteral("%1 von %2 Namen ändern sich").arg(changed).arg(m_pairs.size())
             : QStringLiteral("%1 Änderungen · %2 KONFLIKTE").arg(changed).arg(collisions.size()));
+    // Umbenennen nur zulassen, wenn es etwas zu tun gibt und nichts kollidiert.
+    m_applyButton->setEnabled(changed > 0 && collisions.isEmpty());
 }
 
 void BulkRenameDialog::apply()
@@ -229,21 +347,74 @@ void BulkRenameDialog::apply()
         if (p.first != p.second)
             changes.push_back(p);
     }
-    if (changes.empty()) {
-        accept();
+    if (changes.empty())
         return;
-    }
-    const std::vector<RenamePair> steps = core::planSafeOrder(changes, existing);
+    if (QMessageBox::question(
+            this, _t("Umbenennen"),
+            _t("%1 Eintrag/Einträge wirklich umbenennen?").arg(changes.size()))
+        != QMessageBox::Yes)
+        return;
 
+    // Rueckabwicklung merken (neu -> alt) — erst nach dem Erfolg aktivieren.
+    std::vector<RenamePair> undoJobs;
+    for (const auto &[oldName, newName] : changes)
+        undoJobs.emplace_back(newName, oldName);
+
+    const std::vector<RenamePair> steps = core::planSafeOrder(changes, existing);
+    runRenames(steps, int(changes.size()), [this, undoJobs](int count) {
+        m_undoJobs = undoJobs;
+        m_names.clear();
+        for (const auto &[oldName, newName] : m_pairs)
+            m_names.push_back(newName);
+        m_undoButton->setVisible(true);
+        m_undoButton->setEnabled(!m_undoJobs.empty());
+        updatePreview();          // Vorschau auf den neuen Stand bringen
+        QMessageBox::information(
+            this, _t("Fertig"),
+            _t("%1 Eintrag/Einträge umbenannt.\nÜber „Rückgängig“ lässt sich das "
+               "zurücknehmen.").arg(count));
+    }, m_applyButton);
+}
+
+void BulkRenameDialog::undo()
+{
+    if (m_undoJobs.empty())
+        return;
+    QSet<QString> existing;
+    for (const auto &[from, to] : m_undoJobs)
+        existing.insert(from);
+    const std::vector<RenamePair> steps = core::planSafeOrder(m_undoJobs, existing);
+    const int count = int(m_undoJobs.size());
+    runRenames(steps, count, [this](int done) {
+        m_names.clear();
+        for (const auto &[from, to] : m_undoJobs)
+            m_names.push_back(to);
+        m_undoJobs.clear();
+        m_undoButton->setVisible(false);
+        m_undoButton->setEnabled(false);
+        updatePreview();
+        QMessageBox::information(this, _t("Rückgängig"),
+                                 _t("%1 Umbenennung(en) zurückgenommen.").arg(done));
+    }, m_undoButton);
+}
+
+void BulkRenameDialog::runRenames(const std::vector<RenamePair> &steps, int count,
+                                  const std::function<void(int)> &onDone,
+                                  QPushButton *button)
+{
     core::FileSystemProvider *provider = m_provider;
     const QString dir = m_dir;
+    button->setEnabled(false);
     m_bridge->run(
         [provider, dir, steps] {
             for (const auto &[from, to] : steps)
                 provider->rename(provider->join(dir, from), provider->join(dir, to));
         },
-        [this] { accept(); },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [onDone, count] { onDone(count); },
+        [this, button](const QString &err) {
+            button->setEnabled(true);
+            QMessageBox::critical(this, _t("Umbenennen fehlgeschlagen"), err);
+        });
 }
 
 } // namespace ncssh::gui
