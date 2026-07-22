@@ -13,8 +13,11 @@
 
 #include <QHash>
 #include <QJsonObject>
+#include <QSet>
 #include <QWidget>
+#include <functional>
 #include <memory>
+#include <utility>
 
 class QSplitter;
 class QEvent;
@@ -106,6 +109,17 @@ private:
     void confirmAndMove(core::FileSystemProvider *src,
                         const std::vector<QString> &srcPaths,
                         core::FileSystemProvider *dst, const QString &dstDir);
+    // Prueft Namenskonflikte im Zielordner und ruft then() mit den
+    // freigegebenen (quelle, ziel)-Paaren.
+    void withConflictCheck(
+        core::FileSystemProvider *dst, const QString &targetDir,
+        const std::vector<std::pair<QString, QString>> &results,
+        const std::function<void(const std::vector<std::pair<QString, QString>> &)> &then);
+    // Rueckfrage je Konflikt: Ja / Ja, alle / Nein / Nein, alle / Abbrechen.
+    std::vector<std::pair<QString, QString>> resolveOverwrites(
+        const QString &dstLabel, const QString &targetDir,
+        const std::vector<std::pair<QString, QString>> &results,
+        const QSet<QString> &existing, bool &cancelled);
     // Strg+V: Inhalt der internen Zwischenablage in target einfuegen.
     void pasteInto(FilePanel *target, bool move);
     void setSudoMode(bool on);

@@ -2,6 +2,7 @@
 // (Port von gui/main_window.py, funktional zusammengefasst)
 #pragma once
 
+#include "ncssh/core/models.hpp"
 #include "ncssh/gui/bridge.hpp"
 #include "ncssh/net/session.hpp"
 
@@ -62,6 +63,9 @@ private:
     void buildStatusBar();
     // Verbindungs-, Host-Key- und Tunnel-Anzeige nachziehen.
     void updateConnectionStatus();
+    // Fragt fehlende Zugangsdaten ab (Benutzer, Passphrase, Passwort).
+    // false = abgebrochen.
+    bool prepareCredentials(core::ServerProfile &profile);
     void showAbout();
     void explainConsoleWithAi();
     // codecheck = Fehleranalyse statt Erklaerung/Frage.

@@ -31,6 +31,12 @@ bool isImageName(const QString &name)
     }
     return false;
 }
+
+// Heuristik wie bei grep: ein NUL-Byte im Anfang gilt als binaer.
+bool looksBinary(const QByteArray &data)
+{
+    return data.left(8000).contains('\0');
+}
 } // namespace
 
 PreviewPanel::PreviewPanel(AsyncBridge *bridge, QWidget *parent)
@@ -102,28 +108,30 @@ void PreviewPanel::preview(core::FileSystemProvider *provider, const QString &pa
                                                      Qt::SmoothTransformation));
                     m_stack->setCurrentWidget(m_image);
                 } else {
-                    m_text->setPlainText(_t("Bild nicht lesbar."));
+                    m_text->setPlainText(_t("(Vorschau nicht verfügbar)"));
                     m_stack->setCurrentWidget(m_text);
                 }
                 m_task = nullptr;
             },
-            [this](const QString &err) {
-                m_text->setPlainText(err);
+            [this](const QString &) {
+                m_text->setPlainText(_t("(Vorschau nicht verfügbar)"));
                 m_stack->setCurrentWidget(m_text);
                 m_task = nullptr;
             });
         return;
     }
 
-    m_task = m_bridge->run<QString>(
-        [provider, path] { return provider->readText(path, kPreviewLimit); },
-        [this](const QString &text) {
-            m_text->setPlainText(text);
+    // Binaerdateien nicht als Text ausgeben — das produziert nur Rauschen.
+    m_task = m_bridge->run<QByteArray>(
+        [provider, path] { return provider->readBytes(path, kPreviewLimit); },
+        [this](const QByteArray &data) {
+            m_text->setPlainText(looksBinary(data) ? _t("(Binärdatei — keine Vorschau)")
+                                                   : QString::fromUtf8(data));
             m_stack->setCurrentWidget(m_text);
             m_task = nullptr;
         },
-        [this](const QString &err) {
-            m_text->setPlainText(err);
+        [this](const QString &) {
+            m_text->setPlainText(_t("(Vorschau nicht verfügbar)"));
             m_stack->setCurrentWidget(m_text);
             m_task = nullptr;
         });

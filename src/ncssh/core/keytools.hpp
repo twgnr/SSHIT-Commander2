@@ -26,4 +26,13 @@ QByteArray toOpenssh(const QByteArray &ppkData);
 // Oeffentlichen Schluessel (OpenSSH-Zeile) aus einem privaten ableiten.
 QByteArray publicFromPrivate(const QByteArray &opensshPrivate);
 
+// True, wenn der private Schluessel mit einer Passphrase geschuetzt ist.
+//
+// Wichtig fuers Verbinden: nur dann darf nach der Passphrase gefragt werden.
+// Beim OpenSSH-Format reicht eine Textsuche NICHT — Cipher- und KDF-Name
+// stehen im base64-kodierten Rumpf und sind im Klartext nicht sichtbar.
+bool keyNeedsPassphrase(const QByteArray &privateKey);
+// Bequemlichkeit: liest die Datei (nicht lesbar/leer -> false).
+bool keyFileNeedsPassphrase(const QString &path);
+
 } // namespace ncssh::core

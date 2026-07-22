@@ -27,6 +27,8 @@ public:
     QString command() const { return m_command; }
     // true = direkt ausfuehren, false = nur in die Konsole einfuegen.
     bool runDirectly() const { return m_runDirectly; }
+    // true, wenn der gewaehlte Befehl im Katalog als destruktiv markiert ist.
+    bool isDangerous() const { return m_dangerous; }
 
 private:
     void refill();
@@ -36,6 +38,7 @@ private:
     QString m_osType;
     QString m_command;
     bool m_runDirectly = false;
+    bool m_dangerous = false;
     std::vector<core::CommandSpec> m_shown;
 
     QLineEdit *m_search = nullptr;

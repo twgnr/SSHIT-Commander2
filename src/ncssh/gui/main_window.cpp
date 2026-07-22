@@ -4,6 +4,8 @@
 #include "ncssh/core/assets.hpp"
 #include "ncssh/core/bookmarks.hpp"
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/core/keytools.hpp"
+#include "ncssh/core/profiles.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/ai_chat_panel.hpp"
 #include "ncssh/gui/file_dialogs.hpp"
@@ -40,6 +42,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QInputDialog>
 #include <QJsonArray>
@@ -606,11 +609,61 @@ Workspace *MainWindow::currentWorkspace() const
 void MainWindow::openServerManager()
 {
     ServerManagerDialog dlg(m_bridge, this);
-    if (dlg.exec() == QDialog::Accepted && dlg.chosen()) {
-        Workspace *ws = currentWorkspace();
-        if (ws)
-            ws->connectTo(*dlg.chosen());
+    if (dlg.exec() != QDialog::Accepted || !dlg.chosen())
+        return;
+    core::ServerProfile profile = *dlg.chosen();
+    if (!prepareCredentials(profile))
+        return;
+    Workspace *ws = currentWorkspace();
+    if (!ws)
+        return;
+    statusBar()->showMessage(_t("Verbinde zu %1 …").arg(profile.display()), 8000);
+    ws->connectTo(profile);
+}
+
+bool MainWindow::prepareCredentials(core::ServerProfile &profile)
+{
+    // Gespeicherte Geheimnisse aus dem Schluesselbund nachladen.
+    core::ProfileStore store;
+    store.load();
+    store.hydrate(profile);
+
+    if (profile.username.isEmpty()) {
+        bool ok = false;
+        const QString user = QInputDialog::getText(
+            this, _t("Benutzername"), _t("Benutzername für %1:").arg(profile.host),
+            QLineEdit::Normal, QString(), &ok);
+        if (!ok || user.trimmed().isEmpty())
+            return false;
+        profile.username = user.trimmed();
+        // Benutzernamen dauerhaft merken — beim naechsten Mal keine Rueckfrage.
+        store.upsert(profile);
+        store.save();
     }
+
+    if (profile.authMethod == QLatin1String("key") && !profile.keyPath.isEmpty()
+        && profile.passphrase.isEmpty()
+        && core::keyFileNeedsPassphrase(profile.keyPath)) {
+        bool ok = false;
+        const QString passphrase = QInputDialog::getText(
+            this, _t("Key-Passphrase"),
+            _t("Passphrase für den Schlüssel:\n%1").arg(profile.keyPath),
+            QLineEdit::Password, QString(), &ok);
+        if (!ok)
+            return false;
+        profile.passphrase = passphrase;
+    }
+
+    if (profile.authMethod == QLatin1String("password") && profile.password.isEmpty()) {
+        bool ok = false;
+        const QString password = QInputDialog::getText(
+            this, _t("Passwort"), _t("Passwort für %1:").arg(profile.display()),
+            QLineEdit::Password, QString(), &ok);
+        if (!ok)
+            return false;
+        profile.password = password;
+    }
+    return true;
 }
 
 void MainWindow::openCommandPalette()
@@ -619,8 +672,22 @@ void MainWindow::openCommandPalette()
     if (!ws)
         return;
     CommandPalette palette(ws->activeOsType(), this);
-    if (palette.exec() == QDialog::Accepted && !palette.command().isEmpty())
-        ws->sendToActiveConsole(palette.command(), palette.runDirectly());
+    if (palette.exec() != QDialog::Accepted || palette.command().isEmpty())
+        return;
+    // Als destruktiv markierte Befehle nicht ungefragt ausfuehren.
+    if (palette.runDirectly() && palette.isDangerous()) {
+        if (QMessageBox::warning(
+                this, _t("Destruktiver Befehl"),
+                _t("Dieser Befehl kann Daten unwiderruflich verändern:\n\n%1\n\nWirklich "
+                   "ausführen?").arg(palette.command()),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            != QMessageBox::Yes) {
+            // Nicht verwerfen — nur einfuegen, damit man ihn noch anpassen kann.
+            ws->sendToActiveConsole(palette.command(), false);
+            return;
+        }
+    }
+    ws->sendToActiveConsole(palette.command(), palette.runDirectly());
 }
 
 void MainWindow::openHistory()

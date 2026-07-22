@@ -116,4 +116,53 @@ QByteArray publicFromPrivate(const QByteArray &opensshPrivate)
     return proc.readAllStandardOutput().trimmed();
 }
 
+bool keyNeedsPassphrase(const QByteArray &privateKey)
+{
+    // --- OpenSSH-Format ------------------------------------------------------
+    // Aufbau des dekodierten Rumpfs:
+    //   "openssh-key-v1\0" | uint32 len | ciphername | uint32 len | kdfname | …
+    // ciphername == "none" bedeutet unverschluesselt. Im base64-Text steht das
+    // nicht lesbar, deshalb wird hier wirklich dekodiert.
+    const int begin = privateKey.indexOf("BEGIN OPENSSH PRIVATE KEY");
+    if (begin >= 0) {
+        const int bodyStart = privateKey.indexOf('\n', begin);
+        const int end = privateKey.indexOf("-----END", bodyStart);
+        if (bodyStart < 0 || end < 0)
+            return false;
+        QByteArray base64 = privateKey.mid(bodyStart + 1, end - bodyStart - 1);
+        base64.replace('\n', "").replace('\r', "");
+        const QByteArray blob = QByteArray::fromBase64(base64);
+        static const QByteArray magic("openssh-key-v1\0", 15);
+        if (!blob.startsWith(magic))
+            return false;
+        int pos = magic.size();
+        if (blob.size() < pos + 4)
+            return false;
+        // Laenge liegt als big-endian uint32 vor.
+        const auto readLength = [&blob](int at) {
+            return (quint32(uchar(blob[at])) << 24) | (quint32(uchar(blob[at + 1])) << 16)
+                   | (quint32(uchar(blob[at + 2])) << 8) | quint32(uchar(blob[at + 3]));
+        };
+        const quint32 cipherLen = readLength(pos);
+        pos += 4;
+        if (cipherLen > quint32(blob.size() - pos))
+            return false;
+        const QByteArray cipher = blob.mid(pos, int(cipherLen));
+        return cipher != "none";
+    }
+
+    // --- klassisches PEM -----------------------------------------------------
+    // Dort steht die Verschluesselung im Klartext-Kopf.
+    return privateKey.contains("Proc-Type: 4,ENCRYPTED")
+           || privateKey.contains("BEGIN ENCRYPTED PRIVATE KEY");
+}
+
+bool keyFileNeedsPassphrase(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    return keyNeedsPassphrase(file.readAll());
+}
+
 } // namespace ncssh::core

@@ -17,6 +17,7 @@
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QAbstractButton>
 #include <QSplitter>
 #include <QVBoxLayout>
 
@@ -537,8 +538,99 @@ void Workspace::confirmAndTransfer(core::FileSystemProvider *src,
         {}, this);
     if (dlg.exec() != QDialog::Accepted)
         return;
-    for (const auto &[from, to] : dlg.results())
-        startTransfer(src, from, dst, dst->parent(to), dst->basename(to));
+    withConflictCheck(dst, dstDir, dlg.results(),
+                      [this, src, dst](const std::vector<std::pair<QString, QString>> &todo) {
+                          for (const auto &[from, to] : todo)
+                              startTransfer(src, from, dst, dst->parent(to), dst->basename(to));
+                      });
+}
+
+// Listet das Zielverzeichnis, fragt fuer vorhandene Namen das Ueberschreiben ab
+// und ruft dann fortfahren() mit den freigegebenen Eintraegen. Ohne diese
+// Pruefung wuerde eine Uebertragung Zieldateien wortlos ersetzen.
+void Workspace::withConflictCheck(
+    core::FileSystemProvider *dst, const QString &targetDir,
+    const std::vector<std::pair<QString, QString>> &results,
+    const std::function<void(const std::vector<std::pair<QString, QString>> &)> &then)
+{
+    m_bridge->run<std::vector<core::FileEntry>>(
+        [dst, targetDir] { return dst->listDir(targetDir); },
+        [this, dst, targetDir, results, then](const std::vector<core::FileEntry> &entries) {
+            QSet<QString> existing;
+            for (const core::FileEntry &e : entries)
+                existing.insert(e.name);
+            bool cancelled = false;
+            const auto todo = resolveOverwrites(dst->label, targetDir, results, existing,
+                                                cancelled);
+            if (cancelled)
+                return;
+            if (todo.empty()) {
+                emit statusMessage(_t("Nichts zu übertragen (alle übersprungen)."));
+                return;
+            }
+            then(todo);
+        },
+        [this](const QString &err) {
+            QMessageBox::critical(this, _t("Fehler"), err);
+        });
+}
+
+std::vector<std::pair<QString, QString>> Workspace::resolveOverwrites(
+    const QString &dstLabel, const QString &targetDir,
+    const std::vector<std::pair<QString, QString>> &results,
+    const QSet<QString> &existing, bool &cancelled)
+{
+    std::vector<std::pair<QString, QString>> todo;
+    bool overwriteAll = false;
+    bool skipAll = false;
+    cancelled = false;
+
+    for (const auto &[from, to] : results) {
+        const QString name = to.mid(to.lastIndexOf(QLatin1Char('/')) + 1);
+        if (!existing.contains(name)) {
+            todo.emplace_back(from, to);
+            continue;
+        }
+        if (overwriteAll) {
+            todo.emplace_back(from, to);
+            continue;
+        }
+        if (skipAll)
+            continue;
+
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Question);
+        box.setWindowTitle(_t("Überschreiben?"));
+        box.setText(_t("„%1“ existiert bereits in [%2] %3.\n\nÜberschreiben?")
+                        .arg(name, dstLabel, targetDir));
+        box.setStandardButtons(QMessageBox::Yes | QMessageBox::YesToAll | QMessageBox::No
+                               | QMessageBox::NoToAll | QMessageBox::Cancel);
+        box.setDefaultButton(QMessageBox::No);   // im Zweifel nichts ueberschreiben
+        box.button(QMessageBox::Yes)->setText(_t("Ja"));
+        box.button(QMessageBox::YesToAll)->setText(_t("Ja, alle"));
+        box.button(QMessageBox::No)->setText(_t("Nein"));
+        box.button(QMessageBox::NoToAll)->setText(_t("Nein, alle"));
+        box.button(QMessageBox::Cancel)->setText(_t("Abbrechen"));
+
+        switch (box.exec()) {
+        case QMessageBox::Cancel:
+            cancelled = true;
+            return {};
+        case QMessageBox::YesToAll:
+            overwriteAll = true;
+            todo.emplace_back(from, to);
+            break;
+        case QMessageBox::Yes:
+            todo.emplace_back(from, to);
+            break;
+        case QMessageBox::NoToAll:
+            skipAll = true;
+            break;
+        default:
+            break;   // Nein -> diesen Eintrag ueberspringen
+        }
+    }
+    return todo;
 }
 
 void Workspace::startTransfer(core::FileSystemProvider *src, const QString &srcPath,

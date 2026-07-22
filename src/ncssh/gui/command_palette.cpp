@@ -77,6 +77,7 @@ CommandPalette::CommandPalette(const QString &osType, QWidget *parent)
         if (const auto spec = currentSpec()) {
             m_command = spec->templateText;
             m_runDirectly = false;
+            m_dangerous = spec->danger;
             accept();
         }
     });
@@ -143,6 +144,7 @@ void CommandPalette::openBuilder(bool)
     if (builder.exec() == QDialog::Accepted) {
         m_command = builder.command();
         m_runDirectly = builder.runDirectly();
+        m_dangerous = spec->danger;
         accept();
     }
 }
