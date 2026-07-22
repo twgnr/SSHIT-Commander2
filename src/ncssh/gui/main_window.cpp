@@ -106,18 +106,29 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
                 const QString label = kind == QLatin1String("created")   ? _t("neu")
                                       : kind == QLatin1String("deleted") ? _t("gelöscht")
                                                                          : _t("geändert");
+                ++m_pendingAlarms;
                 statusBar()->showMessage(
                     QStringLiteral("%1 — %2: %3")
                         .arg(_t("Alarm Trigger: %1").arg(name), label, path),
                     15000);
+                // Anklickbarer Hinweis, der bis zum Oeffnen stehen bleibt.
+                m_alarmNotice->setText(_t("Alarm ausgelöst — zum Anzeigen klicken"));
+                m_alarmNotice->setVisible(true);
             });
     m_githubAlarms = new GithubAlarmManager(bridge, this);
     connect(m_githubAlarms, &GithubAlarmManager::repoChanged, this,
             [this](const QString &fullName, const QString &pushedAt) {
+                ++m_pendingRepos;
                 statusBar()->showMessage(
                     _t("GitHub: %1").arg(fullName) + QStringLiteral(" — ")
                         + _t("Neue Daten im Repository (%1)").arg(pushedAt),
                     15000);
+                m_githubNotice->setText(
+                    m_pendingRepos == 1
+                        ? _t("GitHub: neue Daten — zum Anzeigen klicken")
+                        : _t("%1 Repo(s) mit neuen Daten — zum Anzeigen klicken")
+                              .arg(m_pendingRepos));
+                m_githubNotice->setVisible(true);
             });
 
     setWindowTitle(QStringLiteral("SSHIT-Commander"));
@@ -130,11 +141,19 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
     m_tabs->setTabsClosable(true);
     m_tabs->setMovable(true);
     connect(m_tabs, &QTabWidget::tabCloseRequested, this, [this](int index) {
-        if (m_tabs->count() > 1) {
-            QWidget *w = m_tabs->widget(index);
-            m_tabs->removeTab(index);
-            w->deleteLater();
+        if (m_tabs->count() <= 1)
+            return;
+        QWidget *w = m_tabs->widget(index);
+        // Offene Verbindungen nicht stillschweigend kappen.
+        if (auto *ws = qobject_cast<Workspace *>(w); ws && ws->isConnected()) {
+            if (QMessageBox::question(
+                    this, _t("Verbindung trennen"),
+                    _t("Verbindung(en) dieses Tabs trennen?\n%1").arg(ws->connectionLabel()))
+                != QMessageBox::Yes)
+                return;
         }
+        m_tabs->removeTab(index);
+        w->deleteLater();
     });
     setCentralWidget(m_tabs);
     // Tab-Leiste: Doppelklick benennt um, Rechtsklick zeigt das Tab-Menue.
@@ -571,8 +590,26 @@ Workspace *MainWindow::addTab()
     return ws;
 }
 
+// Anklickbarer Hinweis in der Statusleiste: bleibt stehen, bis der zugehoerige
+// Dialog geoeffnet wurde — kurzlebige showMessage()-Meldungen gehen sonst unter.
+static QLabel *makeNotice(QWidget *parent)
+{
+    auto *label = new QLabel(parent);
+    label->setVisible(false);
+    label->setCursor(Qt::PointingHandCursor);
+    label->setStyleSheet(QStringLiteral("color:#d29922; text-decoration:underline;"));
+    return label;
+}
+
 void MainWindow::buildStatusBar()
 {
+    m_alarmNotice = makeNotice(this);
+    m_alarmNotice->installEventFilter(this);
+    m_githubNotice = makeNotice(this);
+    m_githubNotice->installEventFilter(this);
+    statusBar()->addPermanentWidget(m_alarmNotice);
+    statusBar()->addPermanentWidget(m_githubNotice);
+
     // Dauerhafte Anzeigen rechts in der Leiste — sie ueberleben kurzlebige
     // showMessage()-Meldungen.
     m_connectionLabel = new QLabel(_t("Lokales Dateisystem"), this);
@@ -581,6 +618,25 @@ void MainWindow::buildStatusBar()
     for (QLabel *label : {m_connectionLabel, m_hostKeyLabel, m_tunnelLabel})
         statusBar()->addPermanentWidget(label);
     updateConnectionStatus();
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() == QEvent::MouseButtonRelease) {
+        if (watched == m_alarmNotice) {
+            m_pendingAlarms = 0;
+            m_alarmNotice->setVisible(false);
+            openFileAlarms();
+            return true;
+        }
+        if (watched == m_githubNotice) {
+            m_pendingRepos = 0;
+            m_githubNotice->setVisible(false);
+            openGithubAlarms();
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::updateConnectionStatus()
@@ -793,7 +849,7 @@ void MainWindow::openFileDiff()
         pathB = rightSel[0];
     } else {
         QMessageBox::information(this, _t("Datei-Vergleich"),
-                                 _t("Bitte zwei Dateien markieren (je eine pro Pane oder zwei in einer)."));
+                                 _t("Links und rechts je eine Datei markieren."));
         return;
     }
     auto *dlg = new FileDiffDialog(m_bridge, provA, pathA, provB, pathB, this);
@@ -856,6 +912,8 @@ void MainWindow::openVenv()
         // Befehlsfolge nacheinander in die aktive Konsole schicken.
         for (const QString &cmd : dlg.commands())
             ws->sendToActiveConsole(cmd, true);
+        statusBar()->showMessage(
+            _t("venv wird im Terminal angelegt: %1").arg(panel->currentPath()), 8000);
     }
 }
 

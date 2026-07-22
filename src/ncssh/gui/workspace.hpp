@@ -20,6 +20,7 @@
 #include <utility>
 
 class QSplitter;
+class QTimer;
 class QEvent;
 
 namespace ncssh::gui {
@@ -126,6 +127,10 @@ private:
     // Strg+V: Inhalt der internen Zwischenablage in target einfuegen.
     void pasteInto(FilePanel *target, bool move);
     void setSudoMode(bool on);
+    // Haengt das sudo-Dateisystem in die rechte Pane (Passwort bereits geklaert).
+    void enableSudoFilesystem(const QString &keepPath);
+    // Regelmaessige Keepalive-Pruefung; bei Abbruch wird neu verbunden.
+    void startHealthCheck();
     // Konsole in ein eigenes Fenster loesen bzw. zurueckholen.
     void undockConsole(ConsolePanel *console);
     void dockConsole(ConsolePanel *console);
@@ -154,6 +159,8 @@ private:
     ConsolePanel *m_rightConsole = nullptr;
     bool m_rightActive = false;  // zuletzt fokussierte Seite
     TunnelManager m_tunnels;     // offene Port-Weiterleitungen dieser Sitzung
+    QTimer *m_healthTimer = nullptr;   // Keepalive-Wecker
+    bool m_healthPending = false;      // laeuft gerade eine Pruefung?
     bool m_onlyFilesystem = false;
     bool m_onlyTerminal = false;
     QSplitter *m_columns = nullptr;   // waagerechter Splitter der beiden Seiten

@@ -76,6 +76,10 @@ public:
 
     QString label() const { return profile.display(); }
 
+    // Sendet ein Keepalive-Paket. false = die Verbindung ist weg.
+    // Guenstig genug, um sie regelmaessig zu pruefen.
+    bool sendKeepalive();
+
     std::unique_ptr<SFTPFileSystem> filesystem();
     std::unique_ptr<RemoteCommandRunner> runner();
 

@@ -46,6 +46,9 @@ public:
     // Der Workspace stellt den Provider bereit; hier wird nur der Chip gefuehrt.
     void setSudoAvailable(bool available);
     bool sudoActive() const { return m_sudoActive; }
+    // Chip-Zustand setzen, ohne sudoToggled auszuloesen — fuer den Fall, dass
+    // das Umschalten fehlschlaegt und der Haken zurueck muss.
+    void setSudoActive(bool active);
 
     QString currentPath() const { return m_path; }
     QString selectedPath() const;                 // markierte Datei (Vollpfad) oder ""

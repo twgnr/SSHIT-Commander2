@@ -145,6 +145,16 @@ SSHSession::~SSHSession()
     close();
 }
 
+bool SSHSession::sendKeepalive()
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (m_closed || !m_session)
+        return false;
+    int secondsToNext = 0;
+    // Liefert < 0 bei Uebertragungsfehler — dann ist die Verbindung tot.
+    return libssh2_keepalive_send(m_session, &secondsToNext) >= 0;
+}
+
 void SSHSession::close()
 {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);

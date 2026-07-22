@@ -29,6 +29,8 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    // Klicks auf die Hinweis-Beschriftungen in der Statusleiste.
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void buildMenus();
@@ -85,6 +87,10 @@ private:
     QLabel *m_connectionLabel = nullptr;
     QLabel *m_hostKeyLabel = nullptr;
     QLabel *m_tunnelLabel = nullptr;
+    QLabel *m_alarmNotice = nullptr;    // anklickbar, oeffnet die Alarm-Liste
+    QLabel *m_githubNotice = nullptr;
+    int m_pendingAlarms = 0;
+    int m_pendingRepos = 0;
     std::unique_ptr<net::SessionManager> m_sessions;
     TransferManager *m_transfers = nullptr;
     ClipboardManager *m_clipboard = nullptr;

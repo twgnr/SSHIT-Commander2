@@ -19,6 +19,7 @@
 #include <QMessageBox>
 #include <QAbstractButton>
 #include <QSplitter>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace ncssh::gui {
@@ -249,10 +250,45 @@ void Workspace::sendToActiveConsole(const QString &command, bool execute)
     console->runCommand(command, execute);
 }
 
+// Prueft die Verbindung regelmaessig per Keepalive. Faellt sie weg, meldet das
+// die Oberflaeche und bietet das Wiederverbinden an — sonst merkt man den
+// Abbruch erst beim naechsten Klick, mit einer kryptischen Fehlermeldung.
+void Workspace::startHealthCheck()
+{
+    if (!m_healthTimer) {
+        m_healthTimer = new QTimer(this);
+        m_healthTimer->setInterval(20000);
+        connect(m_healthTimer, &QTimer::timeout, this, [this] {
+            if (!m_session || m_session->closing || m_healthPending)
+                return;
+            m_healthPending = true;
+            net::SSHSessionPtr session = m_session;
+            m_bridge->run<bool>(
+                [session] { return session->sendKeepalive(); },
+                [this, session](bool alive) {
+                    m_healthPending = false;
+                    // Zwischenzeitlich getrennt oder ersetzt -> nichts tun.
+                    if (alive || m_session != session || session->closing)
+                        return;
+                    const core::ServerProfile profile = session->profile;
+                    m_healthTimer->stop();
+                    emit statusMessage(
+                        _t("Verbindung verloren — verbinde neu: %1").arg(profile.display()));
+                    disconnectSession();
+                    connectTo(profile);
+                },
+                [this](const QString &) { m_healthPending = false; });
+        });
+    }
+    m_healthTimer->start();
+}
+
 void Workspace::disconnectSession()
 {
     if (!m_session)
         return;
+    if (m_healthTimer)
+        m_healthTimer->stop();
     m_tunnels.stopAll();          // Weiterleitungen zuerst schliessen
     m_sessions->close(m_session);
     m_session.reset();
@@ -438,30 +474,52 @@ void Workspace::setSudoMode(bool on)
 
     // NOPASSWD pruefen; sonst das Passwort einmal erfragen (nur im RAM halten).
     net::SSHSessionPtr session = m_session;
+    const QString host = session->label();
     m_bridge->run<bool>(
         [session] { return net::sudoNeedsPassword(session); },
-        [this, session, keepPath](bool needsPassword) {
-            if (needsPassword && !session->sudoPassword) {
-                bool ok = false;
-                const QString password = QInputDialog::getText(
-                    this, _t("sudo-Passwort"),
-                    _t("Passwort für sudo (wird nur im Speicher gehalten):"),
-                    QLineEdit::Password, QString(), &ok);
-                if (!ok || password.isEmpty()) {
-                    m_rightPanel->setSudoAvailable(true);  // Chip zuruecksetzen
-                    return;
-                }
-                if (!net::verifySudoPassword(session, password)) {
-                    QMessageBox::warning(this, _t("sudo"), _t("Passwort abgelehnt."));
-                    return;
-                }
-                session->sudoPassword = password;
+        [this, session, keepPath, host](bool needsPassword) {
+            if (!needsPassword || session->sudoPassword) {
+                enableSudoFilesystem(keepPath);
+                return;
             }
-            m_sudoFs = std::make_unique<net::SudoFileSystem>(m_remoteFs.get(), session);
-            m_rightPanel->setProvider(m_sudoFs.get(), keepPath);
-            emit statusMessage(_t("sudo-Modus aktiv — Operationen laufen als root."));
+            bool ok = false;
+            const QString password = QInputDialog::getText(
+                this, _t("sudo-Passwort"), _t("sudo-Passwort für %1:").arg(host),
+                QLineEdit::Password, QString(), &ok);
+            if (!ok || password.isEmpty()) {
+                m_rightPanel->setSudoActive(false);   // Chip zurueckstellen
+                return;
+            }
+            // Pruefung geht ueber SSH — nicht im GUI-Thread, sonst haengt das
+            // Fenster fuer die Dauer der Runde.
+            m_bridge->run<bool>(
+                [session, password] { return net::verifySudoPassword(session, password); },
+                [this, session, password, keepPath](bool accepted) {
+                    if (!accepted) {
+                        QMessageBox::warning(this, _t("sudo"),
+                                             _t("sudo-Authentifizierung fehlgeschlagen."));
+                        m_rightPanel->setSudoActive(false);
+                        return;
+                    }
+                    session->sudoPassword = password;
+                    enableSudoFilesystem(keepPath);
+                },
+                [this](const QString &err) {
+                    QMessageBox::warning(this, _t("sudo"), err);
+                    m_rightPanel->setSudoActive(false);
+                });
         },
-        [this](const QString &err) { QMessageBox::warning(this, _t("sudo"), err); });
+        [this](const QString &err) {
+            QMessageBox::warning(this, _t("sudo"), err);
+            m_rightPanel->setSudoActive(false);
+        });
+}
+
+void Workspace::enableSudoFilesystem(const QString &keepPath)
+{
+    m_sudoFs = std::make_unique<net::SudoFileSystem>(m_remoteFs.get(), m_session);
+    m_rightPanel->setProvider(m_sudoFs.get(), keepPath);
+    emit statusMessage(_t("sudo-Modus aktiv — Operationen laufen als root."));
 }
 
 QJsonObject Workspace::toJson() const
@@ -530,6 +588,7 @@ void Workspace::connectTo(const core::ServerProfile &profile)
                     m_sessions->hostkeys.save();
                 }
             }
+            startHealthCheck();
             emit connectionChanged();
         },
         [this, profile](const QString &err) {

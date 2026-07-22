@@ -35,6 +35,7 @@
 #include <QListView>
 #include <QProcess>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QSize>
 #include <QStackedWidget>
 #include <QToolButton>
@@ -1180,7 +1181,7 @@ void FilePanel::opDelete()
     options.sourceHeader = _t("Wird gelöscht");
     if (!PathConfirmDialog::confirm(
             _t("Löschen"),
-            QStringLiteral("%1 Element(e) unwiderruflich löschen?").arg(paths.size()),
+            _t("%1 Objekt(e) unwiderruflich löschen?").arg(paths.size()),
             pairs, options, this))
         return;
     core::FileSystemProvider *provider = m_provider;
@@ -1189,8 +1190,15 @@ void FilePanel::opDelete()
             for (const QString &p : paths)
                 provider->remove(p, true);
         },
-        [this] { refresh(); },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this, count = paths.size()] {
+            refresh();
+            emit statusMessage(_t("%1 gelöscht").arg(count));
+        },
+        [this](const QString &err) {
+            // Der Ordner kann teilweise geleert sein — neu einlesen.
+            refresh();
+            QMessageBox::warning(this, _t("Löschen fehlgeschlagen"), err);
+        });
 }
 
 void FilePanel::opProperties()
@@ -1578,7 +1586,15 @@ void FilePanel::setSudoAvailable(bool available)
     m_sudoAvailable = available;
     m_sudoChip->setVisible(available);
     if (!available && m_sudoChip->isChecked())
-        m_sudoChip->setChecked(false);
+        setSudoActive(false);
+}
+
+void FilePanel::setSudoActive(bool active)
+{
+    // Ohne Blocker wuerde das Zuruecksetzen ein erneutes Umschalten ausloesen.
+    QSignalBlocker blocker(m_sudoChip);
+    m_sudoChip->setChecked(active);
+    m_sudoActive = active;
 }
 
 void FilePanel::sortBy(int column)
