@@ -4,6 +4,7 @@
 
 #include <QFont>
 #include <QPlainTextEdit>
+#include <QRegularExpression>
 #include <QTextCursor>
 
 namespace ncssh::gui {
@@ -30,6 +31,23 @@ static QColor ansiColor(int n)
 AnsiRenderer::AnsiRenderer(QPlainTextEdit *editor) : m_editor(editor)
 {
     reset();
+}
+
+QString AnsiRenderer::stripAnsi(const QString &text)
+{
+    // CSI-Sequenzen (ESC [ ... Endbuchstabe), OSC-Sequenzen (ESC ] ... BEL/ST)
+    // und einzelne ESC-Kommandos. Zusaetzlich \r, damit Zeilen nicht verschmelzen.
+    static const QRegularExpression csi(
+        QStringLiteral("\x1b\\[[0-9;?]*[A-Za-z]"));
+    static const QRegularExpression osc(
+        QStringLiteral("\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)"));
+    static const QRegularExpression single(QStringLiteral("\x1b[()#][0-9A-Za-z]|\x1b[A-Za-z=>]"));
+    QString out = text;
+    out.remove(osc);
+    out.remove(csi);
+    out.remove(single);
+    out.remove(QLatin1Char('\r'));
+    return out;
 }
 
 void AnsiRenderer::reset()

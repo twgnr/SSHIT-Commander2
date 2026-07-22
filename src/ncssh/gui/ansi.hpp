@@ -26,6 +26,9 @@ public:
     // Verarbeitet einen Ausgabe-Chunk (darf mitten in einer Sequenz enden).
     void feed(const QString &text);
 
+    // Entfernt ANSI-/VT-Steuersequenzen — fuer Mitschnitt und Textkopien.
+    static QString stripAnsi(const QString &text);
+
 private:
     QTextCharFormat format() const;
     void applySgr(const QString &params);
