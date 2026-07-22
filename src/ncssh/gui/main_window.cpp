@@ -1,8 +1,10 @@
 #include "ncssh/gui/main_window.hpp"
 
 #include "ncssh/core/assets.hpp"
+#include "ncssh/core/bookmarks.hpp"
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/settings.hpp"
+#include "ncssh/gui/file_dialogs.hpp"
 #include "ncssh/gui/bulk_rename_dialog.hpp"
 #include "ncssh/gui/clipboard_manager.hpp"
 #include "ncssh/gui/command_palette.hpp"
@@ -32,18 +34,25 @@
 #include "ncssh/gui/tunnel_dialog.hpp"
 #include "ncssh/gui/workspace.hpp"
 
+#include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDir>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QIcon>
+#include <QLineEdit>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPixmap>
+#include <QSignalBlocker>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QToolBar>
+#include <utility>
 
 namespace ncssh::gui {
 
@@ -88,6 +97,29 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
         }
     });
     setCentralWidget(m_tabs);
+    // Tab-Leiste: Doppelklick benennt um, Rechtsklick zeigt das Tab-Menue.
+    m_tabs->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_tabs->tabBar(), &QTabBar::tabBarDoubleClicked, this,
+            [this](int index) {
+                if (index >= 0) {
+                    m_tabs->setCurrentIndex(index);
+                    renameCurrentTab();
+                }
+            });
+    connect(m_tabs->tabBar(), &QTabBar::customContextMenuRequested, this,
+            [this](const QPoint &pos) {
+                const int index = m_tabs->tabBar()->tabAt(pos);
+                if (index < 0)
+                    return;
+                m_tabs->setCurrentIndex(index);
+                QMenu menu(this);
+                menu.addAction(_t("Tab umbenennen …"), this, &MainWindow::renameCurrentTab);
+                menu.addAction(_t("Verbindung trennen"), this,
+                               &MainWindow::disconnectCurrentTab);
+                menu.exec(m_tabs->tabBar()->mapToGlobal(pos));
+            });
+    connect(m_tabs, &QTabWidget::currentChanged, this,
+            [this](int) { syncViewActions(); });
 
     buildMenus();
     statusBar()->showMessage(_t("Bereit."));
@@ -134,7 +166,7 @@ MainWindow::~MainWindow()
 void MainWindow::buildMenus()
 {
     // --- Aktionen ---
-    QMenu *actions = menuBar()->addMenu(_t("Aktionen"));
+    QMenu *actions = menuBar()->addMenu(_t("&Aktionen"));
     QAction *connectAct = actions->addAction(_t("SSH verbinden"), this,
                                              &MainWindow::openServerManager);
     connectAct->setShortcut(QKeySequence(Qt::Key_F9));
@@ -153,11 +185,19 @@ void MainWindow::buildMenus()
     tunnelAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+T")));
     actions->addAction(_t("Tab-Favoriten"), this, &MainWindow::openTabFavorites);
     actions->addSeparator();
+    actions->addAction(_t("Tab umbenennen …"), this, &MainWindow::renameCurrentTab);
+    actions->addAction(_t("Verbindung trennen"), this, &MainWindow::disconnectCurrentTab);
+    actions->addSeparator();
+    actions->addAction(_t("Lesezeichen exportieren …"), this,
+                       [this] { exportBookmarks(); });
+    actions->addAction(_t("Lesezeichen importieren …"), this,
+                       [this] { importBookmarks(); });
+    actions->addSeparator();
     QAction *quitAct = actions->addAction(_t("Beenden"), this, &QWidget::close);
     quitAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Q")));
 
     // --- Tools ---
-    QMenu *tools = menuBar()->addMenu(_t("Tools"));
+    QMenu *tools = menuBar()->addMenu(_t("&Tools"));
     QAction *searchName = tools->addAction(_t("Datei-Suche (Name)"), this,
                                            [this] { openSearch(QStringLiteral("name")); });
     searchName->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")));
@@ -194,15 +234,53 @@ void MainWindow::buildMenus()
     QMenu *clipboard = menuBar()->addMenu(_t("Clipboard"));
     clipboard->addAction(_t("Clipboard-Manager"), this, &MainWindow::openClipboard);
 
+    // --- Panes ---
+    QMenu *panes = menuBar()->addMenu(_t("&Panes"));
+    m_onlyFsAction = panes->addAction(_t("Nur Dateisystem anzeigen"));
+    m_onlyFsAction->setCheckable(true);
+    connect(m_onlyFsAction, &QAction::toggled, this, [this](bool on) {
+        if (on && m_onlyTermAction->isChecked())
+            m_onlyTermAction->setChecked(false);
+        if (Workspace *ws = currentWorkspace())
+            ws->setOnlyFilesystem(on);
+    });
+    m_onlyTermAction = panes->addAction(_t("Nur Terminal anzeigen"));
+    m_onlyTermAction->setCheckable(true);
+    connect(m_onlyTermAction, &QAction::toggled, this, [this](bool on) {
+        if (on && m_onlyFsAction->isChecked())
+            m_onlyFsAction->setChecked(false);
+        if (Workspace *ws = currentWorkspace())
+            ws->setOnlyTerminal(on);
+    });
+    m_vertPanesAction = panes->addAction(_t("Panes untereinander anzeigen"));
+    m_vertPanesAction->setCheckable(true);
+    connect(m_vertPanesAction, &QAction::toggled, this, [this](bool on) {
+        if (Workspace *ws = currentWorkspace())
+            ws->setPanesVertical(on);
+    });
+    panes->addSeparator();
+    panes->addAction(_t("Panes tauschen"), this, [this] {
+        if (Workspace *ws = currentWorkspace())
+            ws->swapPanes();
+    });
+    panes->addAction(_t("Panes synchronisieren"), this, [this] {
+        if (Workspace *ws = currentWorkspace())
+            ws->syncPanes();
+    });
+    panes->addSeparator();
+    QAction *broadcastAct = panes->addAction(_t("Befehl an beide Konsolen …"), this,
+                                             &MainWindow::broadcastCommand);
+    broadcastAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+B")));
+
     // --- Ansicht: Theme ---
-    QMenu *view = menuBar()->addMenu(_t("Ansicht"));
+    QMenu *view = menuBar()->addMenu(_t("&Ansicht"));
     QMenu *themeMenu = view->addMenu(_t("Theme"));
     for (const QString &name : themeNames()) {
         themeMenu->addAction(name, this, [this, name] { applyThemeByName(name); });
     }
     view->addAction(_t("Theme-Editor …"), this, &MainWindow::openThemeEditor);
     view->addSeparator();
-    QAction *previewAct = view->addAction(_t("Vorschau"));
+    QAction *previewAct = view->addAction(_t("Vorschau-Panel"));
     previewAct->setCheckable(true);
     previewAct->setShortcut(QKeySequence(Qt::Key_F2 | Qt::CTRL));
     connect(previewAct, &QAction::toggled, this, [this](bool on) {
@@ -213,17 +291,12 @@ void MainWindow::buildMenus()
     });
 
     // --- Hilfe ---
-    QMenu *help = menuBar()->addMenu(_t("Hilfe"));
+    QMenu *help = menuBar()->addMenu(_t("&Hilfe"));
     QAction *helpAct = help->addAction(_t("Hilfe"), this, [this] { openHelp(1); });
     helpAct->setShortcut(QKeySequence(Qt::Key_F1));
     help->addAction(_t("Tastenkürzel"), this, [this] { openHelp(0); });
     help->addSeparator();
-    help->addAction(_t("Über"), this, [this] {
-        QMessageBox::about(this, QStringLiteral("SSHIT-Commander"),
-                           QStringLiteral("<b>SSHIT-Commander</b> (C++/Qt6-Port)<br>"
-                                          "Dual-Pane-Dateimanager mit SSH/SFTP-Terminal.<br>"
-                                          "Backend: libssh2."));
-    });
+    help->addAction(_t("Über SSHIT-Commander …"), this, &MainWindow::showAbout);
 
     // --- Toolbar (gezeichnete Icons in der Textfarbe des Themes) ---
     auto *toolbar = addToolBar(_t("Haupt"));
@@ -249,6 +322,96 @@ void MainWindow::buildMenus()
                        [this] { openHelp(1); });
 }
 
+void MainWindow::showAbout()
+{
+    QMessageBox::about(
+        this, _t("Über SSHIT-Commander"),
+        QStringLiteral("<b>SSHIT-Commander</b><br>"
+                       "%1<br><br>%2<br>%3")
+            .arg(_t("Dual-Pane-Dateimanager mit SSH/SFTP und Terminal."),
+                 _t("C++/Qt6-Portierung der Python-Fassung."),
+                 _t("SSH-Schicht: libssh2 · Oberfläche: Qt %1")
+                     .arg(QString::fromLatin1(qVersion()))));
+}
+
+void MainWindow::renameCurrentTab()
+{
+    const int index = m_tabs->currentIndex();
+    if (index < 0)
+        return;
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, _t("Tab umbenennen"), _t("Name:"),
+                                               QLineEdit::Normal, m_tabs->tabText(index), &ok);
+    if (ok && !name.isEmpty())
+        m_tabs->setTabText(index, name);
+}
+
+void MainWindow::disconnectCurrentTab()
+{
+    Workspace *ws = currentWorkspace();
+    if (!ws)
+        return;
+    if (!ws->isConnected()) {
+        statusBar()->showMessage(_t("Diese Seite ist nicht verbunden."), 5000);
+        return;
+    }
+    const QString label = ws->connectionLabel();
+    if (QMessageBox::question(this, _t("Verbindung trennen"),
+                              _t("Verbindung zu %1 trennen?").arg(label))
+        != QMessageBox::Yes)
+        return;
+    ws->disconnectSession();
+    statusBar()->showMessage(_t("Verbindung getrennt: %1").arg(label), 8000);
+}
+
+void MainWindow::broadcastCommand()
+{
+    Workspace *ws = currentWorkspace();
+    if (!ws)
+        return;
+    bool ok = false;
+    const QString command = QInputDialog::getText(this, _t("Broadcast"),
+                                                  _t("Befehl an beide Konsolen:"),
+                                                  QLineEdit::Normal, QString(), &ok);
+    if (!ok || command.trimmed().isEmpty())
+        return;
+    ws->broadcastToConsoles(command, /*execute=*/true);
+}
+
+void MainWindow::exportBookmarks()
+{
+    const QString path = getSaveFileName(this, _t("Lesezeichen exportieren"),
+                                         QStringLiteral("bookmarks.json"),
+                                         _t("JSON-Dateien (*.json)"));
+    if (path.isEmpty())
+        return;
+    core::BookmarkStore store;
+    store.load();
+    try {
+        store.exportTo(path);
+        statusBar()->showMessage(_t("Lesezeichen exportiert: %1").arg(path), 8000);
+    } catch (const std::exception &exc) {
+        QMessageBox::warning(this, _t("Fehler"), QString::fromUtf8(exc.what()));
+    }
+}
+
+void MainWindow::importBookmarks()
+{
+    const QString path = getOpenFileName(this, _t("Lesezeichen importieren"), QString(),
+                                         _t("JSON-Dateien (*.json)"));
+    if (path.isEmpty())
+        return;
+    core::BookmarkStore store;
+    store.load();
+    try {
+        const int count = store.importFrom(path);
+        store.save();
+        statusBar()->showMessage(_t("%1 Lesezeichen importiert.").arg(count), 8000);
+    } catch (const std::exception &exc) {
+        QMessageBox::warning(this, _t("Fehler"), QString::fromUtf8(exc.what()));
+    }
+}
+
 Workspace *MainWindow::addTab()
 {
     auto *ws = new Workspace(m_bridge, m_sessions.get(), m_transfers, this);
@@ -262,6 +425,20 @@ Workspace *MainWindow::addTab()
     });
     m_tabs->setCurrentIndex(index);
     return ws;
+}
+
+void MainWindow::syncViewActions()
+{
+    Workspace *ws = currentWorkspace();
+    if (!ws)
+        return;
+    // Nur die Haken nachziehen — ohne die Umschalt-Aktion erneut auszuloesen.
+    for (auto [action, value] : {std::pair{m_onlyFsAction, ws->onlyFilesystem()},
+                                 std::pair{m_onlyTermAction, ws->onlyTerminal()},
+                                 std::pair{m_vertPanesAction, ws->panesVertical()}}) {
+        QSignalBlocker blocker(action);
+        action->setChecked(value);
+    }
 }
 
 Workspace *MainWindow::currentWorkspace() const

@@ -9,6 +9,7 @@
 #include <memory>
 
 class QTabWidget;
+class QAction;
 
 namespace ncssh::gui {
 
@@ -57,8 +58,19 @@ private:
     void saveSession();      // offene Tabs fuer die Wiederherstellung sichern
     void restoreSession();
     void applyThemeByName(const QString &name);
+    void showAbout();
+    void renameCurrentTab();
+    void disconnectCurrentTab();
+    void broadcastCommand();     // Befehl an beide Konsolen
+    void exportBookmarks();
+    void importBookmarks();
+    // Ansichts-Zustand des Tabs in die Menue-Haken uebernehmen.
+    void syncViewActions();
 
     AsyncBridge *m_bridge;
+    QAction *m_onlyFsAction = nullptr;
+    QAction *m_onlyTermAction = nullptr;
+    QAction *m_vertPanesAction = nullptr;
     std::unique_ptr<net::SessionManager> m_sessions;
     TransferManager *m_transfers = nullptr;
     ClipboardManager *m_clipboard = nullptr;

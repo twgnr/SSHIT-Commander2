@@ -65,6 +65,7 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     columns->addWidget(leftCol);
     columns->addWidget(rightCol);
     columns->setSizes({500, 500});
+    m_columns = columns;
     layout->addWidget(columns);
 
     // Lokale Provider zuweisen
@@ -221,6 +222,98 @@ void Workspace::sendToActiveConsole(const QString &command, bool execute)
 {
     ConsolePanel *console = m_rightActive ? m_rightConsole : m_leftConsole;
     console->runCommand(command, execute);
+}
+
+void Workspace::disconnectSession()
+{
+    if (!m_session)
+        return;
+    m_tunnels.stopAll();          // Weiterleitungen zuerst schliessen
+    m_sessions->close(m_session);
+    m_session.reset();
+    // Reihenfolge zaehlt: erst die Verbraucher abhaengen, dann die Objekte
+    // freigeben — sonst zeigt eine Pane noch auf ein totes Dateisystem.
+    m_rightPanel->setSudoAvailable(false);
+    m_rightConsole->setSession({});
+    m_rightConsole->setRunner(m_localRunner.get(), QDir::homePath());
+    m_rightPanel->setHeaderTitle(_t("Remote (nicht verbunden)"));
+    m_rightPanel->setProvider(m_localFs.get(), QDir::homePath());
+    m_sudoFs.reset();
+    m_remoteRunner.reset();
+    m_remoteFs.reset();
+    emit connectionChanged();
+}
+
+void Workspace::broadcastToConsoles(const QString &command, bool execute)
+{
+    m_leftConsole->runCommand(command, execute);
+    m_rightConsole->runCommand(command, execute);
+}
+
+// --- Ansichts-Modi ----------------------------------------------------------
+
+void Workspace::setOnlyFilesystem(bool on)
+{
+    m_onlyFilesystem = on;
+    if (on)
+        m_onlyTerminal = false;
+    // Konsolen aus-/einblenden; abgedockte Konsolen bleiben unberuehrt.
+    for (ConsolePanel *console : {m_leftConsole, m_rightConsole}) {
+        if (console->parentWidget() == m_leftColumn || console->parentWidget() == m_rightColumn)
+            console->setVisible(!on);
+    }
+    for (FilePanel *panel : {m_leftPanel, m_rightPanel})
+        panel->setVisible(true);
+}
+
+void Workspace::setOnlyTerminal(bool on)
+{
+    m_onlyTerminal = on;
+    if (on)
+        m_onlyFilesystem = false;
+    for (FilePanel *panel : {m_leftPanel, m_rightPanel})
+        panel->setVisible(!on);
+    for (ConsolePanel *console : {m_leftConsole, m_rightConsole}) {
+        if (console->parentWidget() == m_leftColumn || console->parentWidget() == m_rightColumn)
+            console->setVisible(true);
+    }
+    if (on)
+        setPreviewVisible(false);
+}
+
+void Workspace::setPanesVertical(bool vertical)
+{
+    if (m_columns)
+        m_columns->setOrientation(vertical ? Qt::Vertical : Qt::Horizontal);
+}
+
+bool Workspace::panesVertical() const
+{
+    return m_columns && m_columns->orientation() == Qt::Vertical;
+}
+
+void Workspace::swapPanes()
+{
+    // Nur die Inhalte tauschen — die Widgets bleiben, wo sie sind, damit
+    // Provider-Zuordnung und Konsolen-Kopplung stimmig bleiben.
+    core::FileSystemProvider *leftProvider = m_leftPanel->provider();
+    core::FileSystemProvider *rightProvider = m_rightPanel->provider();
+    const QString leftPath = m_leftPanel->currentPath();
+    const QString rightPath = m_rightPanel->currentPath();
+    if (!leftProvider || !rightProvider)
+        return;
+    m_leftPanel->setProvider(rightProvider, rightPath);
+    m_rightPanel->setProvider(leftProvider, leftPath);
+}
+
+void Workspace::syncPanes()
+{
+    // Inaktive Seite auf das Verzeichnis der aktiven bringen.
+    FilePanel *from = activePanel();
+    FilePanel *to = (from == m_leftPanel) ? m_rightPanel : m_leftPanel;
+    if (from->currentPath().isEmpty())
+        return;
+    to->navigateTo(from->currentPath());
 }
 
 FilePanel *Workspace::activePanel() const

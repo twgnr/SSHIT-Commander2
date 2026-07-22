@@ -35,12 +35,29 @@ public:
 
     // Verbindet die rechte Pane mit einem Server (asynchron).
     void connectTo(const core::ServerProfile &profile);
+    // Trennt die Verbindung und stellt die rechte Seite auf lokal zurueck.
+    void disconnectSession();
     bool isConnected() const { return static_cast<bool>(m_session); }
     QString connectionLabel() const;
 
     // Vorschau-Panels beider Seiten ein-/ausblenden.
     void setPreviewVisible(bool visible);
     bool previewVisible() const;
+
+    // --- Ansichts-Modi ---
+    // Nur die Dateilisten bzw. nur die Konsolen zeigen (sonst beides).
+    void setOnlyFilesystem(bool on);
+    void setOnlyTerminal(bool on);
+    bool onlyFilesystem() const { return m_onlyFilesystem; }
+    bool onlyTerminal() const { return m_onlyTerminal; }
+    // Panes nebeneinander (waagerecht) oder untereinander (senkrecht).
+    void setPanesVertical(bool vertical);
+    bool panesVertical() const;
+    // Linke und rechte Seite tauschen bzw. Verzeichnis angleichen.
+    void swapPanes();
+    void syncPanes();
+    // Befehl an beide Konsolen schicken.
+    void broadcastToConsoles(const QString &command, bool execute);
 
     // OS der aktiven Seite ("posix"/"windows") — fuer die Befehlspalette.
     QString activeOsType() const;
@@ -116,6 +133,9 @@ private:
     ConsolePanel *m_rightConsole = nullptr;
     bool m_rightActive = false;  // zuletzt fokussierte Seite
     TunnelManager m_tunnels;     // offene Port-Weiterleitungen dieser Sitzung
+    bool m_onlyFilesystem = false;
+    bool m_onlyTerminal = false;
+    QSplitter *m_columns = nullptr;   // waagerechter Splitter der beiden Seiten
     // Spalten-Splitter je Seite (zum Wiedereinhaengen abgedockter Konsolen)
     QSplitter *m_leftColumn = nullptr;
     QSplitter *m_rightColumn = nullptr;
