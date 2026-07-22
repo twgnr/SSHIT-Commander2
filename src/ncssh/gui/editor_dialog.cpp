@@ -5,6 +5,7 @@
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/ai_chat_panel.hpp"
 #include "ncssh/gui/highlighter.hpp"
+#include "ncssh/gui/minimap.hpp"
 
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -154,13 +155,22 @@ EditorDialog::EditorDialog(AsyncBridge *bridge, core::FileSystemProvider *provid
             updateTitle();
         }
     });
-    layout->addWidget(m_editor, 1);
+    // Editor + Minimap nebeneinander
+    auto *editorRow = new QHBoxLayout();
+    editorRow->setContentsMargins(0, 0, 0, 0);
+    editorRow->setSpacing(2);
+    editorRow->addWidget(m_editor, 1);
+    m_minimap = new Minimap(m_editor, this);
+    editorRow->addWidget(m_minimap);
+    layout->addLayout(editorRow, 1);
 
     // Suchen/Ersetzen-Leiste
     auto *findRow = new QHBoxLayout();
     m_find = new QLineEdit(this);
     m_find->setPlaceholderText(_t("Suchen …"));
     connect(m_find, &QLineEdit::returnPressed, this, [this] { findNext(); });
+    // Treffer laufend in der Minimap markieren.
+    connect(m_find, &QLineEdit::textChanged, this, &EditorDialog::updateMatches);
     m_replace = new QLineEdit(this);
     m_replace->setPlaceholderText(_t("Ersetzen durch …"));
     m_caseSensitive = new QCheckBox(_t("Aa"), this);
@@ -272,6 +282,25 @@ void EditorDialog::save(bool saveAs)
             m_status->setText(_t("Gespeichert."));
         },
         [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+}
+
+void EditorDialog::updateMatches()
+{
+    const QString needle = m_find->text();
+    std::vector<int> lines;
+    if (!needle.isEmpty()) {
+        const auto sensitivity = m_caseSensitive->isChecked() ? Qt::CaseSensitive
+                                                              : Qt::CaseInsensitive;
+        QTextBlock block = m_editor->document()->firstBlock();
+        int lineNo = 0;
+        while (block.isValid()) {
+            if (block.text().contains(needle, sensitivity))
+                lines.push_back(lineNo);
+            block = block.next();
+            ++lineNo;
+        }
+    }
+    m_minimap->setMatches(lines);
 }
 
 void EditorDialog::findNext(bool backwards)

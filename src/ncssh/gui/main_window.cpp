@@ -21,6 +21,7 @@
 #include "ncssh/gui/venv_dialog.hpp"
 #include "ncssh/gui/history_dialog.hpp"
 #include "ncssh/gui/known_hosts_dialog.hpp"
+#include "ncssh/gui/macro_manager_dialog.hpp"
 #include "ncssh/gui/search_dialog.hpp"
 #include "ncssh/gui/settings_dialog.hpp"
 #include "ncssh/gui/server_manager.hpp"
@@ -181,6 +182,7 @@ void MainWindow::buildMenus()
     tools->addSeparator();
     tools->addAction(_t("Datei-Alarm"), this, &MainWindow::openFileAlarms);
     tools->addAction(_t("GitHub-Alarm"), this, &MainWindow::openGithubAlarms);
+    tools->addAction(_t("Makro-Manager"), this, &MainWindow::openMacroManager);
     tools->addSeparator();
     tools->addAction(_t("Bekannte Host-Keys"), this, &MainWindow::openKnownHosts);
     QAction *settingsAct = tools->addAction(_t("Einstellungen"), this,
@@ -377,6 +379,13 @@ void MainWindow::openNetscan()
 {
     auto *dlg = new NetscanDialog(m_bridge, this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
+    // Beim Schliessen die gefundenen Hosts in die aktive Pane uebernehmen.
+    connect(dlg, &QDialog::accepted, this, [this, dlg] {
+        if (dlg->hosts().empty())
+            return;
+        if (Workspace *ws = currentWorkspace())
+            ws->showNetworkHosts(dlg->hosts());
+    });
     dlg->show();
 }
 
@@ -462,6 +471,24 @@ void MainWindow::openGithubAlarms()
 {
     GithubAlarmDialog dlg(m_githubAlarms, this);
     dlg.exec();
+}
+
+void MainWindow::openMacroManager()
+{
+    // Makros koennen Befehle an die aktive bzw. alle Konsolen schicken.
+    auto sshSend = [this](const QString &command, bool run) {
+        if (Workspace *ws = currentWorkspace())
+            ws->sendToActiveConsole(command, run);
+    };
+    auto sshBroadcast = [this](const QString &command, bool run) {
+        for (int i = 0; i < m_tabs->count(); ++i) {
+            if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i)))
+                ws->sendToActiveConsole(command, run);
+        }
+    };
+    auto *dlg = new MacroManagerDialog(m_bridge, sshSend, sshBroadcast, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->show();
 }
 
 void MainWindow::openTabFavorites()

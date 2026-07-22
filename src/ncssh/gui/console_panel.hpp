@@ -37,12 +37,18 @@ public:
     // Session fuer den Terminal-Modus (leer = lokale Shell).
     void setSession(const net::SSHSessionPtr &session);
 
+    // Beschriftung des Abdock-Knopfes umschalten.
+    void setDocked(bool docked);
+
     void runCommand(const QString &command, bool execute = true);
 
 signals:
     void activated();
     void cwdChanged(const QString &cwd);   // durch 'cd' in der Konsole
     void statusMessage(const QString &msg);
+    // "⤢ Abdocken" / "⤵ Andocken" — der Workspace fuehrt den Wechsel aus.
+    void undockRequested();
+    void dockRequested();
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -60,6 +66,8 @@ private:
     QString m_cwd;
 
     QLabel *m_header = nullptr;
+    QPushButton *m_dockButton = nullptr;
+    bool m_docked = true;
     QStackedWidget *m_stack = nullptr;
     QWidget *m_commandPage = nullptr;
     TerminalWidget *m_terminal = nullptr;

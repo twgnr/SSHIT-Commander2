@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <QDir>
+#include <QEvent>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -33,6 +34,7 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
 
     // Linke Spalte: lokale Pane + Konsole
     auto *leftCol = new QSplitter(Qt::Vertical, columns);
+    m_leftColumn = leftCol;
     m_leftPanel = new FilePanel(bridge, _t("Lokal"), leftCol);
     m_leftConsole = new ConsolePanel(bridge, _t("Konsole (lokal)"), leftCol);
     leftCol->addWidget(m_leftPanel);
@@ -42,6 +44,7 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
 
     // Rechte Spalte: remote Pane + Konsole (bis Connect ebenfalls lokal)
     auto *rightCol = new QSplitter(Qt::Vertical, columns);
+    m_rightColumn = rightCol;
     m_rightPanel = new FilePanel(bridge, _t("Remote (nicht verbunden)"), rightCol);
     m_rightConsole = new ConsolePanel(bridge, _t("Konsole (remote)"), rightCol);
     rightCol->addWidget(m_rightPanel);
@@ -81,6 +84,32 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
 
     // sudo-Modus der rechten Pane: auf das sudo-Dateisystem umschalten.
     connect(m_rightPanel, &FilePanel::sudoToggled, this, &Workspace::setSudoMode);
+
+    // Abdocken/Andocken der Konsolen-Spalte.
+    for (ConsolePanel *console : {m_leftConsole, m_rightConsole}) {
+        connect(console, &ConsolePanel::undockRequested, this,
+                [this, console] { undockConsole(console); });
+        connect(console, &ConsolePanel::dockRequested, this,
+                [this, console] { dockConsole(console); });
+    }
+
+    // Drag & Drop: Quelle ist die jeweils andere Pane (bzw. der Explorer).
+    connect(m_leftPanel, &FilePanel::filesDropped, this,
+            [this](const QStringList &paths, bool fromExplorer) {
+                core::FileSystemProvider *src = fromExplorer ? m_localFs.get()
+                                                             : m_rightPanel->provider();
+                for (const QString &p : paths)
+                    startTransfer(src, p, m_leftPanel->provider(),
+                                  m_leftPanel->currentPath());
+            });
+    connect(m_rightPanel, &FilePanel::filesDropped, this,
+            [this](const QStringList &paths, bool fromExplorer) {
+                core::FileSystemProvider *src = fromExplorer ? m_localFs.get()
+                                                             : m_leftPanel->provider();
+                for (const QString &p : paths)
+                    startTransfer(src, p, m_rightPanel->provider(),
+                                  m_rightPanel->currentPath());
+            });
 
     // Transfer: F5 aus einer Pane -> in das Verzeichnis der anderen Pane.
     connect(m_leftPanel, &FilePanel::transferRequested, this, [this](const QString &src) {
@@ -125,6 +154,74 @@ void Workspace::sendToActiveConsole(const QString &command, bool execute)
 FilePanel *Workspace::activePanel() const
 {
     return m_rightActive ? m_rightPanel : m_leftPanel;
+}
+
+void Workspace::showNetworkHosts(const std::vector<core::HostResult> &hosts)
+{
+    // Netzwerk-Provider anlegen bzw. aktualisieren und in der aktiven Pane zeigen.
+    if (!m_netFs)
+        m_netFs = std::make_unique<core::NetworkScanProvider>(hosts);
+    else
+        m_netFs->setHosts(hosts);
+    FilePanel *panel = activePanel();
+    panel->setHeaderTitle(_t("Netzwerk"));
+    panel->setBookmarkKey(QStringLiteral("network"));
+    panel->setProvider(m_netFs.get(), QStringLiteral("net://"));
+    emit statusMessage(QStringLiteral("%1 Host(s) im Netzwerk-Modus").arg(hosts.size()));
+}
+
+void Workspace::undockConsole(ConsolePanel *console)
+{
+    if (m_floatingConsoles.contains(console))
+        return;
+    // Eigenes Fenster als Container; die Pane fuellt danach die Spalte.
+    auto *window = new QWidget(this, Qt::Window);
+    window->setObjectName(QStringLiteral("FloatingConsole"));
+    window->setWindowTitle(console == m_leftConsole ? _t("Konsole (lokal)")
+                                                    : _t("Konsole (remote)"));
+    auto *layout = new QVBoxLayout(window);
+    layout->setContentsMargins(4, 4, 4, 4);
+    console->setParent(window);
+    layout->addWidget(console);
+    console->setDocked(false);
+    console->show();
+    window->resize(760, 420);
+    window->show();
+    // Fenster schliessen = andocken.
+    window->installEventFilter(this);
+    m_floatingConsoles.insert(console, window);
+}
+
+void Workspace::dockConsole(ConsolePanel *console)
+{
+    QWidget *window = m_floatingConsoles.value(console, nullptr);
+    if (!window)
+        return;
+    QSplitter *column = (console == m_leftConsole) ? m_leftColumn : m_rightColumn;
+    console->setParent(column);
+    column->addWidget(console);
+    console->setDocked(true);
+    console->show();
+    m_floatingConsoles.remove(console);
+    window->deleteLater();
+}
+
+bool Workspace::eventFilter(QObject *obj, QEvent *event)
+{
+    // Wird ein abgedocktes Fenster geschlossen, die Konsole zurueckholen.
+    if (event->type() == QEvent::Close) {
+        for (auto it = m_floatingConsoles.begin(); it != m_floatingConsoles.end(); ++it) {
+            if (it.value() == obj) {
+                ConsolePanel *console = it.key();
+                // Direkt andocken; das Fenster wird dabei geloescht.
+                QMetaObject::invokeMethod(this, [this, console] { dockConsole(console); },
+                                          Qt::QueuedConnection);
+                event->ignore();
+                return true;
+            }
+        }
+    }
+    return QWidget::eventFilter(obj, event);
 }
 
 void Workspace::setSudoMode(bool on)

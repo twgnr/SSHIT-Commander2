@@ -46,9 +46,21 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     aiButton->setObjectName(QStringLiteral("Chip"));
     aiButton->setToolTip(_t("Ausgabe/Fehler von der KI erklären lassen"));
     connect(aiButton, &QPushButton::clicked, this, &ConsolePanel::explainWithAi);
+    // Abdocken: die Konsole wird zu einem eigenen Fenster; die Pane bekommt
+    // dadurch den vollen Platz der Spalte.
+    m_dockButton = new QPushButton(QStringLiteral("⤢"), this);
+    m_dockButton->setObjectName(QStringLiteral("Chip"));
+    m_dockButton->setToolTip(_t("Abdocken"));
+    connect(m_dockButton, &QPushButton::clicked, this, [this] {
+        if (m_docked)
+            emit undockRequested();
+        else
+            emit dockRequested();
+    });
     headerRow->addWidget(m_header, 1);
     headerRow->addWidget(aiButton);
     headerRow->addWidget(m_modeButton);
+    headerRow->addWidget(m_dockButton);
     layout->addLayout(headerRow);
 
     m_stack = new QStackedWidget(this);
@@ -105,6 +117,13 @@ void ConsolePanel::setCwd(const QString &cwd)
     // Beim Verzeichniswechsel der Pane ein 'cd' ins laufende Terminal senden.
     if (changed && !cwd.isEmpty() && m_terminal->isRunning())
         m_terminal->sendText(QStringLiteral("cd \"%1\"\r").arg(cwd));
+}
+
+void ConsolePanel::setDocked(bool docked)
+{
+    m_docked = docked;
+    m_dockButton->setText(docked ? QStringLiteral("⤢") : QStringLiteral("⤵"));
+    m_dockButton->setToolTip(docked ? _t("Abdocken") : _t("Andocken"));
 }
 
 void ConsolePanel::setSession(const net::SSHSessionPtr &session)

@@ -64,6 +64,8 @@ Stand des 1:1-Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 | `tab_favorites_dialog` | Tab-Konstellationen sichern/wiederherstellen |
 | `filealarm_dialog` | Verzeichnis-Überwachung (Polling) mit Ereignisliste |
 | `githubalarm_dialog` | Repo-Überwachung auf neue Pushes, Token im Schlüsselbund |
+| `macro_manager_dialog` · `macro_key_editor` | Tastenraster mit Layern, Bearbeiten-/Ausführen-Modus, kontextabhängiger Layerwechsel, Icon/Beschriftung/Aktion je Taste inkl. Sequenz-Editor |
+| `minimap` | Editor-Minimap mit sichtbarem Bereich und farbigen Suchtreffern |
 
 ## Build & Toolchain
 - CMake + Ninja + MSVC 2022; Qt 6.8.2 (`C:\Qt\6.8.2\msvc2022_64`)
@@ -72,16 +74,17 @@ Stand des 1:1-Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 - Bauen: `.\build.ps1` (bzw. `-Fresh` für Neubau)
 - Konfiguration unter `%APPDATA%\ncssh` — **formatkompatibel** mit der Python-Version
 
-## Noch offen (GUI-Zusatzdialoge)
+Dazu im `file_panel`/`workspace` integriert: **Drag & Drop** (zwischen den Panes,
+auch remote, sowie aus dem Explorer), **abdockbare Konsolen-Spalte** („⤢") und der
+**Netzwerk-Modus** einer Pane (`net://` — Hosts aus dem Scanner, Freigaben, Dateien).
 
-Die Logik dieser Funktionen ist in `core/` bzw. `net/` **fertig portiert**; es fehlt
-nur die jeweilige Qt-Oberfläche:
+## Bekannte Einschränkungen
 
-- Makro-Manager & Key-Editor (`core/macros` + `core/macroactions` stehen)
-- Editor-Minimap
-- Netzwerk-Modus einer Pane (`core/netfs` steht; der Scanner-Dialog liefert die Hosts)
-- Drag & Drop zwischen Panes und aus dem Explorer
-- Abdockbare Konsolen-Spalte („⤢ Abdocken")
-
-Diese sind reine UI-Schichten auf bereits portierter Logik und lassen sich
-inkrementell ergänzen, ohne die Architektur zu ändern.
+- Die libssh2-Schicht (Auth, SFTP, PTY, Tunnel) ist gegen die Semantik des Originals
+  gebaut, aber **noch nicht gegen einen echten Server getestet** — dort ist am ehesten
+  Nacharbeit zu erwarten.
+- Globale Makro-Hotkeys (systemweite Tastenkürzel außerhalb des Fensters) sind nicht
+  umgesetzt; im Makro-Manager lösen Tasten per Klick aus.
+- Der Terminal-Modus rendert über einen ANSI-Parser auf `QPlainTextEdit`, nicht über
+  ein volles Zeichengitter wie pyte — Vollbild-TUIs (`htop`, `vim`) laufen, exotische
+  Cursor-Steuerung kann abweichen.

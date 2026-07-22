@@ -16,6 +16,7 @@ class QCheckBox;
 namespace ncssh::gui {
 
 class SyntaxHighlighter;
+class Minimap;
 
 // Editor-Flaeche mit Zeilennummern-Rand.
 class CodeEditor : public QPlainTextEdit {
@@ -50,6 +51,7 @@ private:
     void load();
     void save(bool saveAs);
     void findNext(bool backwards = false);
+    void updateMatches();   // Suchtreffer in der Minimap markieren
     void replaceCurrent(bool all);
     void gotoLine();
     void explainWithAi();   // Datei/Config von der KI erklaeren lassen
@@ -63,6 +65,7 @@ private:
 
     CodeEditor *m_editor = nullptr;
     SyntaxHighlighter *m_highlighter = nullptr;
+    Minimap *m_minimap = nullptr;
     QLineEdit *m_find = nullptr;
     QLineEdit *m_replace = nullptr;
     QCheckBox *m_caseSensitive = nullptr;

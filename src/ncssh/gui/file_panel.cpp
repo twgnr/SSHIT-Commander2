@@ -8,10 +8,17 @@
 
 #include <QComboBox>
 #include <QDateTime>
+#include <QDrag>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QKeyEvent>
+#include <QMimeData>
+#include <QMouseEvent>
+#include <QUrl>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -124,6 +131,10 @@ void FilePanel::buildUi(const QString &title)
             &FilePanel::sortBy);
     m_table->installEventFilter(this);
     m_table->viewport()->installEventFilter(this);
+    // Drag & Drop: Ziehen aus der Pane heraus, Fallenlassen hinein.
+    m_table->setDragEnabled(true);
+    m_table->setDragDropMode(QAbstractItemView::DragOnly);
+    setAcceptDrops(true);
     layout->addWidget(m_table, 1);
 
     // Wildcard-Filter (Strg+F blendet ihn ein)
@@ -560,10 +571,80 @@ void FilePanel::toggleHidden()
     populate(m_entries);
 }
 
+// --- Drag & Drop -----------------------------------------------------------
+// Angenommen werden Datei-URLs (aus dem Explorer) und unsere eigene MIME-Form
+// "application/x-sshit-paths" (Ziehen zwischen den Panes, auch remote).
+
+static const char *const kPathsMime = "application/x-sshit-paths";
+
+void FilePanel::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (event->mimeData()->hasUrls() || event->mimeData()->hasFormat(kPathsMime))
+        event->acceptProposedAction();
+}
+
+void FilePanel::dragMoveEvent(QDragMoveEvent *event)
+{
+    if (event->mimeData()->hasUrls() || event->mimeData()->hasFormat(kPathsMime))
+        event->acceptProposedAction();
+}
+
+void FilePanel::dropEvent(QDropEvent *event)
+{
+    const QMimeData *mime = event->mimeData();
+    // Eigene Form hat Vorrang (kennt auch Remote-Pfade).
+    if (mime->hasFormat(kPathsMime)) {
+        const QStringList paths =
+            QString::fromUtf8(mime->data(kPathsMime)).split(QLatin1Char('\n'),
+                                                            Qt::SkipEmptyParts);
+        if (!paths.isEmpty()) {
+            emit filesDropped(paths, false);
+            event->acceptProposedAction();
+        }
+        return;
+    }
+    if (mime->hasUrls()) {
+        QStringList paths;
+        for (const QUrl &url : mime->urls()) {
+            if (url.isLocalFile())
+                paths << url.toLocalFile();
+        }
+        if (!paths.isEmpty()) {
+            emit filesDropped(paths, true);
+            event->acceptProposedAction();
+        }
+    }
+}
+
 bool FilePanel::eventFilter(QObject *obj, QEvent *event)
 {
     if (event->type() == QEvent::FocusIn || event->type() == QEvent::MouseButtonPress) {
         emit activated();
+    }
+    // Ziehen aus der Pane starten (auch fuer Remote-Pfade und den Explorer).
+    if (obj == m_table->viewport() && event->type() == QEvent::MouseMove) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->buttons() & Qt::LeftButton) {
+            const auto paths = selectedPaths();
+            if (!paths.empty() && m_provider) {
+                QStringList list;
+                for (const QString &p : paths)
+                    list << p;
+                auto *mime = new QMimeData();
+                mime->setData(kPathsMime, list.join(QLatin1Char('\n')).toUtf8());
+                // Lokale Pfade zusaetzlich als URLs, damit der Explorer sie annimmt.
+                if (!m_provider->isRemote) {
+                    QList<QUrl> urls;
+                    for (const QString &p : list)
+                        urls << QUrl::fromLocalFile(p);
+                    mime->setUrls(urls);
+                }
+                auto *drag = new QDrag(this);
+                drag->setMimeData(mime);
+                drag->exec(Qt::CopyAction);
+                return true;
+            }
+        }
     }
     if (event->type() == QEvent::KeyPress) {
         auto *ke = static_cast<QKeyEvent *>(event);

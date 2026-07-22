@@ -50,9 +50,14 @@ signals:
     void transferRequested(const QString &srcPath);  // F5 aus dieser Pane
     void statusMessage(const QString &msg);
     void sudoToggled(bool on);                    // sudo-Chip umgeschaltet
+    // Drop aus der anderen Pane bzw. aus dem Explorer (lokale Pfade).
+    void filesDropped(const QStringList &paths, bool fromExplorer);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private:
     void buildUi(const QString &title);

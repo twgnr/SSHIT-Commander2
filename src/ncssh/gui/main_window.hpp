@@ -53,6 +53,7 @@ private:
     void openTabFavorites();
     void openFileAlarms();
     void openGithubAlarms();
+    void openMacroManager();
     void saveSession();      // offene Tabs fuer die Wiederherstellung sichern
     void restoreSession();
     void applyThemeByName(const QString &name);

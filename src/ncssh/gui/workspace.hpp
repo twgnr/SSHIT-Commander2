@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"
+#include "ncssh/core/netfs.hpp"
 #include "ncssh/core/runner.hpp"
 #include "ncssh/gui/bridge.hpp"
 #include "ncssh/gui/tunnel_dialog.hpp"
@@ -10,9 +11,13 @@
 #include "ncssh/net/ssh.hpp"
 #include "ncssh/net/sudofs.hpp"
 
+#include <QHash>
 #include <QJsonObject>
 #include <QWidget>
 #include <memory>
+
+class QSplitter;
+class QEvent;
 
 namespace ncssh::gui {
 
@@ -49,14 +54,24 @@ public:
     QJsonObject toJson() const;
     void restoreFrom(const QJsonObject &state);
 
+    // Netzwerk-Modus: die aktive Pane zeigt die gefundenen Hosts als
+    // navigierbaren Baum (net:// -> Host -> Freigabe -> Dateien).
+    void showNetworkHosts(const std::vector<core::HostResult> &hosts);
+
 signals:
     void statusMessage(const QString &msg);
     void connectionChanged();
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 private:
     void startTransfer(core::FileSystemProvider *src, const QString &srcPath,
                        core::FileSystemProvider *dst, const QString &dstDir);
     void setSudoMode(bool on);
+    // Konsole in ein eigenes Fenster loesen bzw. zurueckholen.
+    void undockConsole(ConsolePanel *console);
+    void dockConsole(ConsolePanel *console);
 
     AsyncBridge *m_bridge;
     net::SessionManager *m_sessions;
@@ -65,6 +80,8 @@ private:
     // Lokale Seite (immer verfuegbar).
     std::unique_ptr<core::LocalFileSystem> m_localFs;
     std::unique_ptr<core::LocalCommandRunner> m_localRunner;
+    // Netzwerk-Modus (virtuelles net://-Dateisystem aus dem Scanner).
+    std::unique_ptr<core::NetworkScanProvider> m_netFs;
 
     // Remote-Seite (nach Connect).
     net::SSHSessionPtr m_session;
@@ -78,6 +95,10 @@ private:
     ConsolePanel *m_rightConsole = nullptr;
     bool m_rightActive = false;  // zuletzt fokussierte Seite
     TunnelManager m_tunnels;     // offene Port-Weiterleitungen dieser Sitzung
+    // Spalten-Splitter je Seite (zum Wiedereinhaengen abgedockter Konsolen)
+    QSplitter *m_leftColumn = nullptr;
+    QSplitter *m_rightColumn = nullptr;
+    QHash<ConsolePanel *, QWidget *> m_floatingConsoles;
 };
 
 } // namespace ncssh::gui
