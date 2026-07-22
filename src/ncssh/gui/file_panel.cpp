@@ -707,6 +707,9 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
     }
 
     const bool showIcons = core::getSettingBool(QStringLiteral("show_file_icons"), true);
+    const bool execHighlight = core::getSettingBool(QStringLiteral("exec_highlight"), true);
+    const QColor execColor(core::getSettingString(QStringLiteral("exec_color"),
+                                                  QStringLiteral("#3fb950")));
     m_table->setRowCount(0);
     m_rows.clear();
     int row = 0;
@@ -736,9 +739,9 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
                                                                   : QStringLiteral("📄 ");
             nameItem->setText(prefix + e.name);
         }
-        // Ausfuehrbare Dateien farbig markieren.
-        if (core::isExecutable(e))
-            nameItem->setForeground(QColor(QStringLiteral("#3fb950")));
+        // Ausfuehrbare Dateien farbig markieren (Farbe/Schalter aus den Einstellungen).
+        if (execHighlight && core::isExecutable(e))
+            nameItem->setForeground(execColor);
         m_table->setItem(row, 0, nameItem);
         for (int c = 1; c < m_fileCols.size(); ++c) {
             m_table->setItem(row, c,

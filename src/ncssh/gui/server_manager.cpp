@@ -6,10 +6,13 @@
 #include "ncssh/gui/key_dialog.hpp"
 
 #include <QCheckBox>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
+#include <QTcpSocket>
+#include <stdexcept>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -27,23 +30,35 @@ using core::ServerProfile;
 ServerManagerDialog::ServerManagerDialog(AsyncBridge *bridge, QWidget *parent)
     : QDialog(parent), m_bridge(bridge)
 {
-    setWindowTitle(_t("Server-Profile"));
-    resize(720, 480);
+    setWindowTitle(_t("Server-Verwaltung"));
+    resize(820, 560);
     m_store.load();
 
     auto *root = new QHBoxLayout(this);
 
-    // Linke Spalte: Liste
+    // Linke Spalte: Filter + Liste
     auto *left = new QVBoxLayout();
+    m_filter = new QLineEdit(this);
+    m_filter->setPlaceholderText(_t("Filtern … (Name, Host, Benutzer)"));
+    m_filter->setClearButtonEnabled(true);
+    connect(m_filter, &QLineEdit::textChanged, this, [this] { reload(); });
     m_list = new QListWidget(this);
     connect(m_list, &QListWidget::currentTextChanged, this, [this](const QString &name) {
         if (const auto p = m_store.get(name))
             loadIntoForm(*p);
     });
     connect(m_list, &QListWidget::itemDoubleClicked, this, &ServerManagerDialog::onConnect);
-    left->addWidget(new QLabel(_t("Profile"), this));
+    left->addWidget(new QLabel(_t("Verbindungen"), this));
+    left->addWidget(m_filter);
     left->addWidget(m_list, 1);
-    auto *importBtn = new QPushButton(_t("Aus PuTTY/WinSCP importieren"), this);
+    auto *newBtn = new QPushButton(_t("Neuer Server"), this);
+    connect(newBtn, &QPushButton::clicked, this, [this] {
+        m_list->clearSelection();
+        loadIntoForm(core::ServerProfile{});
+        m_name->setFocus();
+    });
+    left->addWidget(newBtn);
+    auto *importBtn = new QPushButton(_t("Import (PuTTY/WinSCP/SSH)"), this);
     connect(importBtn, &QPushButton::clicked, this, &ServerManagerDialog::onImport);
     left->addWidget(importBtn);
     root->addLayout(left, 1);
@@ -84,20 +99,53 @@ ServerManagerDialog::ServerManagerDialog(AsyncBridge *bridge, QWidget *parent)
     keyRow->addWidget(keyToolsBtn);
     m_password = new QLineEdit(this);
     m_password->setEchoMode(QLineEdit::Password);
+    m_savePassword = new QCheckBox(
+        _t("Passwort/Passphrase sicher im OS-Keyring speichern"), this);
     m_policy = new QComboBox(this);
-    m_policy->addItems({QStringLiteral("accept-new"), QStringLiteral("strict"), QStringLiteral("ignore")});
+    // Klartext statt der internen Kennungen — die Kennung steckt in den Daten.
+    m_policy->addItem(_t("Beim ersten Mal vertrauen (accept-new)"),
+                      QStringLiteral("accept-new"));
+    m_policy->addItem(_t("Strikt (nur bekannte)"), QStringLiteral("strict"));
+    m_policy->addItem(_t("Ignorieren (unsicher)"), QStringLiteral("ignore"));
+    m_proxyJump = new QLineEdit(this);
+    m_proxyJump->setPlaceholderText(_t("ProxyJump, z.B. user@jump:22  (optional)"));
     m_startPath = new QLineEdit(this);
     m_startPath->setText(QStringLiteral("."));
 
-    form->addRow(_t("Name"), m_name);
-    form->addRow(_t("Host"), m_host);
+    // Tab-Farbe: Auswahlknopf zeigt die Farbe selbst.
+    auto *colorRow = new QHBoxLayout();
+    m_colorButton = new QPushButton(_t("Tab-Farbe wählen …"), this);
+    connect(m_colorButton, &QPushButton::clicked, this, &ServerManagerDialog::pickTabColor);
+    auto *clearColor = new QPushButton(QStringLiteral("✕"), this);
+    clearColor->setFixedWidth(30);
+    connect(clearColor, &QPushButton::clicked, this, [this] {
+        m_tabColor.clear();
+        updateColorButton();
+    });
+    colorRow->addWidget(m_colorButton, 1);
+    colorRow->addWidget(clearColor);
+
+    form->addRow(_t("Anzeigename *"), m_name);
+    form->addRow(_t("Host *"), m_host);
     form->addRow(_t("Port"), m_port);
-    form->addRow(_t("Benutzer"), m_user);
-    form->addRow(_t("Auth-Methode"), m_auth);
-    form->addRow(_t("Schlüssel"), keyRow);
+    form->addRow(_t("Benutzername"), m_user);
+    form->addRow(_t("Authentifizierung"), m_auth);
+    form->addRow(_t("Key-Pfad"), keyRow);
     form->addRow(_t("Passwort"), m_password);
-    form->addRow(_t("Host-Key-Richtlinie"), m_policy);
+    form->addRow(QString(), m_savePassword);
+    form->addRow(_t("Host-Key-Prüfung"), m_policy);
+    form->addRow(_t("ProxyJump"), m_proxyJump);
     form->addRow(_t("Startverzeichnis"), m_startPath);
+    form->addRow(_t("Tab-Farbe"), colorRow);
+
+    m_lastConnected = new QLabel(this);
+    m_lastConnected->setObjectName(QStringLiteral("Muted"));
+    form->addRow(_t("Zuletzt"), m_lastConnected);
+
+    m_reachability = new QLabel(this);
+    m_reachability->setObjectName(QStringLiteral("Muted"));
+    m_reachability->setWordWrap(true);
+    form->addRow(_t("Erreichbarkeit"), m_reachability);
 
     auto *right = new QVBoxLayout();
     right->addLayout(form);
@@ -105,38 +153,106 @@ ServerManagerDialog::ServerManagerDialog(AsyncBridge *bridge, QWidget *parent)
     auto *btnRow = new QHBoxLayout();
     auto *saveBtn = new QPushButton(_t("Speichern"), this);
     auto *delBtn = new QPushButton(_t("Löschen"), this);
+    auto *testBtn = new QPushButton(_t("Erreichbarkeit testen"), this);
     auto *connectBtn = new QPushButton(_t("Verbinden"), this);
     connectBtn->setDefault(true);
     connect(saveBtn, &QPushButton::clicked, this, &ServerManagerDialog::onSave);
     connect(delBtn, &QPushButton::clicked, this, &ServerManagerDialog::onDelete);
+    connect(testBtn, &QPushButton::clicked, this, &ServerManagerDialog::testReachability);
     connect(connectBtn, &QPushButton::clicked, this, &ServerManagerDialog::onConnect);
     btnRow->addWidget(saveBtn);
     btnRow->addWidget(delBtn);
+    btnRow->addWidget(testBtn);
     btnRow->addStretch(1);
     btnRow->addWidget(connectBtn);
     right->addLayout(btnRow);
     root->addLayout(right, 2);
+    updateColorButton();
 
     reload();
 }
 
 void ServerManagerDialog::reload()
 {
+    const QString needle = m_filter ? m_filter->text().trimmed().toLower() : QString();
     m_list->clear();
-    for (const auto &p : m_store.profiles())
+    for (const auto &p : m_store.profiles()) {
+        if (!needle.isEmpty()
+            && !p.name.toLower().contains(needle)
+            && !p.host.toLower().contains(needle)
+            && !p.username.toLower().contains(needle))
+            continue;
         m_list->addItem(p.name);
+    }
+}
+
+void ServerManagerDialog::updateColorButton()
+{
+    if (m_tabColor.isEmpty()) {
+        m_colorButton->setStyleSheet(QString());
+        m_colorButton->setText(_t("Tab-Farbe wählen …"));
+        return;
+    }
+    m_colorButton->setStyleSheet(
+        QStringLiteral("QPushButton { background: %1; }").arg(m_tabColor));
+    m_colorButton->setText(m_tabColor);
+}
+
+void ServerManagerDialog::pickTabColor()
+{
+    const QColor chosen = QColorDialog::getColor(
+        m_tabColor.isEmpty() ? QColor(Qt::gray) : QColor(m_tabColor), this, _t("Tab-Farbe"));
+    if (!chosen.isValid())
+        return;
+    m_tabColor = chosen.name();
+    updateColorButton();
+}
+
+void ServerManagerDialog::testReachability()
+{
+    const QString host = m_host->text().trimmed();
+    const int port = m_port->value();
+    if (host.isEmpty()) {
+        m_reachability->setText(_t("Es wurde keine Verbindung ausgewählt."));
+        return;
+    }
+    m_reachability->setText(_t("Teste %1:%2 …").arg(host).arg(port));
+    m_bridge->run<QString>(
+        [host, port]() -> QString {
+            // Reiner TCP-Verbindungstest, ohne SSH-Handshake.
+            QTcpSocket socket;
+            socket.connectToHost(host, quint16(port));
+            if (!socket.waitForConnected(5000))
+                throw std::runtime_error(socket.errorString().toStdString());
+            socket.disconnectFromHost();
+            return QString();
+        },
+        [this, host, port](const QString &) {
+            m_reachability->setText(_t("✓ %1:%2 erreichbar.").arg(host).arg(port));
+        },
+        [this, host, port](const QString &err) {
+            m_reachability->setText(
+                _t("%1:%2 nicht erreichbar:\n%3").arg(host).arg(port).arg(err));
+        });
 }
 
 void ServerManagerDialog::loadIntoForm(const ServerProfile &p)
 {
     m_name->setText(p.name);
     m_host->setText(p.host);
-    m_port->setValue(p.port);
+    m_port->setValue(p.port ? p.port : 22);
     m_user->setText(p.username);
     m_auth->setCurrentText(p.authMethod);
     m_keyPath->setText(p.keyPath);
-    m_policy->setCurrentText(p.knownHostsPolicy);
+    const int policyIndex = m_policy->findData(p.knownHostsPolicy);
+    m_policy->setCurrentIndex(policyIndex >= 0 ? policyIndex : 0);
+    m_proxyJump->setText(p.proxyJump);
     m_startPath->setText(p.startPath);
+    m_savePassword->setChecked(p.savePassword);
+    m_tabColor = p.color;
+    updateColorButton();
+    m_lastConnected->setText(p.lastConnected.isEmpty() ? QStringLiteral("—") : p.lastConnected);
+    m_reachability->clear();
     m_password->clear();
 }
 
@@ -150,9 +266,15 @@ ServerProfile ServerManagerDialog::formToProfile() const
     p.authMethod = m_auth->currentText();
     p.keyPath = m_keyPath->text().trimmed();
     p.password = m_password->text();
-    p.knownHostsPolicy = m_policy->currentText();
+    p.savePassword = m_savePassword->isChecked();
+    p.knownHostsPolicy = m_policy->currentData().toString();
+    p.proxyJump = m_proxyJump->text().trimmed();
+    p.color = m_tabColor;
     p.startPath = m_startPath->text().trimmed().isEmpty() ? QStringLiteral(".")
                                                           : m_startPath->text().trimmed();
+    // Bestehenden Zeitstempel erhalten — das Formular zeigt ihn nur an.
+    if (const auto existing = m_store.get(p.name))
+        p.lastConnected = existing->lastConnected;
     return p;
 }
 
@@ -160,7 +282,7 @@ void ServerManagerDialog::onSave()
 {
     ServerProfile p = formToProfile();
     if (p.name.isEmpty() || p.host.isEmpty()) {
-        QMessageBox::warning(this, _t("Fehler"), _t("Name und Host sind erforderlich."));
+        QMessageBox::warning(this, _t("Fehlende Angaben"), _t("Name und Host sind Pflicht."));
         return;
     }
     m_store.upsert(p);

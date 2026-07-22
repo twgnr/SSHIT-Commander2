@@ -552,7 +552,7 @@ void MainWindow::openFileDiff()
 
 void MainWindow::openSettings()
 {
-    SettingsDialog dlg(this);
+    SettingsDialog dlg(this, m_bridge);
     if (dlg.exec() == QDialog::Accepted) {
         // Theme greift sofort, Sprache/Schriftgroessen nach Neustart.
         applyTheme(qApp, core::getSettingString(QStringLiteral("theme"), defaultTheme()));

@@ -14,6 +14,8 @@ class QLineEdit;
 class QComboBox;
 class QSpinBox;
 class QCheckBox;
+class QLabel;
+class QPushButton;
 
 namespace ncssh::gui {
 
@@ -33,11 +35,16 @@ private:
     void onDelete();
     void onConnect();
     void onImport();
+    // Reiner TCP-Test auf Host/Port — ohne SSH-Handshake.
+    void testReachability();
+    void pickTabColor();
+    void updateColorButton();
 
     AsyncBridge *m_bridge;
     core::ProfileStore m_store;
     std::optional<core::ServerProfile> m_chosen;
 
+    QLineEdit *m_filter = nullptr;
     QListWidget *m_list = nullptr;
     QLineEdit *m_name = nullptr;
     QLineEdit *m_host = nullptr;
@@ -46,8 +53,14 @@ private:
     QComboBox *m_auth = nullptr;
     QLineEdit *m_keyPath = nullptr;
     QLineEdit *m_password = nullptr;
+    QCheckBox *m_savePassword = nullptr;
     QComboBox *m_policy = nullptr;
+    QLineEdit *m_proxyJump = nullptr;
     QLineEdit *m_startPath = nullptr;
+    QPushButton *m_colorButton = nullptr;
+    QString m_tabColor;
+    QLabel *m_lastConnected = nullptr;
+    QLabel *m_reachability = nullptr;
 };
 
 } // namespace ncssh::gui
