@@ -36,6 +36,7 @@
 #include <QProcess>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QStorageInfo>
 #include <QSize>
 #include <QStackedWidget>
 #include <QToolButton>
@@ -108,7 +109,7 @@ void FilePanel::buildUi(const QString &title)
     m_sudoChip->setObjectName(QStringLiteral("Chip"));
     m_sudoChip->setCheckable(true);
     m_sudoChip->setVisible(false);
-    m_sudoChip->setToolTip(_t("Operationen als root über sudo ausführen"));
+    m_sudoChip->setToolTip(_t("Diese Pane mit sudo-Rechten (root) anzeigen"));
     connect(m_sudoChip, &QPushButton::toggled, this, [this](bool on) {
         m_sudoActive = on;
         emit sudoToggled(on);
@@ -124,6 +125,15 @@ void FilePanel::buildUi(const QString &title)
     connect(m_typeAheadTimer, &QTimer::timeout, this, [this] { m_typeAheadBuffer.clear(); });
 
     auto *pathRow = new QHBoxLayout();
+    // Laufwerk/Mountpunkt wechseln — ohne das muss man den Pfad tippen.
+    m_driveCombo = new QComboBox(this);
+    m_driveCombo->setToolTip(_t("Laufwerk / Mountpunkt wechseln"));
+    m_driveCombo->setFixedWidth(72);
+    connect(m_driveCombo, &QComboBox::activated, this, [this](int index) {
+        const QString root = m_driveCombo->itemData(index).toString();
+        if (!root.isEmpty() && root != m_path)
+            navigateTo(root);
+    });
     auto *back = new QPushButton(QStringLiteral("←"), this);
     back->setFixedWidth(30);
     back->setToolTip(_t("Zurück (Alt+←)"));
@@ -166,7 +176,7 @@ void FilePanel::buildUi(const QString &title)
     // Lesezeichen: aktuellen Pfad merken (☆/★) bzw. Liste oeffnen
     m_starButton = new QPushButton(QStringLiteral("☆"), this);
     m_starButton->setFixedWidth(34);
-    m_starButton->setToolTip(_t("Pfad als Lesezeichen merken"));
+    m_starButton->setToolTip(_t("Aktuellen Pfad als Lesezeichen (pro Server)"));
     connect(m_starButton, &QPushButton::clicked, this, &FilePanel::toggleBookmark);
     auto *bookmarksBtn = new QPushButton(QStringLiteral("▾"), this);
     bookmarksBtn->setFixedWidth(28);
@@ -186,6 +196,7 @@ void FilePanel::buildUi(const QString &title)
         menu.addAction(_t("Verwalten…"), this, &FilePanel::openBookmarks);
         menu.exec(bookmarksBtn->mapToGlobal(QPoint(0, bookmarksBtn->height())));
     });
+    pathRow->addWidget(m_driveCombo);
     pathRow->addWidget(back);
     pathRow->addWidget(forward);
     pathRow->addWidget(up);
@@ -271,7 +282,9 @@ void FilePanel::buildUi(const QString &title)
 
     // Wildcard-Filter (Strg+F blendet ihn ein)
     m_filterEdit = new QLineEdit(this);
-    m_filterEdit->setPlaceholderText(_t("Filter (z. B. *.log) — Esc blendet aus"));
+    m_filterEdit->setObjectName(QStringLiteral("PaneFilter"));
+    m_filterEdit->setPlaceholderText(
+        _t("Anzeige filtern (Ctrl+F) — Wildcards * ? möglich, z.B. *.py"));
     m_filterEdit->setVisible(false);
     connect(m_filterEdit, &QLineEdit::textChanged, this, &FilePanel::applyFilter);
     m_filterEdit->installEventFilter(this);
@@ -326,6 +339,24 @@ QStringList FilePanel::visibleColumns() const
 
 void FilePanel::setTableHeaders()
 {
+    // Im Netzwerk-Modus zeigen die Spalten Host-Eigenschaften statt Dateidaten.
+    if (hostMode()) {
+        m_fileCols = {QStringLiteral("name"),   QStringLiteral("ip"),
+                      QStringLiteral("mac"),    QStringLiteral("vendor"),
+                      QStringLiteral("os"),     QStringLiteral("latency"),
+                      QStringLiteral("services"), QStringLiteral("shares"),
+                      QStringLiteral("web")};
+        m_table->setColumnCount(m_fileCols.size());
+        m_table->setHorizontalHeaderLabels({_t("Name"), _t("IP"), _t("MAC"), _t("Hersteller"),
+                                            _t("Betriebssystem"), _t("Latenz"), _t("Dienste"),
+                                            _t("Freigaben"), _t("Web")});
+        QHeaderView *header = m_table->horizontalHeader();
+        header->setSectionResizeMode(0, QHeaderView::Stretch);
+        for (int c = 1; c < m_fileCols.size(); ++c)
+            header->setSectionResizeMode(c, QHeaderView::ResizeToContents);
+        return;
+    }
+
     m_fileCols = QStringList{QStringLiteral("name")} + visibleColumns();
     m_table->setColumnCount(m_fileCols.size());
     QStringList labels{_t("Name")};
@@ -392,6 +423,29 @@ void FilePanel::toggleColumn(const QString &id, bool on)
 
 QString FilePanel::columnValue(const QString &id, const FileEntry &e) const
 {
+    // Host-Spalten im Netzwerk-Modus kommen aus den Scanner-Metadaten.
+    if (hostMode()) {
+        if (id == QLatin1String("latency")) {
+            const double ms = e.extra.value(QStringLiteral("latency")).toDouble();
+            return ms > 0 ? QStringLiteral("%1 ms").arg(ms, 0, 'f', 1) : QString();
+        }
+        if (id == QLatin1String("services")) {
+            QStringList ports;
+            for (const QVariant &p : e.extra.value(QStringLiteral("ports")).toList())
+                ports << QStringLiteral("%1 (%2)").arg(p.toInt()).arg(core::serviceName(p.toInt()));
+            return ports.join(QStringLiteral(", "));
+        }
+        if (id == QLatin1String("shares"))
+            return e.extra.value(QStringLiteral("shares")).toBool() ? _t("ja") : QString();
+        if (id == QLatin1String("web")) {
+            const QVariantList web = e.extra.value(QStringLiteral("web")).toList();
+            return web.isEmpty() ? QString() : web.first().toString();
+        }
+        if (id == QLatin1String("os"))
+            return e.extra.value(QStringLiteral("os")).toString();
+        return e.extra.value(id).toString();
+    }
+
     if (id == QLatin1String("size"))
         return e.isDir() ? QStringLiteral("<DIR>") : humanSize(e.size);
     if (id == QLatin1String("modified"))
@@ -574,6 +628,41 @@ void FilePanel::loadVisibleThumbs()
     }
 }
 
+// Fuellt die Laufwerksauswahl. Nur lokal sinnvoll — remote gibt es keine
+// Laufwerksbuchstaben, dort bleibt sie ausgeblendet.
+void FilePanel::updateDriveCombo()
+{
+    if (!m_driveCombo)
+        return;
+    if (!m_provider || m_provider->isRemote || hostMode()) {
+        m_driveCombo->setVisible(false);
+        return;
+    }
+    m_driveCombo->setVisible(true);
+    QSignalBlocker blocker(m_driveCombo);
+    m_driveCombo->clear();
+    for (const QStorageInfo &volume : QStorageInfo::mountedVolumes()) {
+        if (!volume.isValid() || !volume.isReady())
+            continue;
+        const QString root = QDir::toNativeSeparators(volume.rootPath());
+        QString label = root;
+#ifdef Q_OS_WIN
+        label = root.left(2);   // "C:"
+#endif
+        m_driveCombo->addItem(label, volume.rootPath());
+        m_driveCombo->setItemData(m_driveCombo->count() - 1,
+                                  QStringLiteral("%1  %2 / %3")
+                                      .arg(root, humanSize(volume.bytesAvailable()),
+                                           humanSize(volume.bytesTotal())),
+                                  Qt::ToolTipRole);
+    }
+    // Aktuelles Laufwerk auswaehlen.
+    const QStorageInfo current(m_path);
+    const int index = m_driveCombo->findData(current.rootPath());
+    if (index >= 0)
+        m_driveCombo->setCurrentIndex(index);
+}
+
 void FilePanel::beginPathEdit()
 {
     m_pathEdit->setText(m_path);
@@ -658,10 +747,15 @@ void FilePanel::loadDir(const QString &path, bool record)
                 m_history.append(path);
                 m_histPos = m_history.size() - 1;
             }
+            const bool modeChanged = hostMode() != path.startsWith(QLatin1String("net://"));
             m_path = path;
             m_pathEdit->setText(path);
             endPathEdit();
+            // Spaltensatz haengt am Modus (Dateien vs. Hosts).
+            if (modeChanged)
+                setTableHeaders();
             buildBreadcrumb();
+            updateDriveCombo();
             m_entries = entries;
             m_typeAheadBuffer.clear();   // Suchpuffer beim Verzeichniswechsel verwerfen
             ++m_thumbToken;              // Miniaturen des alten Ordners verwerfen

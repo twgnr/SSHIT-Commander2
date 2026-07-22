@@ -148,6 +148,8 @@ private:
     // --- Breadcrumb-Pfadleiste ---
     std::vector<std::pair<QString, QString>> breadcrumbParts() const;  // (Beschriftung, Pfad)
     void buildBreadcrumb();
+    // Laufwerksauswahl fuellen (nur lokal sichtbar).
+    void updateDriveCombo();
     void beginPathEdit();             // Breadcrumb -> Eingabefeld
     void endPathEdit();
 
@@ -214,6 +216,7 @@ private:
     QLabel *m_header = nullptr;
     QScrollArea *m_crumbScroll = nullptr;
     QHBoxLayout *m_crumbLayout = nullptr;
+    QComboBox *m_driveCombo = nullptr;
     QLineEdit *m_pathEdit = nullptr;
     QTableWidget *m_table = nullptr;
     QStackedWidget *m_viewStack = nullptr;

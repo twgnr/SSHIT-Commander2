@@ -19,6 +19,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSet>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
@@ -72,7 +73,9 @@ ServerManagerDialog::ServerManagerDialog(AsyncBridge *bridge, QWidget *parent)
     m_port->setValue(22);
     m_user = new QLineEdit(this);
     m_auth = new QComboBox(this);
-    m_auth->addItems({QStringLiteral("key"), QStringLiteral("password"), QStringLiteral("agent")});
+    m_auth->addItem(_t("SSH-Key"), QStringLiteral("key"));
+    m_auth->addItem(_t("Passwort"), QStringLiteral("password"));
+    m_auth->addItem(_t("SSH-Agent"), QStringLiteral("agent"));
     m_keyPath = new QLineEdit(this);
     auto *keyRow = new QHBoxLayout();
     keyRow->addWidget(m_keyPath, 1);
@@ -93,7 +96,7 @@ ServerManagerDialog::ServerManagerDialog(AsyncBridge *bridge, QWidget *parent)
         dlg.exec();
         if (!dlg.savedKeyPath().isEmpty()) {
             m_keyPath->setText(dlg.savedKeyPath());
-            m_auth->setCurrentText(QStringLiteral("key"));
+            m_auth->setCurrentIndex(m_auth->findData(QStringLiteral("key")));
         }
     });
     keyRow->addWidget(keyToolsBtn);
@@ -242,7 +245,7 @@ void ServerManagerDialog::loadIntoForm(const ServerProfile &p)
     m_host->setText(p.host);
     m_port->setValue(p.port ? p.port : 22);
     m_user->setText(p.username);
-    m_auth->setCurrentText(p.authMethod);
+    m_auth->setCurrentIndex(std::max(0, m_auth->findData(p.authMethod)));
     m_keyPath->setText(p.keyPath);
     const int policyIndex = m_policy->findData(p.knownHostsPolicy);
     m_policy->setCurrentIndex(policyIndex >= 0 ? policyIndex : 0);
@@ -263,7 +266,7 @@ ServerProfile ServerManagerDialog::formToProfile() const
     p.host = m_host->text().trimmed();
     p.port = m_port->value();
     p.username = m_user->text().trimmed();
-    p.authMethod = m_auth->currentText();
+    p.authMethod = m_auth->currentData().toString();
     p.keyPath = m_keyPath->text().trimmed();
     p.password = m_password->text();
     p.savePassword = m_savePassword->isChecked();
@@ -301,8 +304,7 @@ void ServerManagerDialog::onDelete()
     if (!m_list->currentItem())
         return;
     const QString name = m_list->currentItem()->text();
-    if (QMessageBox::question(this, _t("Löschen"),
-                              QStringLiteral("Profil \"%1\" löschen?").arg(name))
+    if (QMessageBox::question(this, _t("Löschen"), _t("Profil '%1' löschen?").arg(name))
         != QMessageBox::Yes)
         return;
     m_store.remove(name);
@@ -334,24 +336,39 @@ void ServerManagerDialog::onImport()
     std::vector<core::ServerProfile> found = core::importAll();
 
     QDialog dlg(this);
-    dlg.setWindowTitle(_t("Sitzungen importieren"));
+    dlg.setWindowTitle(_t("Verbindungen importieren"));
     dlg.resize(640, 480);
     auto *layout = new QVBoxLayout(&dlg);
     auto *info = new QLabel(
-        _t("Gefundene Sitzungen aus PuTTY, WinSCP und ~/.ssh/config. "
-           "Auswählen, was übernommen werden soll."), &dlg);
+        _t("Gefundene Verbindungen auswählen, die importiert werden sollen:")
+            + QStringLiteral("\n") + _t("Hinweis: Passwörter werden nicht übernommen."),
+        &dlg);
     info->setWordWrap(true);
     info->setObjectName(QStringLiteral("Muted"));
     layout->addWidget(info);
 
     auto *list = new QListWidget(&dlg);
-    const auto fill = [&list, &found] {
+    // Vorhandene Profile kenntlich machen — sie werden beim Import ersetzt.
+    QSet<QString> known;
+    for (const auto &existing : m_store.profiles())
+        known.insert(existing.host + QLatin1Char(':') + QString::number(existing.port));
+    const auto fill = [&list, &found, &known] {
         list->clear();
+        if (found.empty()) {
+            auto *empty = new QListWidgetItem(_t("Keine Sitzungen automatisch gefunden"), list);
+            empty->setFlags(Qt::NoItemFlags);
+            return;
+        }
         for (int i = 0; i < int(found.size()); ++i) {
-            auto *item = new QListWidgetItem(
-                QStringLiteral("%1  —  %2").arg(found[i].name, found[i].display()), list);
+            const QString key =
+                found[i].host + QLatin1Char(':') + QString::number(found[i].port);
+            QString label = QStringLiteral("%1  —  %2").arg(found[i].name, found[i].display());
+            if (known.contains(key))
+                label = _t("%1  (bereits vorhanden)").arg(label);
+            auto *item = new QListWidgetItem(label, list);
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-            item->setCheckState(Qt::Checked);
+            // Vorhandene nicht standardmaessig ueberschreiben.
+            item->setCheckState(known.contains(key) ? Qt::Unchecked : Qt::Checked);
             item->setData(Qt::UserRole, i);
         }
     };
@@ -361,7 +378,7 @@ void ServerManagerDialog::onImport()
     auto *selRow = new QHBoxLayout();
     auto *allBtn = new QPushButton(_t("Alle"), &dlg);
     auto *noneBtn = new QPushButton(_t("Keine"), &dlg);
-    auto *fileBtn = new QPushButton(_t("Aus Datei laden …"), &dlg);
+    auto *fileBtn = new QPushButton(_t("Aus Datei importieren …"), &dlg);
     connect(allBtn, &QPushButton::clicked, &dlg, [list] {
         for (int i = 0; i < list->count(); ++i)
             list->item(i)->setCheckState(Qt::Checked);
@@ -372,14 +389,23 @@ void ServerManagerDialog::onImport()
     });
     connect(fileBtn, &QPushButton::clicked, &dlg, [this, &dlg, &found, &fill] {
         const QString path = getOpenFileName(
-            &dlg, _t("Exportierte Sitzungen laden"), QString(),
-            _t("PuTTY/WinSCP") + QStringLiteral(" (*.reg *.ini)"));
+            &dlg, _t("Exportierte PuTTY-/WinSCP-Datei wählen"), QString(),
+            _t("Export-Dateien (*.reg *.ini);;Alle Dateien (*.*)"));
         if (path.isEmpty())
             return;
-        const auto extra = core::importFromFile(path);
+        QString error;
+        std::vector<core::ServerProfile> extra;
+        try {
+            extra = core::importFromFile(path);
+        } catch (const std::exception &exc) {
+            QMessageBox::warning(&dlg, _t("Import"),
+                                 _t("Datei konnte nicht gelesen werden: %1")
+                                     .arg(QString::fromUtf8(exc.what())));
+            return;
+        }
         if (extra.empty()) {
             QMessageBox::information(&dlg, _t("Import"),
-                                     _t("In der Datei wurden keine Sitzungen gefunden."));
+                                     _t("Keine Sitzungen in der Datei gefunden."));
             return;
         }
         found.insert(found.end(), extra.begin(), extra.end());
@@ -392,7 +418,7 @@ void ServerManagerDialog::onImport()
     layout->addLayout(selRow);
 
     auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    box->button(QDialogButtonBox::Ok)->setText(_t("Importieren"));
+    box->button(QDialogButtonBox::Ok)->setText(_t("Ausgewählte importieren"));
     connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     layout->addWidget(box);
@@ -413,7 +439,7 @@ void ServerManagerDialog::onImport()
     m_store.save();
     reload();
     QMessageBox::information(this, _t("Import"),
-                             QStringLiteral("%1 Profil(e) importiert.").arg(added));
+                             _t("%1 Verbindung(en) importiert.").arg(added));
 }
 
 } // namespace ncssh::gui

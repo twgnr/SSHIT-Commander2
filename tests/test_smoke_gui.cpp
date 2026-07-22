@@ -159,13 +159,10 @@ TEST(smoke_gui, file_panel_filter_and_hidden)
         return;
     const int all = table->rowCount();
 
-    // Filter ueber das (versteckte) Filterfeld setzen.
-    auto edits = panel.findChildren<QLineEdit *>();
-    QLineEdit *filterEdit = nullptr;
-    for (QLineEdit *edit : edits) {
-        if (edit->placeholderText().contains(QStringLiteral("Filter")))
-            filterEdit = edit;
-    }
+    // Filter ueber das (versteckte) Filterfeld setzen. Es wird ueber den
+    // Objektnamen gesucht, nicht ueber den Platzhaltertext — sonst bricht der
+    // Test bei jeder Umformulierung.
+    QLineEdit *filterEdit = panel.findChild<QLineEdit *>(QStringLiteral("PaneFilter"));
     CHECK(filterEdit != nullptr);
     if (!filterEdit)
         return;
