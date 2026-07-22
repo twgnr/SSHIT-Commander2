@@ -11,6 +11,7 @@
 #include <QLabel>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QPlainTextEdit>
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -69,7 +70,26 @@ SecurityDialog::SecurityDialog(AsyncBridge *bridge, net::SSHSessionPtr session, 
         if (!url.isEmpty())
             QDesktopServices::openUrl(QUrl(url));
     });
+    // Auswahl zeigt den Detailtext gross darunter — in der Spalte wird er
+    // sonst abgeschnitten.
+    connect(m_tree, &QTreeWidget::currentItemChanged, this,
+            [this](QTreeWidgetItem *item, QTreeWidgetItem *) {
+                if (!item || item->childCount() > 0) {
+                    m_details->setPlainText(_t("Eintrag auswählen für Details …"));
+                    return;
+                }
+                const QString detail = item->text(2);
+                m_details->setPlainText(detail.isEmpty()
+                                            ? _t("Keine Detailbeschreibung verfügbar.")
+                                            : detail);
+            });
     layout->addWidget(m_tree, 1);
+
+    m_details = new QPlainTextEdit(this);
+    m_details->setReadOnly(true);
+    m_details->setMaximumHeight(90);
+    m_details->setPlainText(_t("Eintrag auswählen für Details …"));
+    layout->addWidget(m_details);
 
     m_progress = new QProgressBar(this);
     m_progress->setRange(0, 0);
@@ -140,7 +160,7 @@ void SecurityDialog::runAudit()
                                     QStringLiteral("https://osv.dev/vulnerability/%1").arg(c.cve)});
             }
             if (securityCount == 0 && dnfCves.empty())
-                findings.push_back({_t("Updates"), _t("Keine offenen Sicherheitsupdates"),
+                findings.push_back({_t("Updates"), _t("Keine offenen Sicherheitsupdates gefunden."),
                                     QString(), QString(), {}});
 
             // --- sshd-Konfiguration ---
@@ -152,20 +172,70 @@ void SecurityDialog::runAudit()
                                     f.severity, f.detail, {}});
             }
 
+            // --- Automatische Sicherheitsupdates ---
+            const QString unattended =
+                run(QStringLiteral("cat /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null"));
+            if (!unattended.trimmed().isEmpty() && !core::unattendedEnabled(unattended)) {
+                findings.push_back(
+                    {_t("Automatische Updates"), _t("unattended-upgrades"),
+                     QStringLiteral("medium"),
+                     _t("Automatische Sicherheitsupdates (unattended-upgrades) sind nicht "
+                        "aktiviert"), {}});
+            }
+
             // --- Firewall ---
             const auto ufw = core::parseUfwStatus(run(QStringLiteral("ufw status 2>/dev/null")));
             if (ufw) {
+                const bool active = (*ufw == QLatin1String("active"));
                 findings.push_back({_t("Firewall"), QStringLiteral("ufw"),
-                                    *ufw == QLatin1String("active") ? QString() : QStringLiteral("medium"),
-                                    *ufw, {}});
+                                    active ? QString() : QStringLiteral("medium"),
+                                    active ? *ufw : _t("Die Firewall (ufw) ist inaktiv."), {}});
+            }
+            const QString firewalld =
+                run(QStringLiteral("systemctl is-active firewalld 2>/dev/null")).trimmed();
+            if (!firewalld.isEmpty() && firewalld != QLatin1String("active")
+                && firewalld != QLatin1String("unknown")) {
+                findings.push_back({_t("Firewall"), QStringLiteral("firewalld"),
+                                    QStringLiteral("medium"),
+                                    _t("Die Firewall (firewalld) ist inaktiv."), {}});
+            }
+
+            // --- Ausstehender Neustart ---
+            if (!run(QStringLiteral("test -f /var/run/reboot-required && echo yes"))
+                     .trimmed().isEmpty()) {
+                findings.push_back(
+                    {_t("Neustart nötig"), _t("reboot-required"), QStringLiteral("medium"),
+                     _t("Ein Neustart steht aus (z. B. nach Kernel-Update). System neu "
+                        "starten."), {}});
+            }
+
+            // --- Ablaufende Zertifikate ---
+            const QString certs = run(QStringLiteral(
+                "for c in /etc/letsencrypt/live/*/cert.pem /etc/ssl/certs/*.pem; do "
+                "[ -f \"$c\" ] || continue; "
+                "if openssl x509 -checkend 1814400 -noout -in \"$c\" >/dev/null 2>&1; "
+                "then echo \"OK $c\"; else echo \"SOON $c\"; fi; done 2>/dev/null"));
+            for (const QString &path : core::parseCertCheck(certs)) {
+                findings.push_back(
+                    {_t("Zertifikate"), path, QStringLiteral("medium"),
+                     _t("Zertifikat ist abgelaufen oder läuft in < 21 Tagen ab — erneuern."),
+                     {}});
             }
 
             // --- Offene Ports ---
             const auto listening = core::parseListening(run(QStringLiteral("ss -tuln 2>/dev/null")));
-            for (const auto &p : core::publicPorts(listening)) {
+            const auto publicPorts = core::publicPorts(listening);
+            QStringList portList;
+            for (const auto &p : publicPorts) {
+                portList << QStringLiteral("%1/%2").arg(p.proto, p.port);
                 findings.push_back({_t("Offene Ports"),
                                     QStringLiteral("%1/%2").arg(p.proto, p.port),
                                     QStringLiteral("info"), _t("öffentlich erreichbar"), {}});
+            }
+            if (!portList.isEmpty()) {
+                findings.push_back({_t("Offene Ports"), _t("Zusammenfassung"), QString(),
+                                    _t("Öffentlich erreichbare Ports: %1")
+                                        .arg(portList.join(QStringLiteral(", "))), {}});
             }
 
             // --- Konten ---
@@ -237,12 +307,35 @@ void SecurityDialog::runAudit()
             }
             m_progress->setVisible(false);
             m_runBtn->setEnabled(true);
-            m_status->setText(QStringLiteral("%1 Befunde").arg(findings.size()));
+
+            // Kopfzeile: System, Kernel und wie viele Befunde wirklich kritisch
+            // sind — eine nackte Gesamtzahl sagt darueber nichts.
+            QString os, kernel;
+            int critical = 0, relevant = 0;
+            for (const Finding &f : findings) {
+                if (f.group == _t("System") && f.title == _t("Betriebssystem"))
+                    os = f.detail;
+                else if (f.group == _t("System") && f.title == _t("Kernel"))
+                    kernel = f.detail;
+                if (f.severity.isEmpty())
+                    continue;
+                ++relevant;
+                const QString sev = f.severity.toLower();
+                if (sev.contains(QLatin1String("critical")) || sev.contains(QLatin1String("high")))
+                    ++critical;
+            }
+            QString summary = _t("%1  ·  Kernel %2  ·  %3 Sicherheitshinweis(e)")
+                                  .arg(os.isEmpty() ? _t("Unbekannt") : os,
+                                       kernel.isEmpty() ? _t("Unbekannt") : kernel)
+                                  .arg(relevant);
+            if (critical > 0)
+                summary += _t(", davon %1 kritisch").arg(critical);
+            m_status->setText(summary);
         },
         [this](const QString &err) {
             m_progress->setVisible(false);
             m_runBtn->setEnabled(true);
-            m_status->setText(err);
+            m_status->setText(_t("Fehler beim Scan") + QStringLiteral(": ") + err);
         });
 }
 

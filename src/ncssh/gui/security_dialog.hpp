@@ -11,6 +11,7 @@
 
 class QTreeWidget;
 class QLabel;
+class QPlainTextEdit;
 class QProgressBar;
 class QPushButton;
 
@@ -30,6 +31,7 @@ private:
     BridgeTask *m_task = nullptr;
 
     QTreeWidget *m_tree = nullptr;
+    QPlainTextEdit *m_details = nullptr;
     QProgressBar *m_progress = nullptr;
     QLabel *m_status = nullptr;
     QPushButton *m_runBtn = nullptr;
