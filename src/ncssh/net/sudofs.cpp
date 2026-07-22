@@ -41,21 +41,34 @@ bool verifySudoPassword(const SSHSessionPtr &session, const QString &password)
 }
 
 SudoFileSystem::SudoFileSystem(SFTPFileSystem *sftpFs, SSHSessionPtr session)
-    : m_sftpFs(sftpFs), m_session(std::move(session))
+    : m_pathFs(sftpFs), m_session(std::move(session))
 {
     isRemote = true;
     label = sftpFs->label + QStringLiteral(" (sudo)");
+    SSHSessionPtr s = m_session;
+    m_exec = [s](const QString &command, const QByteArray &stdinData) {
+        return s->exec(command, stdinData);
+    };
+    m_password = [s]() { return s->sudoPassword.value_or(QString()); };
+}
+
+SudoFileSystem::SudoFileSystem(core::FileSystemProvider *pathFs, ExecFn exec,
+                               PasswordFn password)
+    : m_pathFs(pathFs), m_exec(std::move(exec)), m_password(std::move(password))
+{
+    isRemote = true;
+    label = pathFs->label + QStringLiteral(" (sudo)");
 }
 
 QByteArray SudoFileSystem::run(const QString &command, const QByteArray &stdinData)
 {
     // Das Passwort teilt sich NIE einen stdin-Strom mit den Nutzdaten: erst per
     // separatem "sudo -v" den Timestamp auffrischen, dann "sudo -n <command>".
-    if (m_session->sudoPassword && !m_session->sudoPassword->isEmpty()) {
-        m_session->exec(QStringLiteral("sudo -S -p '' -v"),
-                        (*m_session->sudoPassword + QLatin1Char('\n')).toUtf8());
-    }
-    const ExecResult r = m_session->exec(QStringLiteral("sudo -n ") + command, stdinData);
+    const QString password = m_password ? m_password() : QString();
+    if (!password.isEmpty())
+        m_exec(QStringLiteral("sudo -S -p '' -v"), (password + QLatin1Char('\n')).toUtf8());
+
+    const ExecResult r = m_exec(QStringLiteral("sudo -n ") + command, stdinData);
     if (r.exitStatus != 0) {
         const QString err = QString::fromUtf8(r.err).trimmed();
         throw std::runtime_error(
@@ -145,22 +158,22 @@ void SudoFileSystem::chmod(const QString &path, quint32 mode)
 
 QString SudoFileSystem::join(const QString &path, const QString &name) const
 {
-    return m_sftpFs->join(path, name);
+    return m_pathFs->join(path, name);
 }
 
 QString SudoFileSystem::parent(const QString &path) const
 {
-    return m_sftpFs->parent(path);
+    return m_pathFs->parent(path);
 }
 
 QString SudoFileSystem::basename(const QString &path) const
 {
-    return m_sftpFs->basename(path);
+    return m_pathFs->basename(path);
 }
 
 QString SudoFileSystem::home()
 {
-    return m_sftpFs->home();
+    return m_pathFs->home();
 }
 
 } // namespace ncssh::net

@@ -1,8 +1,17 @@
 # Portierungs-Status: SSHIT-Commander → SSHIT-Commander2 (C++)
 
-Stand des 1:1-Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
+Stand des Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 
-## Vollständig portiert
+> **Wichtige Einordnung.** Die Architektur steht vollständig: jedes Modul des
+> Originals hat ein C++-Gegenstück, der Kern (`core/`, `net/`) ist inhaltlich
+> nachgezogen und durch 110 Tests abgesichert. Die **Oberfläche ist aber noch
+> nicht auf dem Stand des Originals**: ein Vergleich der i18n-Kataloge zeigt
+> 620 von 1352 Bedienelementen ohne Entsprechung im Port (Details und
+> vollständige Liste in [GAPS.md](GAPS.md)). Von einem 1:1-Zustand ist die GUI
+> also noch entfernt — betroffen sind vor allem `main_window`, `file_panel`,
+> `settings_dialog`, `terminal_widget` und `bulk_rename_dialog`.
+
+## Portiert
 
 ### Fundament
 - `config` · `core/models` · `core/settings` · `core/secrets` (Windows Credential Manager)
@@ -87,8 +96,12 @@ auch remote, sowie aus dem Explorer), **abdockbare Konsolen-Spalte** („⤢") u
 
 ## Vollständigkeit
 
-Jedes Modul des Python-Originals hat ein C++-Gegenstück. Einige kleine Module
-wurden bewusst in die Datei zusammengelegt, zu der sie gehören:
+Jedes Modul des Python-Originals hat ein C++-Gegenstück — auf **Modulebene** ist
+die Portierung vollständig. Auf **Funktionsebene** gilt das für `core/` und
+`net/`, für die GUI dagegen noch nicht: siehe [GAPS.md](GAPS.md).
+
+Einige kleine Module wurden bewusst in die Datei zusammengelegt, zu der sie
+gehören:
 
 | Original | liegt jetzt in |
 |---|---|
@@ -108,7 +121,7 @@ die einzige Oberfläche.
 
 | Original | Port |
 |---|---|
-| `tests/` (15 Dateien, 120 Tests) | `tests/` — eigenes Harness + CTest, **55 Tests** portiert (netscan, netfs, bulkrename, lsparse, execfile, filealarm, githubalarm); die restlichen decken Qt-Dialoge bzw. asyncio-Interna ab |
+| `tests/` (15 Dateien, 120 Tests) | `tests/` — eigenes Harness + CTest, **110 Tests** portiert (netscan, netfs, bulkrename, lsparse, execfile, filealarm, githubalarm, paneutils, secaudit, configio, i18n, ai, transfer, sudofs); offen sind die beiden Qt-Dialog-Tests und `smoke_gui.py` |
 | `tools/i18n_extract.py` | portiert — sucht `_t("…")` in den C++-Quellen |
 | `i18n/en.json` | **1106 Schlüssel, 100 % übersetzt**, keine verwaisten Einträge |
 | `pyproject.toml`, `Pipfile`, `build-nuitka.ps1` | ersetzt durch `CMakeLists.txt`, `build.ps1`, `test.ps1` |
@@ -117,6 +130,10 @@ Tests laufen mit `.\test.ps1` (oder `ctest --test-dir build`).
 
 ## Bekannte Einschränkungen
 
+- **Die GUI ist noch nicht auf dem Funktionsumfang des Originals** — 620 von 1352
+  Bedienelementen fehlen bzw. sind anders formuliert. Vollständige Aufstellung in
+  [GAPS.md](GAPS.md). Einige Funktionen liegen fertig im Kern, sind aber an kein
+  Menü angebunden (ZIP erstellen, Entpacken, Prüfsumme, Wake-on-LAN, RDP).
 - Die libssh2-Schicht (Auth, SFTP, PTY, Tunnel) ist gegen die Semantik des Originals
   gebaut, aber **noch nicht gegen einen echten Server getestet** — dort ist am ehesten
   Nacharbeit zu erwarten.

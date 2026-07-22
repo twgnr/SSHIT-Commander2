@@ -66,6 +66,9 @@ int runAll()
             failuresBySuite[test.suite]++;
             failedNames.push_back(test.suite + "." + test.name);
         }
+        // Umgeleitete Ausgabe waere sonst blockweise gepuffert — bei einem
+        // haengenden Test saehe man gar nichts.
+        std::fflush(stdout);
     }
 
     const int failed = static_cast<int>(failedNames.size());

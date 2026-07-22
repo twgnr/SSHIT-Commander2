@@ -3,17 +3,10 @@
 
 #include "ncssh/core/settings.hpp"
 
-#include <QEventLoop>
 #include <QFileInfo>
 #include <QHash>
-#include <QJsonDocument>
 #include <QJsonValue>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QStringList>
-#include <QTimer>
-#include <QUrl>
 
 namespace ncssh::core {
 
@@ -35,116 +28,11 @@ QString aiModel()
     return getSettingString(QString::fromLatin1(AI_MODEL));
 }
 
-// --- Ollama-HTTP-Client ------------------------------------------------------
+// --- Ollama-Anbindung --------------------------------------------------------
+// Die HTTP-Schicht liegt in net/ollama (eine Implementierung, wie im Original
+// core/ai.py -> net.ollama); hier stehen nur die Adapter fuer die GUI.
 
 namespace {
-
-QUrl makeUrl(const QString &baseUrl, const QString &path)
-{
-    QString base = baseUrl;
-    while (base.endsWith(QLatin1Char('/')))
-        base.chop(1);
-    return QUrl(base + path);
-}
-
-QNetworkRequest makeRequest(const QString &baseUrl, const QString &path)
-{
-    QNetworkRequest req(makeUrl(baseUrl, path));
-    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    return req;
-}
-
-// Blockierender Request mit JSON-Antwort. Verbindungsfehler werden als
-// OllamaUnreachable geworfen (wie im Original die URLError-Familie).
-QJsonObject readJson(const QString &baseUrl, const QString &path, int timeoutMs)
-{
-    QNetworkAccessManager nam;
-    QNetworkRequest req = makeRequest(baseUrl, path);
-    req.setTransferTimeout(timeoutMs);
-
-    QNetworkReply *reply = nam.get(req);
-    QEventLoop loop;
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    loop.exec();
-    reply->deleteLater();
-
-    if (reply->error() != QNetworkReply::NoError)
-        throw OllamaUnreachable(reply->errorString().toStdString());
-
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll(), &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject())
-        throw OllamaError(("Ungültige Antwort des Ollama-Servers: "
-                           + parseError.errorString()).toStdString());
-    return doc.object();
-}
-
-// Oeffnet einen POST-Request und liefert jede Antwortzeile als geparstes
-// JSON-Objekt an onChunk (Streaming, zeilenweise JSON). Abbruch ueber das
-// CancelToken schliesst die Verbindung — das entspricht dem Schliessen des
-// HTTP-Sockets beim Generator-close() im Original.
-void streamJsonLines(const QString &baseUrl, const QString &path, const QJsonObject &payload,
-                     const std::function<void(const QJsonObject &)> &onChunk,
-                     const CancelTokenPtr &cancel)
-{
-    QNetworkAccessManager nam;
-    QNetworkRequest req = makeRequest(baseUrl, path);
-    // Kein Timeout — Modell-Antworten/Downloads duerfen lange dauern.
-
-    QNetworkReply *reply =
-        nam.post(req, QJsonDocument(payload).toJson(QJsonDocument::Compact));
-
-    QByteArray buffer;
-    auto handleLine = [&](const QByteArray &raw) {
-        const QByteArray line = raw.trimmed();
-        if (line.isEmpty())
-            return;
-        QJsonParseError parseError{};
-        const QJsonDocument doc = QJsonDocument::fromJson(line, &parseError);
-        if (parseError.error != QJsonParseError::NoError || !doc.isObject())
-            return;  // kaputte Zeilen still ueberspringen (wie im Original)
-        onChunk(doc.object());
-    };
-    auto drainBuffer = [&] {
-        int nl = -1;
-        while ((nl = buffer.indexOf('\n')) >= 0) {
-            const QByteArray raw = buffer.left(nl);
-            buffer.remove(0, nl + 1);
-            handleLine(raw);
-        }
-    };
-
-    QEventLoop loop;
-    QObject::connect(reply, &QNetworkReply::readyRead, &loop, [&] {
-        buffer += reply->readAll();
-        drainBuffer();
-    });
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-
-    // Kooperativer Abbruch: Token regelmaessig pruefen und ggf. abbrechen.
-    QTimer poll;
-    poll.setInterval(100);
-    QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
-        if (cancel && cancel->isCancelled())
-            reply->abort();
-    });
-    poll.start();
-
-    loop.exec();
-    poll.stop();
-    reply->deleteLater();
-
-    if (reply->error() == QNetworkReply::OperationCanceledError)
-        return;  // Abbruch ist kein Fehler — Stream endet einfach
-    if (reply->error() != QNetworkReply::NoError)
-        throw OllamaUnreachable(reply->errorString().toStdString());
-
-    // Rest verarbeiten (letzte Zeile darf ohne Zeilenumbruch enden).
-    buffer += reply->readAll();
-    drainBuffer();
-    if (!buffer.isEmpty())
-        handleLine(buffer);
-}
 
 QJsonArray makeMessages(const char *systemPrompt, const QString &user)
 {
@@ -163,58 +51,58 @@ const QString TRUNC_NOTE = QStringLiteral("\n\n[… gekürzt …]\n\n");
 
 QString ollamaVersion(const QString &baseUrl, int timeoutMs)
 {
-    const QJsonObject data = readJson(baseUrl, QStringLiteral("/api/version"), timeoutMs);
-    return data.value(QStringLiteral("version")).toString();
+    return net::version(baseUrl, timeoutMs);
 }
 
 QJsonArray listModels(const QString &baseUrl, int timeoutMs)
 {
-    const QJsonObject data = readJson(baseUrl, QStringLiteral("/api/tags"), timeoutMs);
-    return data.value(QStringLiteral("models")).toArray();
+    QJsonArray out;
+    for (const QJsonObject &model : net::listModels(baseUrl, timeoutMs))
+        out.append(model);
+    return out;
+}
+
+QString chatChunkText(const QJsonObject &chunk)
+{
+    return chunk.value(QStringLiteral("message"))
+        .toObject()
+        .value(QStringLiteral("content"))
+        .toString();
+}
+
+QString pullChunkLine(const QJsonObject &chunk)
+{
+    const auto asInt = [&chunk](const char *key) {
+        return static_cast<qint64>(chunk.value(QString::fromLatin1(key)).toDouble(0));
+    };
+    return QStringLiteral("%1\t%2\t%3")
+        .arg(asInt("completed"))
+        .arg(asInt("total"))
+        .arg(chunk.value(QStringLiteral("status")).toString());
 }
 
 void chatStream(const QString &baseUrl, const QString &model, const QJsonArray &messages,
                 const QJsonObject &options, const LineCallback &onText,
                 const CancelTokenPtr &cancel)
 {
-    QJsonObject payload;
-    payload.insert(QStringLiteral("model"), model);
-    payload.insert(QStringLiteral("messages"), messages);
-    payload.insert(QStringLiteral("stream"), true);
-    if (!options.isEmpty())
-        payload.insert(QStringLiteral("options"), options);
-
-    streamJsonLines(baseUrl, QStringLiteral("/api/chat"), payload,
-                    [&](const QJsonObject &chunk) {
-                        const QString text = chunk.value(QStringLiteral("message"))
-                                                 .toObject()
-                                                 .value(QStringLiteral("content"))
-                                                 .toString();
-                        if (!text.isEmpty() && onText)
-                            onText(text);
-                    },
-                    cancel);
+    net::chat(baseUrl, model, messages, options,
+              [&onText](const QJsonObject &chunk) {
+                  const QString text = chatChunkText(chunk);
+                  if (!text.isEmpty() && onText)
+                      onText(text);
+              },
+              cancel);
 }
 
 void pullStream(const QString &baseUrl, const QString &model,
                 const LineCallback &onLine, const CancelTokenPtr &cancel)
 {
-    QJsonObject payload;
-    payload.insert(QStringLiteral("name"), model);
-    payload.insert(QStringLiteral("stream"), true);
-
-    streamJsonLines(baseUrl, QStringLiteral("/api/pull"), payload,
-                    [&](const QJsonObject &chunk) {
-                        const qint64 completed =
-                            static_cast<qint64>(chunk.value(QStringLiteral("completed")).toDouble(0));
-                        const qint64 total =
-                            static_cast<qint64>(chunk.value(QStringLiteral("total")).toDouble(0));
-                        const QString status = chunk.value(QStringLiteral("status")).toString();
-                        if (onLine)
-                            onLine(QStringLiteral("%1\t%2\t%3")
-                                       .arg(completed).arg(total).arg(status));
-                    },
-                    cancel);
+    net::pullModel(baseUrl, model,
+                   [&onLine](const QJsonObject &chunk) {
+                       if (onLine)
+                           onLine(pullChunkLine(chunk));
+                   },
+                   cancel);
 }
 
 PullProgress parsePullLine(const QString &line)

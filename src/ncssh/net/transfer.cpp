@@ -32,14 +32,10 @@ QString directionOf(FileSystemProvider *src, FileSystemProvider *dst)
 
 qint64 pathSize(FileSystemProvider *provider, const QString &path)
 {
-    if (auto *local = dynamic_cast<LocalFileSystem *>(provider))
-        return QFileInfo(path).exists() ? QFileInfo(path).size() : 0;
-    if (auto *sftp = dynamic_cast<SFTPFileSystem *>(provider))
-        return sftp->size(path);
-    // sudo o.ae.: ueber die generische read_bytes-Groesse nicht ermittelbar ->
-    // provider-spezifische size(), sonst 0.
+    // Jeder Provider liefert seine Groesse selbst (lokal via stat, SFTP via
+    // Attribute, sudo via stat-Befehl); die Basis meldet 0 = unbekannt.
     try {
-        return provider->readBytes(path, 0).size();  // 0 Bytes -> nur Existenz
+        return provider->size(path);
     } catch (...) {
         return 0;
     }
@@ -172,8 +168,9 @@ static void copyOneFile(FileSystemProvider *src, const QString &sp,
     if (lsrc && ldst) {
         copyFileLocal(sp, dp, copied, total, progress);
     } else if (lsrc && rdst) {
+        // Fortschritt meldet streamUpload selbst; die Gesamtsumme fuehrt der
+        // Aufrufer (transferWithProgress) anhand der bekannten Dateigroesse.
         streamUpload(sp, rdst, dp, copied, total, progress);
-        copied += pathSize(dst, dp) - (progress ? 0 : 0);  // Fortschritt bereits gemeldet
     } else if (rsrc && ldst) {
         streamDownload(rsrc, sp, dp, copied, total, progress);
     } else {

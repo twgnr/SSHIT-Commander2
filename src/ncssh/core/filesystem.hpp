@@ -36,6 +36,11 @@ public:
     virtual QString parent(const QString &path) const = 0;
     virtual QString basename(const QString &path) const = 0;
     virtual QString home() = 0;
+
+    // Groesse in Bytes; 0 = unbekannt oder nicht vorhanden. Der Transfer nutzt
+    // das fuer Gesamtfortschritt und Verifikation. (Entspricht dem
+    // getattr(provider, "size", …)-Fallback des Python-Originals.)
+    virtual qint64 size(const QString &path) { Q_UNUSED(path); return 0; }
 };
 
 // Lokales Dateisystem (blockierende OS-Calls; via Bridge auf Worker-Threads).
@@ -57,6 +62,7 @@ public:
     QString parent(const QString &path) const override;
     QString basename(const QString &path) const override;
     QString home() override;
+    qint64 size(const QString &path) override;
 };
 
 } // namespace ncssh::core

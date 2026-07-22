@@ -9,6 +9,8 @@
 #include "ncssh/core/filesystem.hpp"
 #include "ncssh/net/ssh.hpp"
 
+#include <functional>
+
 namespace ncssh::net {
 
 // True, wenn sudo ein Passwort verlangt (kein NOPASSWD).
@@ -19,8 +21,18 @@ bool verifySudoPassword(const SSHSessionPtr &session, const QString &password);
 
 class SudoFileSystem : public core::FileSystemProvider {
 public:
+    // Fuehrt einen fertigen Befehl aus (inkl. sudo-Praefix) und liefert das
+    // Ergebnis. Ueber diese Naht laesst sich der Provider ohne echten Server
+    // pruefen — insbesondere, dass das Passwort nie im Nutzdaten-stdin landet.
+    using ExecFn = std::function<ExecResult(const QString &command,
+                                            const QByteArray &stdinData)>;
+    // Liefert das aktuelle sudo-Passwort; leer = NOPASSWD/unbekannt.
+    using PasswordFn = std::function<QString()>;
+
     // sftpFs muss ein SFTPFileSystem derselben Session sein (fuer Pfadsemantik).
     explicit SudoFileSystem(SFTPFileSystem *sftpFs, SSHSessionPtr session);
+    // Variante mit eigener Ausfuehrung und Pfadsemantik (Tests, Sonderfaelle).
+    SudoFileSystem(core::FileSystemProvider *pathFs, ExecFn exec, PasswordFn password);
 
     std::vector<core::FileEntry> listDir(const QString &path) override;
     bool isDir(const QString &path) override;
@@ -37,14 +49,16 @@ public:
     QString basename(const QString &path) const override;
     QString home() override;
 
-    qint64 size(const QString &path);
+    qint64 size(const QString &path) override;
 
 private:
     // Fuehrt command mit sudo aus; gibt stdout. Wirft bei Fehler.
     QByteArray run(const QString &command, const QByteArray &stdinData = {});
 
-    SFTPFileSystem *m_sftpFs;
-    SSHSessionPtr m_session;
+    core::FileSystemProvider *m_pathFs;   // Pfadsemantik (join/parent/basename/home)
+    SSHSessionPtr m_session;              // nur im Normalfall gesetzt
+    ExecFn m_exec;
+    PasswordFn m_password;
 };
 
 } // namespace ncssh::net

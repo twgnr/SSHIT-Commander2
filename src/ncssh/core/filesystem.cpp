@@ -199,4 +199,10 @@ QString LocalFileSystem::home()
     return QDir::toNativeSeparators(QDir::homePath());
 }
 
+qint64 LocalFileSystem::size(const QString &path)
+{
+    const QFileInfo info(path);
+    return info.exists() ? info.size() : 0;
+}
+
 } // namespace ncssh::core

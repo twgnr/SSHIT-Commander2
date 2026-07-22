@@ -18,6 +18,7 @@
 #pragma once
 
 #include "ncssh/core/runner.hpp"   // LineCallback, CancelTokenPtr
+#include "ncssh/net/ollama.hpp"    // HTTP-Schicht (wie core/ai.py -> net.ollama)
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -36,25 +37,15 @@ bool aiEnabled();
 QString ollamaUrl();
 QString aiModel();
 
-// --- Ollama-HTTP-Client (Port von net/ollama.py) -----------------------------
-// Spricht einen lokal laufenden Ollama-Server ueber dessen REST-API an.
-// Alle Funktionen sind blockierend und laufen ueber die AsyncBridge auf
-// Worker-Threads. Abbruch schliesst die HTTP-Verbindung (QNetworkReply::abort).
+// --- Ollama-Anbindung --------------------------------------------------------
+// Die HTTP-Schicht selbst liegt in net/ollama (eine Implementierung, wie im
+// Original); hier stehen nur die Adapter, die die GUI benutzt.
 
 inline constexpr const char *OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434";
-inline constexpr int OLLAMA_CONNECT_TIMEOUT_MS = 5000;  // Health-Check / Modell-Liste
+inline constexpr int OLLAMA_CONNECT_TIMEOUT_MS = net::kConnectTimeoutMs;
 
-// Allgemeiner Ollama-Fehler.
-class OllamaError : public std::runtime_error {
-public:
-    using std::runtime_error::runtime_error;
-};
-
-// Server nicht erreichbar (laeuft nicht / falsche URL / Timeout).
-class OllamaUnreachable : public OllamaError {
-public:
-    using OllamaError::OllamaError;
-};
+using net::OllamaError;
+using net::OllamaUnreachable;
 
 // Version des Servers (Health-Check). Blockierend.
 QString ollamaVersion(const QString &baseUrl = QString::fromLatin1(OLLAMA_DEFAULT_BASE_URL),
@@ -77,6 +68,13 @@ void chatStream(const QString &baseUrl, const QString &model, const QJsonArray &
 // Panel splittet mit parsePullLine wieder. Blockierend.
 void pullStream(const QString &baseUrl, const QString &model,
                 const LineCallback &onLine, const CancelTokenPtr &cancel);
+
+// Die beiden Abbildungen Chunk -> Ausgabe, getrennt herausgezogen, damit sie
+// ohne laufenden Server geprueft werden koennen.
+// Text-Delta eines /api/chat-Chunks (leer = nichts weiterzugeben).
+QString chatChunkText(const QJsonObject &chunk);
+// /api/pull-Chunk als "completed\ttotal\tstatus".
+QString pullChunkLine(const QJsonObject &chunk);
 
 // Kehrt pullStream um: "completed\ttotal\tstatus" -> Struktur.
 struct PullProgress {

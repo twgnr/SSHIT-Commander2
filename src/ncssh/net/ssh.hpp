@@ -114,7 +114,7 @@ public:
     QString home() override;
 
     // Groesse einer Remote-Datei (fuer Transfer/Resume).
-    qint64 size(const QString &path);
+    qint64 size(const QString &path) override;
     SSHSessionPtr session() const { return m_session; }
 
 private:

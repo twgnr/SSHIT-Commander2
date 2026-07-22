@@ -62,9 +62,26 @@ endif()
 enable_testing()
 file(GLOB NCSSH_TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp tests/*.hpp)
 if(NCSSH_TEST_SOURCES)
-    add_executable(sshit-tests ${NCSSH_TEST_SOURCES})
+    # resources.qrc muss mit hinein: die i18n-Kataloge und Assets liegen dort,
+    # sonst laufen die Uebersetzungs- und GUI-Tests gegen einen leeren Katalog.
+    add_executable(sshit-tests ${NCSSH_TEST_SOURCES} resources/resources.qrc)
     target_link_libraries(sshit-tests PRIVATE ncssh)
+    # Quellbaum-Pfad fuer Tests, die Dateien des Repos brauchen (i18n-Gate).
+    target_compile_definitions(sshit-tests PRIVATE
+        NCSSH_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     add_test(NAME sshit-tests COMMAND sshit-tests)
+    # Ohne Bildschirm laufen lassen (CI/headless).
+    set_tests_properties(sshit-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # windeployqt liefert nur qwindows mit — das Offscreen-Plugin daneben legen,
+    # sonst bleibt Qt beim Start mit einer Fehler-MessageBox stehen.
+    set(NCSSH_OFFSCREEN "${CMAKE_PREFIX_PATH}/plugins/platforms/qoffscreen.dll")
+    if(EXISTS "${NCSSH_OFFSCREEN}")
+        add_custom_command(TARGET sshit-tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NCSSH_OFFSCREEN}"
+                    "$<TARGET_FILE_DIR:sshit-tests>/platforms/qoffscreen.dll"
+            COMMENT "Offscreen-Plattform-Plugin fuer die Tests bereitstellen")
+    endif()
 endif()
 
 # Windows-Icon
