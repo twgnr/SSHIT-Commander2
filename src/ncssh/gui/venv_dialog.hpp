@@ -33,6 +33,8 @@ private:
     void updatePreview();
     void accept() override;
     void deleteSelected();
+    void activateSelected();   // markierte Umgebung in der Konsole aktivieren
+    void saveNote();           // Notiz der markierten Umgebung sichern
 
     AsyncBridge *m_bridge;
     QString m_projectDir;
@@ -47,6 +49,8 @@ private:
     QCheckBox *m_skipLock = nullptr;
     QPlainTextEdit *m_preview = nullptr;
     QTableWidget *m_table = nullptr;
+    QPlainTextEdit *m_note = nullptr;
+    QLabel *m_noteProject = nullptr;
     QLabel *m_status = nullptr;
 };
 
