@@ -1,73 +1,70 @@
 # Offene Punkte der Portierung
 
-Erhoben am 22.07.2026 durch Vergleich der **i18n-Kataloge** beider Projekte.
-Das ist der belastbarste Massstab, den es hier gibt: in beiden Projekten ist der
-deutsche Quelltext selbst der Schluessel, also lassen sich die sichtbaren
+Erhoben durch Vergleich der **i18n-Kataloge** beider Projekte. Das ist der
+belastbarste Massstab, den es hier gibt: in beiden Projekten ist der deutsche
+Quelltext selbst der Schluessel, also lassen sich die sichtbaren
 Oberflaechen-Elemente eins zu eins gegenueberstellen.
 
 | | Anzahl |
 |---|---|
 | UI-Texte im Python-Original | 1352 |
-| UI-Texte im C++-Port | 1106 |
-| in beiden identisch | 732 |
-| **nur im Original — nicht portiert** | **620** |
-| nur im Port (Umformulierungen + Neues) | 374 |
+| UI-Texte im C++-Port | 1333 |
+| in beiden identisch | 895 |
+| **nur im Original — noch offen** | **457** |
 
-Ein Teil der 620 sind Umformulierungen (dann steckt die Funktion unter anderem
-Wortlaut im Port). Der Rest sind echte Luecken. Stichproben im Code bestaetigen
-die Groessenordnung — folgende Begriffe kommen im gesamten C++-Baum **gar nicht**
-vor:
+Zum Vergleich: die erste Erhebung ergab 620 offene Punkte. Ein Teil der
+verbleibenden sind blosse Umformulierungen (die Funktion steckt dann unter
+anderem Wortlaut im Port), der Rest sind echte Luecken.
 
-* `breadcrumb` / Pfadleiste zum Klicken
-* `thumbnail` / Bild-Vorschau als Icon in der Dateiliste
-* Type-Ahead-Suche in der Pane
-* Vor/Zurueck-Navigation (Alt+Links / Alt+Rechts)
-* „Nach Muster markieren" / „Markierung aufheben" (Num +/-), Auswahl umkehren
-* Kachelansicht, Spaltenauswahl im Kopfzeilen-Menue
-* „Oeffnen mit …", „Rechte aendern …" im Kontextmenue
-* Terminal: Zeichengitter, Mitschnitt (Logging), Suche im Puffer, Maus-Auswahl
-* „Nur Terminal anzeigen" / „Nur Dateisystem anzeigen", „Panes untereinander"
-* „Ueber SSHIT-Commander" (Info-Dialog)
+## Bereits geschlossen
 
-Ausserdem existieren einige Funktionen **nur im Kern**, ohne Anbindung an die
-Oberflaeche: ZIP erstellen, Archiv entpacken, Pruefsumme berechnen,
-Wake-on-LAN, RDP oeffnen (alle in `core/`, aber in keinem Menue).
+| Modul | vorher | jetzt |
+|---|---|---|
+| `gui/file_panel` | 73 | 38 |
+| `gui/main_window` | 114 | 86 |
+| `gui/settings_dialog` | 42 | 0 |
+| `gui/server_manager` | 42 | 19 |
+| `gui/search_dialog` | 31 | 0 |
+| `gui/venv_dialog` | 23 | 9 |
+
+Inhaltlich kamen dabei unter anderem dazu: Kontextmenue der Pane (rund 25 statt
+7 Eintraege), Verlauf mit Vor/Zurueck, Markieren nach Muster, Tippsuche,
+Zwischenablage, frei waehlbare Spalten, Breadcrumb-Pfadleiste, Kachelansicht,
+Miniaturansichten, das Panes-Menue, Tab-Verwaltung, Broadcast, Konfigurations-
+Im-/Export, Modell-Download, Erreichbarkeitstest, die 14 Regex-Vorlagen und
+Rueckgaengig beim Massen-Umbenennen sowie Suche, Mitschnitt und Links im
+Terminal. ZIP, Entpacken und Pruefsumme lagen fertig im Kern, hingen aber an
+keinem Menue — das ist jetzt angebunden.
 
 ## Groessenvergleich der Module
 
-Zum Abgleich die Zeilenzahlen (ohne Kommentar-/Leerzeilen). C++ ist normalerweise
-laenger als Python — ein Verhaeltnis deutlich unter 1,0 ist daher ein Warnsignal:
+Zeilenzahlen ohne Kommentar-/Leerzeilen. C++ faellt normalerweise laenger aus
+als Python — ein Verhaeltnis deutlich unter 1,0 ist daher ein Warnsignal:
 
 | Modul | Python | C++ | Verhaeltnis |
 |---|---|---|---|
-| `gui/main_window` | 2434 | 520 | 0,21 |
-| `gui/terminal_widget` | 527 | 182 | 0,35 |
-| `gui/file_panel` | 1689 | 697 | 0,41 |
-| `gui/user_guide_dialog` -> `help_dialog` | 940 | 425 | 0,45 |
-| `gui/settings_dialog` | 524 | 243 | 0,46 |
-| `gui/bulk_rename_dialog` | 506 | 248 | 0,49 |
+| `gui/main_window` | 2434 | 688 | 0,28 |
 | `gui/macro_manager_dialog` | 1062 | 539 | 0,51 |
+| `gui/user_guide_dialog` -> `help_dialog` | 940 | 425 | 0,45 |
+| `gui/bulk_rename_dialog` | 506 | 427 | 0,84 |
+| `gui/terminal_widget` | 527 | 448 | 0,85 |
+| `gui/server_manager` | 427 | 403 | 0,94 |
+| `gui/file_panel` | 1689 | 1614 | 0,96 |
+| `gui/search_dialog` | 275 | 265 | 0,96 |
+| `gui/settings_dialog` | 524 | 508 | 0,97 |
 
-Konkret beim `bulk_rename_dialog` nachgeprueft — im Port fehlen: die gesamte
-Filter-/Sammelgruppe (Endungen, Namensmuster, rekursiv, Ordner, versteckte
-Dateien, „nur markierte"), die 14 Regex-Vorlagen, Entfernen/Zuschneiden,
-Einfuegen an Position, Geltungsbereich (Name/Endung/ganz), Zaehler-Reset pro
-Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
-(`core/bulkrename`) kann all das bereits — nur der Dialog fragt es nicht ab.
+`main_window` ist damit die groesste verbliebene Baustelle.
 
-## Nicht portierte UI-Texte je Modul
+## Noch offene UI-Texte je Modul
 
 | Modul | Anzahl |
 |---|---|
-| `gui/main_window.py` | 114 |
-| `gui/file_panel.py` | 73 |
-| `gui/server_manager.py` | 42 |
-| `gui/settings_dialog.py` | 42 |
+| `gui/main_window.py` | 86 |
+| `gui/file_panel.py` | 38 |
 | `gui/help_dialog.py` | 31 |
 | `gui/netscan_dialog.py` | 31 |
-| `gui/search_dialog.py` | 31 |
 | `gui/security_dialog.py` | 24 |
-| `gui/venv_dialog.py` | 23 |
+| `gui/server_manager.py` | 19 |
 | `gui/encoding_converter_dialog.py` | 18 |
 | `gui/editor_dialog.py` | 16 |
 | `gui/filealarm_dialog.py` | 16 |
@@ -76,13 +73,16 @@ Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
 | `gui/theme_editor_dialog.py` | 11 |
 | `gui/tunnel_dialog.py` | 10 |
 | `gui/tab_favorites_dialog.py` | 9 |
+| `gui/venv_dialog.py` | 9 |
 | `gui/diff_dialog.py` | 8 |
 | `gui/ai_chat_panel.py` | 7 |
 | `gui/host_key_dialog.py` | 7 |
 | `gui/properties_dialog.py` | 7 |
 | `gui/command_palette.py` | 6 |
 | `gui/githubalarm_dialog.py` | 6 |
+| `gui/settings_dialog.py` | 6 |
 | `gui/command_builder.py` | 5 |
+| `gui/search_dialog.py` | 5 |
 | `gui/clipboard_dialog.py` | 4 |
 | `gui/console_panel.py` | 4 |
 | `gui/confirm_dialog.py` | 3 |
@@ -95,14 +95,9 @@ Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
 
 ### Vollstaendige Listen
 
-<details><summary><code>gui/main_window.py</code> — 114</summary>
+<details><summary><code>gui/main_window.py</code> — 86</summary>
 
 *   ·  {count} Tunnel
-* &Aktionen
-* &Ansicht
-* &Hilfe
-* &Panes
-* &Tools
 * (Binärdatei — keine Vorschau)
 * (Vorschau nicht verfügbar)
 * Abgebrochen — Host-Key nicht bestätigt.
@@ -111,21 +106,14 @@ Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
 * Alarm Trigger …
 * Alarm Trigger: {name}
 * Alarm ausgelöst — zum Anzeigen klicken
-* Archivname:
-* Befehl an beide Konsolen …
-* Befehl an beide Konsolen:
 * Bekannte Host-Keys …
-* Benutzername
 * Benutzername für {host}:
-* Bitte Dateien/Ordner auswählen.
 * Bitte eine Datei auswählen.
-* Broadcast
 * Datei-Encoding konvertieren …
 * Datei-Suche (Name) …
 * Datei-Vergleich …
 * Destruktiver Befehl
 * Die Datei ist leer.
-* Diese Seite ist nicht verbunden.
 * Einstellungen gespeichert (Pane-Schrift sofort; Terminal/Editor ab nächstem Öffnen).
 * Einstellungen …
 * Fehlgeschlagen: {error}
@@ -144,32 +132,24 @@ Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
 * KI: {path}
 * Keine Ausgabe zum Analysieren vorhanden.
 * Key-Passphrase
-* Lesezeichen exportieren …
 * Lesezeichen exportiert: {path}
-* Lesezeichen importieren …
 * Links und rechts je eine Datei markieren.
 * Lokales Dateisystem
 * Löschen fehlgeschlagen
 * Massen-Umbenennen …
 * Nein, alle
 * Netzwerkscanner …
-* Neue Datei
 * Neue Daten im Repository ({when})
 * Neues Verzeichnis
 * Nichts ausgewählt.
 * Nichts zu übertragen (alle übersprungen).
-* Nur Dateisystem anzeigen
-* Nur Terminal anzeigen
-* Panes untereinander anzeigen
 * Passphrase für den Schlüssel: ⏎ {path}
 * Passwort für {target}:
-* Prüfsumme
 * Quelle nicht mehr vorhanden — Eintrag entfernt.
 * SSHIT-Commander
 * Server-Profil gespeichert: {name}
 * Sicherheits-Audit (CVE) …
 * Speichern unter (Remote-Pfad)
-* Tab umbenennen …
 * Tab-Favoriten — Tab-Layouts speichern/öffnen
 * Terminalausgabe erklären
 * Text in der Zwischenablage — mit Strg+V einfügen.
@@ -179,19 +159,13 @@ Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
 * Verbinde zu {target} …
 * Verbindung fehlgeschlagen
 * Verbindung getrennt: {label}
-* Verbindung trennen
 * Verbindung verloren — verbinde neu: {target}
 * Verbindung zu {label} trennen?
 * Verbindung(en) dieses Tabs trennen? ⏎ {labels}
 * Verbunden: {label}  ·  {os}
-* Verschieben
 * Verzeichnis-Vergleich …
-* Vorschau-Panel
-* ZIP erstellen
 * ZIP erstellt: {name} ({n} Einträge)
 * ZIP nur für lokale Ordner.
-* ZIP-Archiv erstellen
-* Zielpfad:
 * sudo-Authentifizierung fehlgeschlagen.
 * sudo-Passwort für {host}:
 * venv verwalten …
@@ -205,8 +179,6 @@ Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
 * {n} gelöscht
 * {n} geändert
 * {n} neu
-* Über SSHIT-Commander
-* Über SSHIT-Commander …
 * Überschreiben?
 * Übertragung abgeschlossen
 * Übertragung fertig
@@ -214,175 +186,46 @@ Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
 
 </details>
 
-<details><summary><code>gui/file_panel.py</code> — 73</summary>
+<details><summary><code>gui/file_panel.py</code> — 38</summary>
 
 *  · Ordner: {pre}{size}
 * (keine Lesezeichen)
-* Aktualisieren (Ctrl+R)
 * Aktuellen Pfad als Lesezeichen (pro Server)
-* Alles markieren (Strg+A)
 * Als Server-Profil speichern
-* Anderes Programm wählen …
-* Ansehen (F3)
 * Anzeige filtern (Ctrl+F) — Wildcards * ? möglich, z.B. *.py
-* Ausführen (Standardprogramm)
-* Auswahl umkehren (Num *)
-* Bearbeiten (F4)
 * Dienste
 * Diese Pane mit sudo-Rechten (root) anzeigen
-* Eigenschaften …
-* Einfügen (Ctrl+V)
 * Erneut scannen
 * Filter…
 * Git-Status: {code}
 * IP kopieren
 * Ja
 * Kontextmenü: Weboberfläche im Browser öffnen
-* Kopieren (Ctrl+C)
-* Kopieren → andere Pane (F5)
 * Latenz
 * Laufwerk / Mountpunkt wechseln
 * Lesezeichen dieses Servers
-* Löschen (F8)
-* Markieren
-* Markierung nach Muster aufheben
-* Markierung nach Muster aufheben … (Num -)
-* Muster (Wildcards, z.B. *.jpg):
-* Nach Muster markieren
-* Nach Muster markieren … (Num +)
 * Nein
 * Netzwerkscanner schließen
 * Netzwerkscanner-Modus schließen
-* Neue Datei …
-* Neuer Ordner (F7)
 * Offene Ports: {ports}
-* Pfad kopieren
-* Prüfsumme berechnen …
 * RDP wird nur unter Windows unterstützt.
 * RDP öffnen
-* Rechte ändern …
-* Rechts in die leere Fläche klicken, um den Pfad einzugeben
 * SSH verbinden (Port 22 nicht offen)
-* Spalten anzeigen
-* Standardprogramm
 * Suche Freigaben auf {host} …
-* Symlink
-* Umbenennen / Verschieben (F6)
 * Verbindung dieser Seite trennen
-* Verschieben → andere Pane
 * Verwalten…
-* Vor (Alt+→)
 * Wake-on-LAN fehlgeschlagen.
 * Wake-on-LAN gesendet an {mac}
 * Wake-on-LAN senden
 * Weboberfläche öffnen
-* ZIP-Archiv erstellen …
-* Zugriff
-* Zurück (Alt+←)
 * [Netzwerk] · Scan
 * remote
 * {base} · ausgewählt: {name} ({size})
 * {count} Einträge ({dirs} Ordner, {files} Dateien)
 * {n} markiert · {size}  ·  {base}
-* Öffnen mit
-* Übergeordneter Ordner
 * ⏏ Trennen
 * ★ Aktuellen Pfad merken
 * ✕ Netzwerkscanner
-
-</details>
-
-<details><summary><code>gui/server_manager.py</code> — 42</summary>
-
-*  ⏎  ⏎ Hinweis: Passwörter werden nicht übernommen.
-* Anzeigename *
-* Aus Datei importieren …
-* Ausgewählte importieren
-* Auth
-* Authentifizierung
-* Beim ersten Mal vertrauen (accept-new)
-* Datei konnte nicht gelesen werden: {error}
-* Erreichbarkeit
-* Erreichbarkeit testen
-* Es wurde keine Verbindung ausgewählt.
-* Export-Dateien (*.reg *.ini);;Alle Dateien (*.*)
-* Exportierte PuTTY-/WinSCP-Datei wählen
-* Fehlende Angaben
-* Filtern … (Name, Host, Benutzer)
-* Gefundene Verbindungen auswählen, die importiert werden sollen:
-* Host *
-* Host-Key-Prüfung
-* Ignorieren (unsicher)
-* Import (PuTTY/WinSCP/SSH)
-* Keine Sitzungen automatisch gefunden
-* Keine Sitzungen in der Datei gefunden.
-* Key-Pfad
-* Name und Host sind Pflicht.
-* Neuer Server
-* Passwort/Passphrase sicher im OS-Keyring speichern
-* Profil '{name}' löschen?
-* ProxyJump
-* ProxyJump, z.B. user@jump:22  (optional)
-* SSH-Agent
-* SSH-Key
-* Server bearbeiten
-* Server-Verwaltung
-* Strikt (nur bekannte)
-* Tab-Farbe
-* Tab-Farbe wählen …
-* Verbindung
-* Verbindungen importieren
-* Zuletzt
-* {count} Verbindung(en) importiert.
-* {host}:{port} nicht erreichbar: ⏎ {error}
-* {target}  (bereits vorhanden)
-
-</details>
-
-<details><summary><code>gui/settings_dialog.py</code> — 42</summary>
-
-* Ausführbare Dateien farblich hervorheben
-* Beim Start automatisch zum letzten Server verbinden
-* Bestehende Daten der gewählten Bereiche werden überschrieben:
-* Bild-Vorschau als Icon (Thumbnails)
-* Datumsformat (Pane)
-* Die Datei enthält keine Daten.
-* Doppelte Kürzel
-* Editor-Schriftgröße
-* Export fehlgeschlagen
-* Farbe für ausführbare Dateien
-* Farbe wählen …
-* Google-Modell, leistungsfähig (~5 GB)
-* Guter Allrounder (~5 GB)
-* Import fehlgeschlagen
-* KI-Assistent aktivieren (lokales Ollama)
-* Klein & schnell, guter Allrounder (~2 GB)
-* Kompakt & solide (~4 GB)
-* Konfiguration exportieren
-* Konfiguration importieren
-* Lade {model} …
-* Modell laden
-* Modell wählen oder Tag eintippen …
-* Natürliche Sortierung (1, 2, 10)
-* Pane-Schriftgröße (Dateiliste)
-* Programm-Logos vor Dateinamen anzeigen
-* Sehr klein und schnell (~2 GB)
-* Spezialist für Code & Konfigurationsdateien (~5 GB)
-* Standard-Startpfad (lokal)
-* Stark & vielseitig (~5 GB)
-* Startpfad wählen
-* Terminal-Schriftgröße
-* Teste Verbindung …
-* Theme löschen
-* Theme „{name}“ löschen?
-* Token: DD MM YYYY YY HH24 HH12 MI SS MON — z. B. DD.MM.YYYY HH24:MI
-* Verbindung testen
-* Verbunden, aber kein Modell installiert — unten laden.
-* Was importieren?
-* leer = aktuelles Verzeichnis
-* ✓ Verbunden mit Ollama {version}
-* ✓ {count} Modell(e) verfügbar.
-* ✓ {model} geladen.
 
 </details>
 
@@ -458,42 +301,6 @@ Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
 
 </details>
 
-<details><summary><code>gui/search_dialog.py</code> — 31</summary>
-
-*  (abgebrochen)
-*  — max. {cap} angezeigt
-* Auf Laufwerks-/Systemwurzel setzen
-* Binärdateien einbeziehen
-* Datei-Filter
-* Dateien ausschließen
-* Dateiname
-* Erweitert ▴
-* Erweitert ▾
-* Geändert ≤ Tage
-* Groß/klein ignorieren
-* Inhalt (grep)
-* Invertiert
-* Max-Tiefe
-* Min-Größe (KB)
-* Name/Muster, z.B. *.log
-* Nur Dateien
-* Nur Dateinamen
-* Nur Ordner
-* Regex im Datei-Inhalt
-* Regex, z.B. ^conf.*\.ya?ml$
-* Root
-* Text im Datei-Inhalt
-* Zeilen ohne Treffer
-* Zeilen vor/nach jedem Treffer
-* z.B. *.min.js,*.map
-* z.B. *.py,*.txt
-* z.B. .git,node_modules
-* {count} Treffer
-* {count} Treffer …
-* ∞
-
-</details>
-
 <details><summary><code>gui/security_dialog.py</code> — 24</summary>
 
 * , davon {count} kritisch
@@ -523,31 +330,27 @@ Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
 
 </details>
 
-<details><summary><code>gui/venv_dialog.py</code> — 23</summary>
+<details><summary><code>gui/server_manager.py</code> — 19</summary>
 
-* (kein Projekt hinterlegt)
-* Abhängigkeiten ignorieren (pipenv --skip-lock / pip --no-deps)
-* Aktivieren
-* Bekannte Umgebungen (venv/pipenv):
-* Bitte einen gültigen Projektordner wählen.
-* Bitte einen venv-Zielordner angeben.
-* Erstellen & aktivieren
-* Info
-* Info speichern
-* Info:
-* Kurze Notiz zu dieser Umgebung (optional)
-* Neue Umgebung:
-* Notiz zur ausgewählten Umgebung
-* Ordner mit pyproject.toml / requirements.txt …
-* Projekt:
-* Projektordner wählen
-* Python
-* Umgebung wirklich löschen (Ordner wird entfernt)? ⏎ {path}
-* Wird nach dem Aktivieren der venv ausgeführt.
-* Zielordner der virtuellen Umgebung
-* venv
-* venv-Pfad:
-* venv-Zielordner wählen
+*  ⏎  ⏎ Hinweis: Passwörter werden nicht übernommen.
+* Aus Datei importieren …
+* Ausgewählte importieren
+* Auth
+* Datei konnte nicht gelesen werden: {error}
+* Export-Dateien (*.reg *.ini);;Alle Dateien (*.*)
+* Exportierte PuTTY-/WinSCP-Datei wählen
+* Gefundene Verbindungen auswählen, die importiert werden sollen:
+* Keine Sitzungen automatisch gefunden
+* Keine Sitzungen in der Datei gefunden.
+* Profil '{name}' löschen?
+* SSH-Agent
+* SSH-Key
+* Server bearbeiten
+* Verbindung
+* Verbindungen importieren
+* {count} Verbindung(en) importiert.
+* {host}:{port} nicht erreichbar: ⏎ {error}
+* {target}  (bereits vorhanden)
 
 </details>
 
@@ -697,6 +500,20 @@ Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
 
 </details>
 
+<details><summary><code>gui/venv_dialog.py</code> — 9</summary>
+
+* Bekannte Umgebungen (venv/pipenv):
+* Info:
+* Neue Umgebung:
+* Projekt:
+* Python
+* Umgebung wirklich löschen (Ordner wird entfernt)? ⏎ {path}
+* venv
+* venv-Ordner
+* venv-Zielordner wählen
+
+</details>
+
 <details><summary><code>gui/diff_dialog.py</code> — 8</summary>
 
 * Aktualisieren
@@ -768,6 +585,17 @@ Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
 
 </details>
 
+<details><summary><code>gui/settings_dialog.py</code> — 6</summary>
+
+* Doppelte Kürzel
+* Lade {model} …
+* Theme „{name}“ löschen?
+* ✓ Verbunden mit Ollama {version}
+* ✓ {count} Modell(e) verfügbar.
+* ✓ {model} geladen.
+
+</details>
+
 <details><summary><code>gui/command_builder.py</code> — 5</summary>
 
 * (leer)
@@ -775,6 +603,16 @@ Ordner, die Regex-Fehleranzeige und **Rueckgaengig**. Der Kern
 * In Konsole einfügen
 * als Benutzer (-u), leer = root
 * mit sudo ausführen
+
+</details>
+
+<details><summary><code>gui/search_dialog.py</code> — 5</summary>
+
+*  — max. {cap} angezeigt
+* Kontext
+* Suchbegriff
+* {count} Treffer
+* {count} Treffer …
 
 </details>
 
