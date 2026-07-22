@@ -10,6 +10,7 @@
 
 class QTabWidget;
 class QAction;
+class QLabel;
 
 namespace ncssh::gui {
 
@@ -58,7 +59,13 @@ private:
     void saveSession();      // offene Tabs fuer die Wiederherstellung sichern
     void restoreSession();
     void applyThemeByName(const QString &name);
+    void buildStatusBar();
+    // Verbindungs-, Host-Key- und Tunnel-Anzeige nachziehen.
+    void updateConnectionStatus();
     void showAbout();
+    void explainConsoleWithAi();
+    // codecheck = Fehleranalyse statt Erklaerung/Frage.
+    void askAiAboutFile(bool codecheck);
     void renameCurrentTab();
     void disconnectCurrentTab();
     void broadcastCommand();     // Befehl an beide Konsolen
@@ -71,6 +78,9 @@ private:
     QAction *m_onlyFsAction = nullptr;
     QAction *m_onlyTermAction = nullptr;
     QAction *m_vertPanesAction = nullptr;
+    QLabel *m_connectionLabel = nullptr;
+    QLabel *m_hostKeyLabel = nullptr;
+    QLabel *m_tunnelLabel = nullptr;
     std::unique_ptr<net::SessionManager> m_sessions;
     TransferManager *m_transfers = nullptr;
     ClipboardManager *m_clipboard = nullptr;

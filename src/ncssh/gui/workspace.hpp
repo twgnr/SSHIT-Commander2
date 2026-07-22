@@ -58,6 +58,8 @@ public:
     void syncPanes();
     // Befehl an beide Konsolen schicken.
     void broadcastToConsoles(const QString &command, bool execute);
+    // Ausgabe der aktiven Konsole von der KI erklaeren lassen.
+    void explainActiveConsoleWithAi();
 
     // OS der aktiven Seite ("posix"/"windows") — fuer die Befehlspalette.
     QString activeOsType() const;

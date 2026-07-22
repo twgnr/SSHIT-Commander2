@@ -1,9 +1,11 @@
 #include "ncssh/gui/main_window.hpp"
 
+#include "ncssh/core/ai.hpp"
 #include "ncssh/core/assets.hpp"
 #include "ncssh/core/bookmarks.hpp"
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/settings.hpp"
+#include "ncssh/gui/ai_chat_panel.hpp"
 #include "ncssh/gui/file_dialogs.hpp"
 #include "ncssh/gui/bulk_rename_dialog.hpp"
 #include "ncssh/gui/clipboard_manager.hpp"
@@ -42,6 +44,8 @@
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QIcon>
+#include <QJsonObject>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
@@ -64,19 +68,52 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
     m_sessions = std::make_unique<net::SessionManager>();
     m_sessions->hostkeys.load();
     m_transfers = new TransferManager(bridge, this);
+    // Sammelmeldung, sobald die Queue leerlaeuft — einzelne Jobs melden die
+    // Workspaces selbst, hier zaehlt nur das Gesamtergebnis.
+    connect(m_transfers, &TransferManager::jobUpdated, this, [this](int) {
+        int running = 0, done = 0, failed = 0;
+        for (const net::TransferJob &job : m_transfers->jobs()) {
+            if (job.status == QLatin1String("running") || job.status == QLatin1String("pending"))
+                ++running;
+            else if (job.status == QLatin1String("done"))
+                ++done;
+            else if (job.status == QLatin1String("error"))
+                ++failed;
+        }
+        if (running > 0 || (done == 0 && failed == 0))
+            return;
+        if (failed == 0) {
+            statusBar()->showMessage(_t("Übertragung abgeschlossen") + QStringLiteral(" — ")
+                                         + _t("%1 Datei(en) übertragen").arg(done),
+                                     10000);
+        } else {
+            statusBar()->showMessage(
+                _t("%1 übertragen, %2 fehlgeschlagen — Details in den Übertragungen")
+                    .arg(done).arg(failed),
+                15000);
+        }
+    });
     m_clipboard = new ClipboardManager(this);
     // Alarme laufen im Hintergrund und melden sich in der Statusleiste.
     m_fileAlarms = new FileAlarmManager(bridge, this);
     connect(m_fileAlarms, &FileAlarmManager::event, this,
             [this](const QString &kind, const QString &path, const QString &name) {
+                // Art in Klartext — "created"/"modified"/"deleted" sagt im
+                // Statusband wenig.
+                const QString label = kind == QLatin1String("created")   ? _t("neu")
+                                      : kind == QLatin1String("deleted") ? _t("gelöscht")
+                                                                         : _t("geändert");
                 statusBar()->showMessage(
-                    QStringLiteral("[%1] %2 — %3").arg(name, kind, path), 15000);
+                    QStringLiteral("%1 — %2: %3")
+                        .arg(_t("Alarm Trigger: %1").arg(name), label, path),
+                    15000);
             });
     m_githubAlarms = new GithubAlarmManager(bridge, this);
     connect(m_githubAlarms, &GithubAlarmManager::repoChanged, this,
             [this](const QString &fullName, const QString &pushedAt) {
                 statusBar()->showMessage(
-                    QStringLiteral("GitHub: %1 — neue Daten (%2)").arg(fullName, pushedAt),
+                    _t("GitHub: %1").arg(fullName) + QStringLiteral(" — ")
+                        + _t("Neue Daten im Repository (%1)").arg(pushedAt),
                     15000);
             });
 
@@ -118,10 +155,13 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
                                &MainWindow::disconnectCurrentTab);
                 menu.exec(m_tabs->tabBar()->mapToGlobal(pos));
             });
-    connect(m_tabs, &QTabWidget::currentChanged, this,
-            [this](int) { syncViewActions(); });
+    connect(m_tabs, &QTabWidget::currentChanged, this, [this](int) {
+        syncViewActions();
+        updateConnectionStatus();
+    });
 
     buildMenus();
+    buildStatusBar();
     statusBar()->showMessage(_t("Bereit."));
     restoreSession();
     if (m_tabs->count() == 0)
@@ -183,7 +223,8 @@ void MainWindow::buildMenus()
     historyAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+H")));
     QAction *tunnelAct = actions->addAction(_t("SSH-Tunnel"), this, &MainWindow::openTunnels);
     tunnelAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+T")));
-    actions->addAction(_t("Tab-Favoriten"), this, &MainWindow::openTabFavorites);
+    actions->addAction(_t("Tab-Favoriten — Tab-Layouts speichern/öffnen"), this,
+                       &MainWindow::openTabFavorites);
     actions->addSeparator();
     actions->addAction(_t("Tab umbenennen …"), this, &MainWindow::renameCurrentTab);
     actions->addAction(_t("Verbindung trennen"), this, &MainWindow::disconnectCurrentTab);
@@ -198,35 +239,46 @@ void MainWindow::buildMenus()
 
     // --- Tools ---
     QMenu *tools = menuBar()->addMenu(_t("&Tools"));
-    QAction *searchName = tools->addAction(_t("Datei-Suche (Name)"), this,
+    QAction *searchName = tools->addAction(_t("Datei-Suche (Name) …"), this,
                                            [this] { openSearch(QStringLiteral("name")); });
     searchName->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")));
-    QAction *searchContent = tools->addAction(_t("Inhalts-Suche (grep)"), this,
+    QAction *searchContent = tools->addAction(_t("Inhalts-Suche (grep) …"), this,
                                               [this] { openSearch(QStringLiteral("content")); });
     searchContent->setShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+F")));
     tools->addSeparator();
-    QAction *bulkAct = tools->addAction(_t("Massen-Umbenennen"), this,
+    QAction *bulkAct = tools->addAction(_t("Massen-Umbenennen …"), this,
                                         &MainWindow::openBulkRename);
     bulkAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+R")));
-    QAction *diffAct = tools->addAction(_t("Datei-Vergleich"), this, &MainWindow::openFileDiff);
+    QAction *diffAct = tools->addAction(_t("Datei-Vergleich …"), this, &MainWindow::openFileDiff);
     diffAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+D")));
-    QAction *dirDiffAct = tools->addAction(_t("Verzeichnis-Vergleich"), this,
+    QAction *dirDiffAct = tools->addAction(_t("Verzeichnis-Vergleich …"), this,
                                            &MainWindow::openDirDiff);
     dirDiffAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+D")));
     tools->addSeparator();
-    tools->addAction(_t("Datei-Encoding konvertieren"), this,
+    tools->addAction(_t("Datei-Encoding konvertieren …"), this,
                      &MainWindow::openEncodingConverter);
-    tools->addAction(_t("venv verwalten"), this, &MainWindow::openVenv);
-    tools->addAction(_t("Netzwerk-Scanner"), this, &MainWindow::openNetscan);
-    tools->addAction(_t("Sicherheits-Audit (CVE)"), this, &MainWindow::openSecurityAudit);
+    tools->addAction(_t("venv verwalten …"), this, &MainWindow::openVenv);
+    tools->addAction(_t("Netzwerkscanner …"), this, &MainWindow::openNetscan);
+    tools->addAction(_t("Sicherheits-Audit (CVE) …"), this, &MainWindow::openSecurityAudit);
     tools->addAction(_t("Plugins"), this, &MainWindow::openPlugins);
     tools->addSeparator();
-    tools->addAction(_t("Datei-Alarm"), this, &MainWindow::openFileAlarms);
-    tools->addAction(_t("GitHub-Alarm"), this, &MainWindow::openGithubAlarms);
+
+    // --- KI: arbeitet auf der markierten Datei der aktiven Pane ---
+    QMenu *ai = tools->addMenu(_t("KI"));
+    ai->addAction(_t("Terminalausgabe erklären"), this,
+                  [this] { explainConsoleWithAi(); });
+    ai->addAction(_t("Datei erklären / Frage zur Datei"), this,
+                  [this] { askAiAboutFile(false); });
+    ai->addAction(_t("KI-Fehleranalyse (Quellcode)"), this,
+                  [this] { askAiAboutFile(true); });
+    tools->addSeparator();
+
+    tools->addAction(_t("Alarm Trigger …"), this, &MainWindow::openFileAlarms);
+    tools->addAction(_t("GitHub Repo Alarm …"), this, &MainWindow::openGithubAlarms);
     tools->addAction(_t("Makro-Manager"), this, &MainWindow::openMacroManager);
     tools->addSeparator();
-    tools->addAction(_t("Bekannte Host-Keys"), this, &MainWindow::openKnownHosts);
-    QAction *settingsAct = tools->addAction(_t("Einstellungen"), this,
+    tools->addAction(_t("Bekannte Host-Keys …"), this, &MainWindow::openKnownHosts);
+    QAction *settingsAct = tools->addAction(_t("Einstellungen …"), this,
                                             &MainWindow::openSettings);
     settingsAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+,")));
 
@@ -320,6 +372,65 @@ void MainWindow::buildMenus()
                        &MainWindow::openSettings);
     toolbar->addAction(themedIcon(QStringLiteral("help")), _t("Hilfe"), this,
                        [this] { openHelp(1); });
+}
+
+// --- KI-Aktionen ------------------------------------------------------------
+
+void MainWindow::explainConsoleWithAi()
+{
+    // Die Konsole kennt ihre eigene Ausgabe — dort liegt die Logik bereits.
+    if (Workspace *ws = currentWorkspace())
+        ws->explainActiveConsoleWithAi();
+}
+
+void MainWindow::askAiAboutFile(bool codecheck)
+{
+    if (!core::aiEnabled()) {
+        QMessageBox::information(this, _t("KI"),
+                                 _t("Die KI ist nicht aktiviert (Einstellungen → KI)."));
+        return;
+    }
+    Workspace *ws = currentWorkspace();
+    FilePanel *panel = ws ? ws->activePanel() : nullptr;
+    const QString path = panel ? panel->selectedPath() : QString();
+    if (path.isEmpty()) {
+        QMessageBox::information(this, _t("KI"), _t("Bitte eine Datei auswählen."));
+        return;
+    }
+    core::FileSystemProvider *provider = panel->provider();
+    const QString name = provider->basename(path);
+
+    QString question;
+    if (!codecheck) {
+        bool ok = false;
+        question = QInputDialog::getText(this, _t("KI-Frage"),
+                                         _t("Frage (leer = Datei erklären):"),
+                                         QLineEdit::Normal, QString(), &ok);
+        if (!ok)
+            return;
+    }
+
+    m_bridge->run<QString>(
+        [provider, path] { return provider->readText(path, core::AI_MAX_CONTEXT_CHARS * 2); },
+        [this, name, path, question, codecheck](const QString &content) {
+            if (content.trimmed().isEmpty()) {
+                QMessageBox::information(this, _t("KI"), _t("Die Datei ist leer."));
+                return;
+            }
+            // Kontext deckeln — bei Dateien zaehlt der Anfang.
+            const auto [text, truncated] = core::truncateFile(content);
+            Q_UNUSED(truncated);
+            const QJsonArray messages =
+                codecheck ? core::buildCodecheckMessages(name, text,
+                                                         core::sourceLanguage(name))
+                          : core::buildFileMessages(name, text, question);
+            const QString title = codecheck ? _t("KI-Fehleranalyse: %1").arg(path)
+                                            : _t("KI: %1").arg(path);
+            auto *panel = new AiChatPanel(m_bridge, messages, title, this);
+            panel->setAttribute(Qt::WA_DeleteOnClose);
+            panel->show();
+        },
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
 }
 
 void MainWindow::showAbout()
@@ -422,9 +533,55 @@ Workspace *MainWindow::addTab()
         const int i = m_tabs->indexOf(ws);
         if (i >= 0)
             m_tabs->setTabText(i, ws->connectionLabel());
+        updateConnectionStatus();
     });
+    // Verzeichnis-Vergleich aus dem Pane-Kontextmenue.
+    connect(ws, &Workspace::dirDiffRequested, this, &MainWindow::openDirDiff);
     m_tabs->setCurrentIndex(index);
     return ws;
+}
+
+void MainWindow::buildStatusBar()
+{
+    // Dauerhafte Anzeigen rechts in der Leiste — sie ueberleben kurzlebige
+    // showMessage()-Meldungen.
+    m_connectionLabel = new QLabel(_t("Lokales Dateisystem"), this);
+    m_hostKeyLabel = new QLabel(this);
+    m_tunnelLabel = new QLabel(this);
+    for (QLabel *label : {m_connectionLabel, m_hostKeyLabel, m_tunnelLabel})
+        statusBar()->addPermanentWidget(label);
+    updateConnectionStatus();
+}
+
+void MainWindow::updateConnectionStatus()
+{
+    Workspace *ws = currentWorkspace();
+    if (!ws || !ws->isConnected()) {
+        m_connectionLabel->setText(_t("Lokales Dateisystem"));
+        m_hostKeyLabel->clear();
+        m_tunnelLabel->clear();
+        return;
+    }
+    const net::SSHSessionPtr session = ws->session();
+    m_connectionLabel->setText(_t("Verbunden: %1  ·  %2")
+                                   .arg(session->label(), session->osType));
+
+    // Host-Key-Zustand sichtbar machen — "ignore" ist ein echtes Risiko.
+    const QString status = session->hostKeyStatus;
+    if (status == QLatin1String("ignored")) {
+        m_hostKeyLabel->setText(_t("Host-Key-Prüfung deaktiviert (unsicher)"));
+        m_hostKeyLabel->setStyleSheet(QStringLiteral("color: #f85149;"));
+    } else if (status == QLatin1String("known")) {
+        m_hostKeyLabel->setText(_t("Host-Key bekannt und gepinnt"));
+        m_hostKeyLabel->setStyleSheet(QString());
+    } else {
+        m_hostKeyLabel->setText(_t("Host-Key neu / unbestätigt"));
+        m_hostKeyLabel->setStyleSheet(QStringLiteral("color: #d29922;"));
+    }
+
+    const auto tunnelCount = ws->tunnels()->tunnels().size();
+    m_tunnelLabel->setText(tunnelCount > 0 ? _t("  ·  %1 Tunnel").arg(tunnelCount)
+                                           : QString());
 }
 
 void MainWindow::syncViewActions()
@@ -663,6 +820,8 @@ void MainWindow::openClipboard()
         // Gewaehlten Text in die aktive Konsole einfuegen.
         if (Workspace *ws = currentWorkspace())
             ws->sendToActiveConsole(dlg.chosenText(), false);
+        statusBar()->showMessage(
+            _t("Aktiver Text in der Zwischenablage — mit Strg+V einfügen."), 8000);
     }
 }
 

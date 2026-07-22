@@ -41,6 +41,8 @@ public:
     void setDocked(bool docked);
 
     void runCommand(const QString &command, bool execute = true);
+    // Terminalausgabe von der KI erklaeren lassen (auch ueber das Tools-Menue).
+    void explainWithAi();
 
 signals:
     void activated();
@@ -58,7 +60,6 @@ private:
     void appendOutput(const QString &text);
     void switchToTerminal();
     void switchToCommands();
-    void explainWithAi();   // Terminalausgabe von der KI erklaeren lassen
 
     AsyncBridge *m_bridge;
     core::CommandRunner *m_runner = nullptr;

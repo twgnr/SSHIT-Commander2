@@ -244,6 +244,12 @@ void Workspace::disconnectSession()
     emit connectionChanged();
 }
 
+void Workspace::explainActiveConsoleWithAi()
+{
+    ConsolePanel *console = m_rightActive ? m_rightConsole : m_leftConsole;
+    console->explainWithAi();
+}
+
 void Workspace::broadcastToConsoles(const QString &command, bool execute)
 {
     m_leftConsole->runCommand(command, execute);
