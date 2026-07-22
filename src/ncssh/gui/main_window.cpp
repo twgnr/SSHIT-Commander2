@@ -746,7 +746,7 @@ void MainWindow::openNetscan()
         if (dlg->hosts().empty())
             return;
         if (Workspace *ws = currentWorkspace())
-            ws->showNetworkHosts(dlg->hosts());
+            ws->showNetworkHosts(dlg->hosts(), dlg->targetPane());
     });
     dlg->show();
 }

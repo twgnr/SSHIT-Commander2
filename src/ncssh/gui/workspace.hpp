@@ -80,7 +80,9 @@ public:
 
     // Netzwerk-Modus: die aktive Pane zeigt die gefundenen Hosts als
     // navigierbaren Baum (net:// -> Host -> Freigabe -> Dateien).
-    void showNetworkHosts(const std::vector<core::HostResult> &hosts);
+    // side: "left" | "right" | leer = aktive Pane.
+    void showNetworkHosts(const std::vector<core::HostResult> &hosts,
+                          const QString &side = {});
 
 signals:
     void statusMessage(const QString &msg);

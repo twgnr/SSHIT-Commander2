@@ -327,14 +327,18 @@ FilePanel *Workspace::activePanel() const
     return m_rightActive ? m_rightPanel : m_leftPanel;
 }
 
-void Workspace::showNetworkHosts(const std::vector<core::HostResult> &hosts)
+void Workspace::showNetworkHosts(const std::vector<core::HostResult> &hosts,
+                                 const QString &side)
 {
-    // Netzwerk-Provider anlegen bzw. aktualisieren und in der aktiven Pane zeigen.
+    // Netzwerk-Provider anlegen bzw. aktualisieren und in der gewuenschten Pane
+    // zeigen (leer = aktive Seite).
     if (!m_netFs)
         m_netFs = std::make_unique<core::NetworkScanProvider>(hosts);
     else
         m_netFs->setHosts(hosts);
-    FilePanel *panel = activePanel();
+    FilePanel *panel = side == QLatin1String("left")    ? m_leftPanel
+                       : side == QLatin1String("right") ? m_rightPanel
+                                                        : activePanel();
     panel->setHeaderTitle(_t("Netzwerk"));
     panel->setBookmarkKey(QStringLiteral("network"));
     panel->setProvider(m_netFs.get(), QStringLiteral("net://"));
