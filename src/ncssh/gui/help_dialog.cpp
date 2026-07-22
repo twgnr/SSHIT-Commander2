@@ -374,6 +374,58 @@ QWidget *HelpDialog::buildShortcutsTab()
         }
         new QTreeWidgetItem(parent, {def.label, current.value(def.id)});
     }
+
+    // Feste Gesten und Tasten, die nicht ueber die Einstellungen belegbar sind —
+    // sie stehen nirgends sonst, waeren aber genau das, was man hier sucht.
+    struct FixedBinding {
+        const char *group;
+        QString action;
+        QString keys;
+    };
+    const FixedBinding fixed[] = {
+        {"Navigation", _t("Ordner öffnen / Datei ausführen (Textdateien: interner Editor)"),
+         _t("Doppelklick / Enter")},
+        {"Navigation", _t("Zurück / Vor"), QStringLiteral("Alt+←  /  Alt+→")},
+        {"Navigation", _t("Übergeordneter Ordner"), QStringLiteral("Backspace")},
+        {"Navigation", _t("Pane wechseln"), QStringLiteral("Tab")},
+        {"Navigation", _t("Pane filtern"), QStringLiteral("Strg+F")},
+        {"Navigation", _t("Panes synchronisieren / tauschen"),
+         _t("Menü Panes")},
+        {"Dateien", _t("Markieren"), _t("Space / Einfg")},
+        {"Dateien", _t("Nach Muster markieren / aufheben"), QStringLiteral("Num +  /  Num −")},
+        {"Dateien", _t("Auswahl umkehren"), QStringLiteral("Num *")},
+        {"Dateien", _t("Alles markieren (Strg+A)"), QStringLiteral("Strg+A")},
+        {"Dateien", _t("Kopieren / Einfügen (in diese Pane)"),
+         QStringLiteral("Strg+C  /  Strg+V")},
+        {"Dateien", _t("Kopieren → andere Pane / Umbenennen"), QStringLiteral("F5  /  F6")},
+        {"Dateien", _t("Neuer Ordner / Löschen"), QStringLiteral("F7  /  F8")},
+        {"Dateien", _t("Ansehen / Bearbeiten (interner Editor)"), QStringLiteral("F3  /  F4")},
+        {"Dateien", _t("Kontextmenü (Rechte, Eigenschaften, …)"), _t("Rechtsklick")},
+        {"Dateien", _t("Ausführen — mit OS-Standardprogramm öffnen"),
+         _t("Doppelklick / Kontextmenü")},
+        {"Dateien", _t("Übertragen"), _t("Ziehen + loslassen")},
+        {"Konsole / Terminal", _t("Historie"), QStringLiteral("↑  /  ↓")},
+        {"Konsole / Terminal", _t("Scrollback"), _t("Shift+Bild↑ / ↓")},
+        {"Konsole / Terminal", _t("Auswahl kopieren (Auto-Copy)"),
+         _t("Strg+Einfg / Strg+Shift+C")},
+        {"Konsole / Terminal", _t("Einfügen"), _t("Shift+Einfg / Strg+Shift+V")},
+        {"Konsole / Terminal", _t("Wort markieren"), _t("Doppelklick")},
+        {"Konsole / Terminal", _t("Im Puffer suchen (Strg+F)"),
+         QStringLiteral("Strg+Shift+F")},
+    };
+    QHash<QString, QTreeWidgetItem *> fixedGroups;
+    for (const FixedBinding &binding : fixed) {
+        const QString group = _t(binding.group);
+        QTreeWidgetItem *parent = fixedGroups.value(group, nullptr);
+        if (!parent) {
+            parent = new QTreeWidgetItem(m_shortcuts,
+                                         {_t("Maus & feste Tasten") + QStringLiteral(" — ")
+                                          + group});
+            parent->setExpanded(true);
+            fixedGroups.insert(group, parent);
+        }
+        new QTreeWidgetItem(parent, {binding.action, binding.keys});
+    }
     return m_shortcuts;
 }
 

@@ -54,7 +54,9 @@ private:
     void updateMatches();   // Suchtreffer in der Minimap markieren
     void replaceCurrent(bool all);
     void gotoLine();
-    void explainWithAi();   // Datei/Config von der KI erklaeren lassen
+    void explainWithAi();          // Datei/Config von der KI erklaeren lassen
+    void codecheckWithAi();        // Quellcode auf Fehler pruefen lassen
+    void openEncodingConverter();  // Zeichensatz der Datei umwandeln
     void updateTitle();
 
     AsyncBridge *m_bridge;

@@ -1,9 +1,12 @@
 #include "ncssh/gui/encoding_converter_dialog.hpp"
 
+#include "ncssh/core/ai.hpp"
 #include "ncssh/core/encodings.hpp"
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/gui/file_dialogs.hpp"
 
 #include <QCheckBox>
+#include <QJsonArray>
 #include <QComboBox>
 #include <QFont>
 #include <QFormLayout>
@@ -49,16 +52,26 @@ EncodingConverterDialog::EncodingConverterDialog(AsyncBridge *bridge,
     m_errorMode->setCurrentIndex(m_errorMode->findData(QStringLiteral("replace")));
     form->addRow(_t("Bei Fehlern"), m_errorMode);
 
-    m_overwrite = new QCheckBox(_t("Originaldatei überschreiben"), this);
+    m_overwrite = new QCheckBox(_t("Quelldatei überschreiben"), this);
     connect(m_overwrite, &QCheckBox::toggled, this,
             [this](bool on) { m_targetName->setEnabled(!on); });
     form->addRow(QString(), m_overwrite);
 
+    auto *targetRow = new QHBoxLayout();
     m_targetName = new QLineEdit(provider->basename(path) + QStringLiteral(".converted"), this);
-    form->addRow(_t("Zieldatei"), m_targetName);
+    auto *browse = new QPushButton(_t("Durchsuchen …"), this);
+    connect(browse, &QPushButton::clicked, this, [this] {
+        const QString chosen = getSaveFileName(this, _t("Ziel wählen"), m_targetName->text());
+        if (!chosen.isEmpty())
+            m_targetName->setText(m_provider->basename(chosen));
+    });
+    targetRow->addWidget(m_targetName, 1);
+    targetRow->addWidget(browse);
+    form->addRow(_t("Neue Datei:"), targetRow);
     layout->addLayout(form);
 
-    layout->addWidget(new QLabel(_t("Vorschau (Quelle)"), this));
+    auto *previewLabel = new QLabel(_t("Vorschau (Quelle):"), this);
+    layout->addWidget(previewLabel);
     m_preview = new QPlainTextEdit(this);
     m_preview->setReadOnly(true);
     QFont mono(QStringLiteral("Consolas"));
@@ -66,22 +79,77 @@ EncodingConverterDialog::EncodingConverterDialog(AsyncBridge *bridge,
     m_preview->setFont(mono);
     layout->addWidget(m_preview, 1);
 
+    // KI-Reparatur: zeigt eine zweite Vorschau, die beim Konvertieren gespeichert
+    // wird. Ohne aktivierte KI bleibt der Bereich verborgen.
+    m_repairLabel = new QLabel(
+        _t("Vorschau (KI-repariert) — wird beim Konvertieren gespeichert:"), this);
+    m_repairLabel->setVisible(false);
+    layout->addWidget(m_repairLabel);
+    m_repairPreview = new QPlainTextEdit(this);
+    m_repairPreview->setFont(mono);
+    m_repairPreview->setVisible(false);
+    layout->addWidget(m_repairPreview, 1);
+
     m_status = new QLabel(_t("Lade …"), this);
     m_status->setObjectName(QStringLiteral("Muted"));
     layout->addWidget(m_status);
 
     auto *buttons = new QHBoxLayout();
     auto *cancel = new QPushButton(_t("Abbrechen"), this);
+    m_repairButton = new QPushButton(_t("Mit KI reparieren …"), this);
+    m_repairButton->setToolTip(
+        _t("Beschädigten Text vom lokalen Modell rekonstruieren lassen"));
+    connect(m_repairButton, &QPushButton::clicked, this, &EncodingConverterDialog::repairWithAi);
     auto *convertBtn = new QPushButton(_t("Konvertieren"), this);
     convertBtn->setDefault(true);
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
     connect(convertBtn, &QPushButton::clicked, this, &EncodingConverterDialog::convert);
+    buttons->addWidget(m_repairButton);
     buttons->addStretch(1);
     buttons->addWidget(cancel);
     buttons->addWidget(convertBtn);
     layout->addLayout(buttons);
 
     loadSource();
+}
+
+void EncodingConverterDialog::repairWithAi()
+{
+    if (!core::aiEnabled()) {
+        QMessageBox::information(this, _t("KI"),
+                                 _t("Die KI ist nicht aktiviert (Einstellungen → KI)."));
+        return;
+    }
+    const QString source = m_preview->toPlainText();
+    if (source.trimmed().isEmpty())
+        return;
+    const auto [text, truncated] = core::truncateFile(source);
+    m_repairButton->setEnabled(false);
+    m_status->setText(_t("KI repariert … (kann je nach Modell dauern)"));
+    m_repairLabel->setVisible(true);
+    m_repairPreview->setVisible(true);
+    m_repairPreview->clear();
+
+    const QString baseUrl = core::ollamaUrl();
+    const QString model = core::aiModel();
+    const QJsonArray messages = core::buildRepairMessages(text);
+    m_bridge->stream(
+        [baseUrl, model, messages](const AsyncBridge::EmitLine &emitLine,
+                                   const CancelTokenPtr &cancel) {
+            core::chatStream(baseUrl, model, messages, {}, emitLine, cancel);
+        },
+        [this](const QString &chunk) { m_repairPreview->insertPlainText(chunk); },
+        [this, truncated] {
+            m_repairButton->setEnabled(true);
+            m_status->setText(_t("KI-Reparatur übernommen.")
+                              + (truncated ? _t(" (Hinweis: Kontext war zu lang und wurde "
+                                                "gekürzt)")
+                                           : QString()));
+        },
+        [this](const QString &err) {
+            m_repairButton->setEnabled(true);
+            m_status->setText(err);
+        });
 }
 
 void EncodingConverterDialog::loadSource()
@@ -120,11 +188,24 @@ void EncodingConverterDialog::convert()
 {
     if (m_raw.isEmpty())
         return;
+    if (!m_overwrite->isChecked() && m_targetName->text().trimmed().isEmpty()) {
+        QMessageBox::warning(this, _t("Konvertierung"), _t("Bitte einen Zielpfad angeben."));
+        return;
+    }
     QByteArray converted;
     try {
-        converted = core::convert(m_raw, m_srcCodec->currentData().toString(),
-                                  m_dstCodec->currentData().toString(),
-                                  m_errorMode->currentData().toString());
+        // Liegt eine KI-Reparatur vor, wird sie geschrieben — sonst die Quelle.
+        const QString repaired = m_repairPreview->isVisible()
+                                     ? m_repairPreview->toPlainText()
+                                     : QString();
+        if (!repaired.trimmed().isEmpty()) {
+            converted = core::encodeText(repaired, m_dstCodec->currentData().toString(),
+                                         m_errorMode->currentData().toString());
+        } else {
+            converted = core::convert(m_raw, m_srcCodec->currentData().toString(),
+                                      m_dstCodec->currentData().toString(),
+                                      m_errorMode->currentData().toString());
+        }
     } catch (const std::exception &exc) {
         QMessageBox::warning(this, _t("Konvertierung fehlgeschlagen"),
                              QString::fromUtf8(exc.what()));
@@ -138,11 +219,13 @@ void EncodingConverterDialog::convert()
     m_bridge->run(
         [provider, target, converted] { provider->writeBytes(target, converted); },
         [this, target] {
-            QMessageBox::information(this, _t("Fertig"),
-                                     QStringLiteral("Geschrieben: %1").arg(target));
+            QMessageBox::information(this, _t("Konvertierung"),
+                                     _t("Datei geschrieben: %1").arg(target));
             accept();
         },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) {
+            QMessageBox::warning(this, _t("Speichern fehlgeschlagen"), err);
+        });
 }
 
 } // namespace ncssh::gui

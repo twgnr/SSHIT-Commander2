@@ -4,6 +4,7 @@
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/ai_chat_panel.hpp"
+#include "ncssh/gui/encoding_converter_dialog.hpp"
 #include "ncssh/gui/highlighter.hpp"
 #include "ncssh/gui/minimap.hpp"
 
@@ -140,7 +141,16 @@ EditorDialog::EditorDialog(AsyncBridge *bridge, core::FileSystemProvider *provid
     toolbar->addAction(_t("Gehe zu Zeile"), this, &EditorDialog::gotoLine);
     toolbar->addSeparator();
     // KI: Datei/Config untersuchen oder befragen (nur bei aktivierter KI).
-    toolbar->addAction(_t("KI erklären"), this, &EditorDialog::explainWithAi);
+    QAction *aiExplain = toolbar->addAction(_t("KI erklären"), this,
+                                            &EditorDialog::explainWithAi);
+    aiExplain->setToolTip(_t("Datei (oder Auswahl) vom lokalen Modell erklären lassen"));
+    QAction *aiCheck = toolbar->addAction(_t("KI Fehleranalyse"), this,
+                                          &EditorDialog::codecheckWithAi);
+    aiCheck->setToolTip(_t("Quellcode vom lokalen Modell auf Fehler prüfen lassen"));
+    toolbar->addSeparator();
+    QAction *convert = toolbar->addAction(_t("Encoding konvertieren …"), this,
+                                          &EditorDialog::openEncodingConverter);
+    convert->setToolTip(_t("Datei in einen anderen Zeichensatz umwandeln (inkl. EBCDIC)"));
     layout->addWidget(toolbar);
 
     m_editor = new CodeEditor(this);
@@ -222,9 +232,9 @@ void EditorDialog::updateTitle()
     const QString name = m_provider->basename(m_path);
     QString title = _t("Bearbeiten") + QStringLiteral(" — ") + name;
     if (m_readOnly)
-        title += QStringLiteral(" [") + _t("schreibgeschützt") + QStringLiteral("]");
+        title += _t("  (schreibgeschützt)");
     else if (m_dirty)
-        title += QStringLiteral(" *");
+        title += _t(" · geändert");
     setWindowTitle(title);
 }
 
@@ -240,9 +250,13 @@ void EditorDialog::load()
             if (text.size() > kLargeFileLimit) {
                 m_readOnly = true;
                 m_editor->setReadOnly(true);
-                m_status->setText(_t("Datei zu groß — nur lesend geöffnet."));
+                m_status->setText(
+                    _t("⚠ Datei zu groß — schreibgeschützt geöffnet (nur der Anfang wird "
+                       "gezeigt)."));
             } else {
-                m_status->setText(QStringLiteral("%1 Zeichen").arg(text.size()));
+                m_status->setText(_t("%1 Zeichen  ·  %2 Zeilen")
+                                      .arg(text.size())
+                                      .arg(text.count(QLatin1Char('\n')) + 1));
             }
             m_editor->setPlainText(text);
             m_dirty = false;
@@ -380,13 +394,50 @@ void EditorDialog::explainWithAi()
         _t("Frage zur Datei (leer = allgemein erklären):"), QLineEdit::Normal, QString(), &ok);
     if (!ok)
         return;
+    // Markierter Abschnitt hat Vorrang — sonst die ganze Datei.
+    const QString selected = m_editor->textCursor().selectedText();
+    const QString source = selected.isEmpty()
+                               ? m_editor->toPlainText()
+                               : QString(selected).replace(QChar(0x2029), QLatin1Char('\n'));
     // Kontext deckeln — bei Dateien zaehlt der Anfang (Header/Direktiven).
-    const auto [content, truncated] = core::truncateFile(m_editor->toPlainText());
+    const auto [content, truncated] = core::truncateFile(source);
+    Q_UNUSED(truncated);
     auto *panel = new AiChatPanel(
         m_bridge, core::buildFileMessages(m_provider->basename(m_path), content, question),
-        _t("KI — Datei erklären"), this);
+        _t("KI: %1").arg(m_path), this);
     panel->setAttribute(Qt::WA_DeleteOnClose);
     panel->show();
+}
+
+void EditorDialog::codecheckWithAi()
+{
+    if (!core::aiEnabled()) {
+        QMessageBox::information(this, _t("KI"),
+                                 _t("Die KI ist nicht aktiviert (Einstellungen → KI)."));
+        return;
+    }
+    const QString name = m_provider->basename(m_path);
+    const auto [content, truncated] = core::truncateFile(m_editor->toPlainText());
+    Q_UNUSED(truncated);
+    auto *panel = new AiChatPanel(
+        m_bridge, core::buildCodecheckMessages(name, content, core::sourceLanguage(name)),
+        _t("KI-Fehleranalyse: %1").arg(m_path), this);
+    panel->setAttribute(Qt::WA_DeleteOnClose);
+    panel->show();
+}
+
+void EditorDialog::openEncodingConverter()
+{
+    // Ungespeicherte Aenderungen wuerden der Konverter nicht sehen.
+    if (m_dirty) {
+        QMessageBox::information(this, _t("Encoding konvertieren"),
+                                 _t("Bitte zuerst speichern — der Konverter liest die Datei "
+                                    "von der Platte."));
+        return;
+    }
+    EncodingConverterDialog dlg(m_bridge, m_provider, m_path, this);
+    if (dlg.exec() == QDialog::Accepted)
+        load();   // ggf. neu geschriebene Datei wieder einlesen
 }
 
 void EditorDialog::closeEvent(QCloseEvent *event)
@@ -394,7 +445,8 @@ void EditorDialog::closeEvent(QCloseEvent *event)
     if (m_dirty && !m_readOnly) {
         const auto answer = QMessageBox::question(
             this, _t("Ungespeicherte Änderungen"),
-            _t("Die Datei wurde geändert. Vor dem Schließen speichern?"),
+            _t("'%1' wurde geändert. Vor dem Schließen speichern?")
+                .arg(m_provider->basename(m_path)),
             QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
         if (answer == QMessageBox::Cancel) {
             event->ignore();

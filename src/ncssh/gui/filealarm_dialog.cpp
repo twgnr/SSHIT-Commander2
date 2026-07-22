@@ -11,6 +11,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QDir>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QTableWidget>
@@ -107,25 +108,26 @@ namespace {
 bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
 {
     QDialog dlg(parent);
-    dlg.setWindowTitle(_t("Datei-Alarm"));
+    // Titel sagt, ob angelegt oder bearbeitet wird.
+    dlg.setWindowTitle(spec.path.isEmpty() ? _t("Neuer Datei-Alarm")
+                                           : _t("Alarm bearbeiten"));
     auto *layout = new QVBoxLayout(&dlg);
     auto *form = new QFormLayout();
 
     auto *name = new QLineEdit(spec.name, &dlg);
+    name->setPlaceholderText(_t("Anzeigename (optional)"));
     auto *pathRow = new QHBoxLayout();
     auto *path = new QLineEdit(spec.path, &dlg);
-    auto *browse = new QPushButton(QStringLiteral("…"), &dlg);
-    browse->setFixedWidth(34);
+    auto *browse = new QPushButton(_t("Durchsuchen …"), &dlg);
     QObject::connect(browse, &QPushButton::clicked, &dlg, [&dlg, path] {
-        const QString d = getExistingDirectory(&dlg, _t("Ordner überwachen"),
-                                                            path->text());
+        const QString d = getExistingDirectory(&dlg, _t("Ordner wählen"), path->text());
         if (!d.isEmpty())
             path->setText(d);
     });
     pathRow->addWidget(path, 1);
     pathRow->addWidget(browse);
 
-    auto *onCreated = new QCheckBox(_t("Neu"), &dlg);
+    auto *onCreated = new QCheckBox(_t("Neu erstellt"), &dlg);
     onCreated->setChecked(spec.onCreated);
     auto *onModified = new QCheckBox(_t("Geändert"), &dlg);
     onModified->setChecked(spec.onModified);
@@ -138,27 +140,39 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
 
     auto *recursive = new QCheckBox(_t("Unterordner einbeziehen"), &dlg);
     recursive->setChecked(spec.recursive);
-    auto *includeDirs = new QCheckBox(_t("Ordner mitzählen"), &dlg);
+    auto *includeDirs = new QCheckBox(_t("Ordner mitüberwachen"), &dlg);
     includeDirs->setChecked(spec.includeDirs);
     auto *enabled = new QCheckBox(_t("aktiv"), &dlg);
     enabled->setChecked(spec.enabled);
 
-    form->addRow(_t("Name"), name);
-    form->addRow(_t("Ordner"), pathRow);
-    form->addRow(_t("Ereignisse"), eventRow);
+    form->addRow(_t("Anzeigename (optional)"), name);
+    form->addRow(_t("Zu überwachender Ordner"), pathRow);
+    form->addRow(_t("Erkannte Änderungen:"), eventRow);
     form->addRow(QString(), recursive);
     form->addRow(QString(), includeDirs);
     form->addRow(QString(), enabled);
     layout->addLayout(form);
 
     auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
+        // Ein Alarm ohne Ordner oder ohne Ereignis wuerde nie ausloesen —
+        // das lieber hier sagen als still nichts tun.
+        if (path->text().trimmed().isEmpty() || !QDir(path->text().trimmed()).exists()) {
+            QMessageBox::warning(&dlg, _t("Alarm Trigger"),
+                                 _t("Bitte einen gültigen Ordner wählen."));
+            return;
+        }
+        if (!onCreated->isChecked() && !onModified->isChecked() && !onDeleted->isChecked()) {
+            QMessageBox::warning(&dlg, _t("Alarm Trigger"),
+                                 _t("Bitte mindestens ein Ereignis auswählen."));
+            return;
+        }
+        dlg.accept();
+    });
     QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     layout->addWidget(box);
 
     if (dlg.exec() != QDialog::Accepted)
-        return false;
-    if (path->text().trimmed().isEmpty())
         return false;
     spec.name = name->text().trimmed().isEmpty() ? path->text() : name->text().trimmed();
     spec.path = path->text().trimmed();
@@ -179,7 +193,7 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
 FileAlarmDialog::FileAlarmDialog(FileAlarmManager *manager, QWidget *parent)
     : QDialog(parent), m_manager(manager)
 {
-    setWindowTitle(_t("Datei-Alarm"));
+    setWindowTitle(_t("Alarm Trigger"));
     resize(820, 560);
 
     auto *layout = new QVBoxLayout(this);
@@ -210,8 +224,8 @@ FileAlarmDialog::FileAlarmDialog(FileAlarmManager *manager, QWidget *parent)
     layout->addWidget(m_status);
 
     auto *buttons = new QHBoxLayout();
-    auto *addBtn = new QPushButton(_t("Neu"), this);
-    auto *editBtn = new QPushButton(_t("Bearbeiten"), this);
+    auto *addBtn = new QPushButton(_t("Neu …"), this);
+    auto *editBtn = new QPushButton(_t("Bearbeiten …"), this);
     auto *toggleBtn = new QPushButton(_t("Aktiv/Inaktiv"), this);
     auto *removeBtn = new QPushButton(_t("Löschen"), this);
     auto *closeBtn = new QPushButton(_t("Schließen"), this);

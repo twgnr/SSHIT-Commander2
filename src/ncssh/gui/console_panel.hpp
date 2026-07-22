@@ -60,6 +60,8 @@ private:
     void appendOutput(const QString &text);
     void switchToTerminal();
     void switchToCommands();
+    void setBusy(bool busy);      // Statuszeile + Stop-Knopf nachfuehren
+    void cancelRunning();         // laufenden Befehl abbrechen (Strg+C / Esc)
 
     AsyncBridge *m_bridge;
     core::CommandRunner *m_runner = nullptr;
@@ -76,6 +78,8 @@ private:
     QPlainTextEdit *m_output = nullptr;
     QLineEdit *m_input = nullptr;
     QLabel *m_prompt = nullptr;
+    QLabel *m_status = nullptr;
+    QPushButton *m_stopButton = nullptr;
 
     core::HistoryStore m_historyStore;
     QStringList m_history;

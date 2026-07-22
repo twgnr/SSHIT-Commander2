@@ -87,10 +87,22 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     m_prompt->setObjectName(QStringLiteral("Muted"));
     m_input = new QLineEdit(m_commandPage);
     m_input->setFont(mono);
+    m_input->setPlaceholderText(
+        _t("Befehl eingeben und Enter…   (↑/↓ = Historie, Strg+F = suchen, cd, clear)"));
     m_input->installEventFilter(this);
     connect(m_input, &QLineEdit::returnPressed, this, &ConsolePanel::submit);
+    // Zustand des laufenden Befehls sichtbar machen und abbrechen koennen.
+    m_status = new QLabel(m_commandPage);
+    m_status->setObjectName(QStringLiteral("Muted"));
+    m_stopButton = new QPushButton(QStringLiteral("■"), m_commandPage);
+    m_stopButton->setObjectName(QStringLiteral("Chip"));
+    m_stopButton->setToolTip(_t("Laufenden Befehl abbrechen (Esc)"));
+    m_stopButton->setEnabled(false);
+    connect(m_stopButton, &QPushButton::clicked, this, &ConsolePanel::cancelRunning);
     inputRow->addWidget(m_prompt);
     inputRow->addWidget(m_input, 1);
+    inputRow->addWidget(m_status);
+    inputRow->addWidget(m_stopButton);
     cmdLayout->addLayout(inputRow);
     m_stack->addWidget(m_commandPage);
 
@@ -183,6 +195,11 @@ void ConsolePanel::runCommand(const QString &command, bool execute)
     }
     if (!m_runner || command.trimmed().isEmpty())
         return;
+    if (m_running) {
+        // Ein zweiter Befehl wuerde den ersten stumm ueberschreiben.
+        appendOutput(_t("[Es läuft bereits ein Befehl — Stop/Esc bricht ihn ab]"));
+        return;
+    }
 
     appendOutput(QStringLiteral("%1 $ %2").arg(m_cwd, command));
 
@@ -196,27 +213,54 @@ void ConsolePanel::runCommand(const QString &command, bool execute)
         const QString cwd = m_cwd;
         m_bridge->run<std::optional<QString>>(
             [runner, cwd, target] { return runner->resolveDir(cwd, target); },
-            [this](const std::optional<QString> &resolved) {
+            [this, target](const std::optional<QString> &resolved) {
                 if (resolved) {
                     setCwd(*resolved);
                     emit cwdChanged(*resolved);
                 } else {
-                    appendOutput(_t("Verzeichnis nicht gefunden."));
+                    appendOutput(_t("cd: kein Verzeichnis: %1").arg(target));
                 }
             },
-            [this](const QString &err) { appendOutput(err); });
+            [this](const QString &err) { appendOutput(_t("[Fehler] %1").arg(err)); });
         return;
     }
 
     core::CommandRunner *runner = m_runner;
     const QString cwd = m_cwd;
+    setBusy(true);
     m_running = m_bridge->stream(
         [runner, command, cwd](const AsyncBridge::EmitLine &emit, const CancelTokenPtr &cancel) {
             runner->stream(command, cwd, [&emit](const QString &line) { emit(line); }, cancel);
         },
         [this](const QString &line) { appendOutput(line); },
-        [this] { m_running = nullptr; },
-        [this](const QString &err) { appendOutput(err); m_running = nullptr; });
+        [this] {
+            m_running = nullptr;
+            setBusy(false);
+            m_status->setText(_t("✓ fertig"));
+        },
+        [this](const QString &err) {
+            appendOutput(_t("[Fehler] %1").arg(err));
+            m_running = nullptr;
+            setBusy(false);
+            m_status->setText(_t("✗ Fehler"));
+        });
+}
+
+void ConsolePanel::setBusy(bool busy)
+{
+    m_status->setText(busy ? _t("läuft…") : QString());
+    m_stopButton->setEnabled(busy);
+}
+
+void ConsolePanel::cancelRunning()
+{
+    if (!m_running)
+        return;
+    m_bridge->cancel(m_running);
+    m_running = nullptr;
+    appendOutput(_t("^C abgebrochen"));
+    setBusy(false);
+    m_status->setText(_t("■ abgebrochen"));
 }
 
 void ConsolePanel::submit()
@@ -260,8 +304,11 @@ bool ConsolePanel::eventFilter(QObject *obj, QEvent *event)
             return true;
         }
         if (ke->key() == Qt::Key_C && (ke->modifiers() & Qt::ControlModifier) && m_running) {
-            m_bridge->cancel(m_running);
-            appendOutput(QStringLiteral("^C"));
+            cancelRunning();
+            return true;
+        }
+        if (ke->key() == Qt::Key_Escape && m_running) {
+            cancelRunning();
             return true;
         }
     }

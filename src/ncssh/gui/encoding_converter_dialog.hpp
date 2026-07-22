@@ -14,6 +14,7 @@ class QPlainTextEdit;
 class QLineEdit;
 class QCheckBox;
 class QLabel;
+class QPushButton;
 
 namespace ncssh::gui {
 
@@ -27,6 +28,8 @@ private:
     void loadSource();
     void updatePreview();
     void convert();
+    // Beschaedigten Text vom lokalen Modell rekonstruieren lassen.
+    void repairWithAi();
 
     AsyncBridge *m_bridge;
     core::FileSystemProvider *m_provider;
@@ -39,6 +42,9 @@ private:
     QCheckBox *m_overwrite = nullptr;
     QLineEdit *m_targetName = nullptr;
     QPlainTextEdit *m_preview = nullptr;
+    QPlainTextEdit *m_repairPreview = nullptr;
+    QLabel *m_repairLabel = nullptr;
+    QPushButton *m_repairButton = nullptr;
     QLabel *m_status = nullptr;
 };
 
