@@ -1,7 +1,9 @@
 #include "ncssh/gui/tunnel_dialog.hpp"
 
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/core/profiles.hpp"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -48,15 +50,27 @@ TunnelDialog::TunnelDialog(net::SSHSessionPtr session, TunnelManager *manager, Q
 
     auto *layout = new QVBoxLayout(this);
 
+    // Ohne Verbindung laesst sich kein Tunnel oeffnen — das gleich sagen.
+    if (!m_session) {
+        auto *warning = new QLabel(
+            _t("⚠ Keine aktive SSH-Verbindung — bitte zuerst per F9 verbinden."), this);
+        warning->setWordWrap(true);
+        layout->addWidget(warning);
+    }
+
+    layout->addWidget(new QLabel(_t("Aktive Weiterleitungen"), this));
     m_table = new QTableWidget(0, 2, this);
-    m_table->setHorizontalHeaderLabels({_t("Art"), _t("Weiterleitung")});
+    m_table->setHorizontalHeaderLabels({_t("Art"), _t("Listen/Ziel")});
     m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_table->verticalHeader()->setVisible(false);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     layout->addWidget(m_table, 1);
 
-    auto *box = new QGroupBox(_t("Neuen Tunnel öffnen"), this);
+    auto *box = new QGroupBox(
+        m_session ? _t("Neue Weiterleitung über: %1").arg(m_session->label())
+                  : _t("Neue Weiterleitung"),
+        this);
     auto *form = new QFormLayout(box);
     m_kind = new QComboBox(box);
     m_kind->addItem(_t("Lokal (-L)"), QStringLiteral("local"));
@@ -72,14 +86,18 @@ TunnelDialog::TunnelDialog(net::SSHSessionPtr session, TunnelManager *manager, Q
     m_listenPort->setRange(1, 65535);
     m_listenPort->setValue(8080);
     m_destHost = new QLineEdit(QStringLiteral("localhost"), box);
+    m_destHost->setPlaceholderText(_t("z.B. localhost oder DB-Host"));
     m_destPort = new QSpinBox(box);
     m_destPort->setRange(1, 65535);
     m_destPort->setValue(80);
+    m_saveToProfile = new QCheckBox(
+        _t("Im Server-Profil speichern (Auto-Start beim Verbinden)"), box);
     form->addRow(_t("Art"), m_kind);
-    form->addRow(_t("Lauscht auf"), m_listenHost);
-    form->addRow(_t("Lokaler Port"), m_listenPort);
+    form->addRow(_t("Listen-Host"), m_listenHost);
+    form->addRow(_t("Listen-Port"), m_listenPort);
     form->addRow(_t("Ziel-Host"), m_destHost);
     form->addRow(_t("Ziel-Port"), m_destPort);
+    form->addRow(QString(), m_saveToProfile);
     layout->addWidget(box);
 
     m_status = new QLabel(this);
@@ -117,6 +135,11 @@ void TunnelDialog::reload()
 
 void TunnelDialog::openTunnel()
 {
+    if (!m_session) {
+        m_status->setText(
+            _t("⚠ Keine aktive SSH-Verbindung — bitte zuerst per F9 verbinden."));
+        return;
+    }
     TunnelSpec spec;
     spec.kind = m_kind->currentData().toString();
     spec.listenHost = m_listenHost->text().trimmed();
@@ -124,14 +147,43 @@ void TunnelDialog::openTunnel()
     spec.destHost = m_destHost->text().trimmed();
     spec.destPort = m_destPort->value();
 
+    m_status->setText(_t("startet…"));
     try {
         m_manager->add(net::openTunnel(m_session, spec));
         m_status->setText(QStringLiteral("✓ %1").arg(spec.label()));
+        if (m_saveToProfile->isChecked())
+            saveToProfile(spec);
         reload();
     } catch (const std::exception &exc) {
         QMessageBox::warning(this, _t("Tunnel-Fehler"), QString::fromUtf8(exc.what()));
         m_status->setText(QString::fromUtf8(exc.what()));
     }
+}
+
+// Legt die Weiterleitung im Server-Profil ab, damit sie beim naechsten
+// Verbinden automatisch startet.
+void TunnelDialog::saveToProfile(const TunnelSpec &spec)
+{
+    core::ProfileStore store;
+    store.load();
+    const QString label = m_session->label();
+    for (const auto &profile : store.profiles()) {
+        // Profil ueber Host/Port zuordnen — der Anzeigename kann abweichen.
+        if (!label.contains(profile.host))
+            continue;
+        core::ServerProfile updated = profile;
+        for (const auto &existing : updated.tunnels) {
+            if (existing.kind == spec.kind && existing.listenPort == spec.listenPort)
+                return;   // schon hinterlegt
+        }
+        updated.tunnels.push_back(spec);
+        store.upsert(updated);
+        store.save();
+        m_status->setText(_t("✓ %1").arg(spec.label()) + QStringLiteral(" · ")
+                          + _t("im Profil „%1“ gespeichert").arg(updated.name));
+        return;
+    }
+    m_status->setText(_t("Kein passendes Server-Profil gefunden."));
 }
 
 void TunnelDialog::stopSelected()

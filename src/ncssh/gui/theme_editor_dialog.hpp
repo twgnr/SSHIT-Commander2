@@ -32,6 +32,7 @@ private:
 
     ThemeColors m_colors;
     QString m_savedTheme;
+    QString m_editingName;   // gerade bearbeitetes eigenes Theme (fuer Rueckfrage)
 
     QComboBox *m_baseTheme = nullptr;
     QLineEdit *m_name = nullptr;

@@ -15,6 +15,7 @@ class QComboBox;
 class QLineEdit;
 class QSpinBox;
 class QLabel;
+class QCheckBox;
 
 namespace ncssh::gui {
 
@@ -40,10 +41,13 @@ private:
     void reload();
     void openTunnel();
     void stopSelected();
+    // Weiterleitung ins Server-Profil uebernehmen (Auto-Start).
+    void saveToProfile(const core::TunnelSpec &spec);
 
     net::SSHSessionPtr m_session;
     TunnelManager *m_manager;
 
+    QCheckBox *m_saveToProfile = nullptr;
     QTableWidget *m_table = nullptr;
     QComboBox *m_kind = nullptr;
     QLineEdit *m_listenHost = nullptr;

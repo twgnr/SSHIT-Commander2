@@ -10,6 +10,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
@@ -56,16 +57,36 @@ ThemeEditorDialog::ThemeEditorDialog(QWidget *parent) : QDialog(parent)
     scroll->setWidget(host);
     layout->addWidget(scroll, 1);
 
-    // Live-Vorschau
+    // Live-Vorschau — zeigt auch Auswahl, gedaempften und inaktiven Text, weil
+    // sich genau daran entscheidet, ob ein Farbschema lesbar bleibt.
     auto *previewBox = new QGroupBox(_t("Vorschau"), this);
     auto *previewLayout = new QVBoxLayout(previewBox);
     m_preview = new QWidget(previewBox);
-    auto *innerLayout = new QHBoxLayout(m_preview);
-    innerLayout->addWidget(new QLabel(_t("Beispieltext"), m_preview));
-    auto *sampleBtn = new QPushButton(_t("Schaltfläche"), m_preview);
+    auto *innerLayout = new QVBoxLayout(m_preview);
+
+    auto *widgetRow = new QHBoxLayout();
+    auto *sampleBtn = new QPushButton(_t("Knopf"), m_preview);
     sampleBtn->setDefault(true);
-    innerLayout->addWidget(sampleBtn);
-    innerLayout->addWidget(new QLineEdit(_t("Eingabefeld"), m_preview));
+    widgetRow->addWidget(sampleBtn);
+    auto *disabledBtn = new QPushButton(_t("Inaktiv"), m_preview);
+    disabledBtn->setEnabled(false);
+    widgetRow->addWidget(disabledBtn);
+    widgetRow->addWidget(new QLineEdit(_t("Eingabefeld"), m_preview));
+    auto *muted = new QLabel(_t("Gedämpfter Text"), m_preview);
+    muted->setObjectName(QStringLiteral("Muted"));
+    widgetRow->addWidget(muted);
+    innerLayout->addLayout(widgetRow);
+
+    // Eine kleine Liste macht Auswahl- und Wechselzeilenfarbe sichtbar.
+    auto *sampleList = new QListWidget(m_preview);
+    sampleList->setAlternatingRowColors(true);
+    sampleList->addItem(_t("Beispiel-Eintrag 1"));
+    sampleList->addItem(_t("Beispiel-Eintrag 2"));
+    sampleList->addItem(_t("Ausgewählt"));
+    sampleList->setCurrentRow(2);
+    sampleList->setFixedHeight(78);
+    innerLayout->addWidget(sampleList);
+
     previewLayout->addWidget(m_preview);
     layout->addWidget(previewBox);
 
@@ -130,12 +151,20 @@ void ThemeEditorDialog::save()
         return;
     }
     if (isBuiltin(name)) {
-        QMessageBox::warning(this, _t("Fehler"),
-                             _t("Eingebaute Themes können nicht überschrieben werden. "
-                                "Bitte einen anderen Namen wählen."));
+        QMessageBox::warning(this, _t("Theme-Name"),
+                             _t("Dieser Name ist von einem eingebauten Theme belegt."));
         return;
     }
+    // Bestehendes eigenes Theme nicht stillschweigend ersetzen.
+    if (name != m_editingName && customThemes().contains(name)) {
+        if (QMessageBox::question(this, _t("Theme-Name"),
+                                  _t("Ein Theme mit diesem Namen existiert bereits.")
+                                      + QStringLiteral("\n") + _t("Überschreiben?"))
+            != QMessageBox::Yes)
+            return;
+    }
     saveCustomTheme(name, m_colors);
+    m_editingName = name;
     m_savedTheme = name;
     // Auswahl aktualisieren, damit das neue Theme sofort erscheint.
     const QString keep = name;

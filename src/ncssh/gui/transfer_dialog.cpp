@@ -38,12 +38,21 @@ static QString formatEta(double seconds)
 
 static QString statusLabel(const QString &status)
 {
-    if (status == QLatin1String("pending")) return _t("Wartet");
+    if (status == QLatin1String("pending")) return _t("wartet");
     if (status == QLatin1String("running")) return _t("Läuft");
-    if (status == QLatin1String("done")) return _t("Fertig");
+    if (status == QLatin1String("done")) return _t("fertig");
     if (status == QLatin1String("error")) return _t("Fehler");
-    if (status == QLatin1String("cancelled")) return _t("Abgebrochen");
+    if (status == QLatin1String("cancelled")) return _t("abgebrochen");
     return status;
+}
+
+// Richtung mit Pfeil — auf einen Blick erkennbar, wohin es geht.
+static QString directionLabel(const QString &direction)
+{
+    if (direction == QLatin1String("upload")) return _t("↑ Upload");
+    if (direction == QLatin1String("download")) return _t("↓ Download");
+    if (direction == QLatin1String("remote")) return _t("↻ Remote");
+    return _t("→ Lokal");
 }
 
 TransferDialog::TransferDialog(TransferManager *manager, QWidget *parent)
@@ -64,8 +73,9 @@ TransferDialog::TransferDialog(TransferManager *manager, QWidget *parent)
 
     auto *buttons = new QHBoxLayout();
     auto *cancelBtn = new QPushButton(_t("Abbrechen"), this);
-    auto *retryBtn = new QPushButton(_t("Wiederholen"), this);
-    auto *clearBtn = new QPushButton(_t("Fertige entfernen"), this);
+    auto *retryBtn = new QPushButton(_t("Wiederaufnehmen"), this);
+    retryBtn->setToolTip(_t("Fehlgeschlagene oder abgebrochene Übertragung erneut starten"));
+    auto *clearBtn = new QPushButton(_t("Abgeschlossene entfernen"), this);
     auto *closeBtn = new QPushButton(_t("Schließen"), this);
     closeBtn->setDefault(true);
     connect(cancelBtn, &QPushButton::clicked, this, [this] {
@@ -113,8 +123,9 @@ void TransferDialog::rebuild()
         auto *nameItem = new QTableWidgetItem(job.name);
         nameItem->setData(Qt::UserRole, job.id);
         m_table->setItem(row, 0, nameItem);
-        m_table->setItem(row, 1, new QTableWidgetItem(
-                                     QStringLiteral("%1 → %2").arg(job.srcLabel, job.dstLabel)));
+        auto *dirItem = new QTableWidgetItem(directionLabel(job.direction));
+        dirItem->setToolTip(QStringLiteral("%1 → %2").arg(job.srcLabel, job.dstLabel));
+        m_table->setItem(row, 1, dirItem);
         auto *bar = new QProgressBar(m_table);
         bar->setRange(0, 100);
         bar->setValue(job.percent());
@@ -142,13 +153,14 @@ void TransferDialog::updateRow(int jobId)
         bar->setValue(job.percent());
     m_table->item(row, 3)->setText(
         QStringLiteral("%1 / %2").arg(humanSize(job.copied), humanSize(job.total)));
+    m_table->item(row, 1)->setText(directionLabel(job.direction));
     m_table->item(row, 4)->setText(
-        job.speed > 0 ? QStringLiteral("%1/s · %2").arg(humanSize(qint64(job.speed)),
-                                                        formatEta(job.eta))
+        job.speed > 0 ? QStringLiteral("%1/s").arg(humanSize(qint64(job.speed)))
+                            + _t(" · ETA %1").arg(formatEta(job.eta))
                       : QStringLiteral("—"));
     QString status = statusLabel(job.status);
     if (job.verified)
-        status += QStringLiteral(" ✓");
+        status = _t("fertig ✓");
     if (!job.error.isEmpty())
         status += QStringLiteral(" — ") + job.error;
     m_table->item(row, 5)->setText(status);
