@@ -3,9 +3,12 @@
 #include "ncssh/core/history.hpp"
 #include "ncssh/core/i18n.hpp"
 
+#include "ncssh/core/ai.hpp"
+#include "ncssh/gui/ai_chat_panel.hpp"
 #include "ncssh/gui/terminal_widget.hpp"
 
 #include <QFont>
+#include <QMessageBox>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -38,7 +41,13 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     connect(m_modeButton, &QPushButton::toggled, this, [this](bool on) {
         if (on) switchToTerminal(); else switchToCommands();
     });
+    // KI: die letzte Terminalausgabe erklaeren lassen (nur bei aktivierter KI).
+    auto *aiButton = new QPushButton(_t("KI"), this);
+    aiButton->setObjectName(QStringLiteral("Chip"));
+    aiButton->setToolTip(_t("Ausgabe/Fehler von der KI erklären lassen"));
+    connect(aiButton, &QPushButton::clicked, this, &ConsolePanel::explainWithAi);
     headerRow->addWidget(m_header, 1);
+    headerRow->addWidget(aiButton);
     headerRow->addWidget(m_modeButton);
     layout->addLayout(headerRow);
 
@@ -124,6 +133,26 @@ void ConsolePanel::switchToCommands()
 {
     m_stack->setCurrentWidget(m_commandPage);
     m_input->setFocus();
+}
+
+void ConsolePanel::explainWithAi()
+{
+    if (!core::aiEnabled()) {
+        QMessageBox::information(this, _t("KI"),
+                                 _t("Die KI ist nicht aktiviert (Einstellungen → KI)."));
+        return;
+    }
+    const QString output = m_output->toPlainText();
+    if (output.trimmed().isEmpty()) {
+        QMessageBox::information(this, _t("KI"), _t("Es gibt noch keine Ausgabe."));
+        return;
+    }
+    // Kontext deckeln — bei Terminalausgabe zaehlt das Ende (Fehler stehen unten).
+    const auto [text, truncated] = core::truncateTerminal(output);
+    auto *panel = new AiChatPanel(m_bridge, core::buildTerminalMessages(text),
+                                  _t("KI — Terminalausgabe erklären"), this);
+    panel->setAttribute(Qt::WA_DeleteOnClose);
+    panel->show();
 }
 
 void ConsolePanel::runCommand(const QString &command, bool execute)

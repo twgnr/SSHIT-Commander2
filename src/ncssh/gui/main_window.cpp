@@ -5,8 +5,14 @@
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/bulk_rename_dialog.hpp"
 #include "ncssh/gui/command_palette.hpp"
+#include "ncssh/gui/diff_dialog.hpp"
+#include "ncssh/gui/encoding_converter_dialog.hpp"
 #include "ncssh/gui/file_panel.hpp"
 #include "ncssh/gui/filediff_dialog.hpp"
+#include "ncssh/gui/netscan_dialog.hpp"
+#include "ncssh/gui/plugins_dialog.hpp"
+#include "ncssh/gui/security_dialog.hpp"
+#include "ncssh/gui/venv_dialog.hpp"
 #include "ncssh/gui/history_dialog.hpp"
 #include "ncssh/gui/known_hosts_dialog.hpp"
 #include "ncssh/gui/search_dialog.hpp"
@@ -107,6 +113,16 @@ void MainWindow::buildMenus()
     bulkAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+R")));
     QAction *diffAct = tools->addAction(_t("Datei-Vergleich"), this, &MainWindow::openFileDiff);
     diffAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+D")));
+    QAction *dirDiffAct = tools->addAction(_t("Verzeichnis-Vergleich"), this,
+                                           &MainWindow::openDirDiff);
+    dirDiffAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+D")));
+    tools->addSeparator();
+    tools->addAction(_t("Datei-Encoding konvertieren"), this,
+                     &MainWindow::openEncodingConverter);
+    tools->addAction(_t("venv verwalten"), this, &MainWindow::openVenv);
+    tools->addAction(_t("Netzwerk-Scanner"), this, &MainWindow::openNetscan);
+    tools->addAction(_t("Sicherheits-Audit (CVE)"), this, &MainWindow::openSecurityAudit);
+    tools->addAction(_t("Plugins"), this, &MainWindow::openPlugins);
     tools->addSeparator();
     tools->addAction(_t("Bekannte Host-Keys"), this, &MainWindow::openKnownHosts);
     QAction *settingsAct = tools->addAction(_t("Einstellungen"), this,
@@ -274,6 +290,79 @@ void MainWindow::openSettings()
 void MainWindow::openKnownHosts()
 {
     KnownHostsDialog dlg(&m_sessions->hostkeys, this);
+    dlg.exec();
+}
+
+void MainWindow::openDirDiff()
+{
+    Workspace *ws = currentWorkspace();
+    if (!ws || !ws->leftPanel()->provider() || !ws->rightPanel()->provider())
+        return;
+    auto *dlg = new DiffDialog(m_bridge, m_transfers,
+                               ws->leftPanel()->provider(), ws->leftPanel()->currentPath(),
+                               ws->rightPanel()->provider(), ws->rightPanel()->currentPath(),
+                               this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->show();
+}
+
+void MainWindow::openNetscan()
+{
+    auto *dlg = new NetscanDialog(m_bridge, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->show();
+}
+
+void MainWindow::openVenv()
+{
+    Workspace *ws = currentWorkspace();
+    if (!ws)
+        return;
+    FilePanel *panel = ws->activePanel();
+    VenvDialog dlg(m_bridge, panel->currentPath(), ws->activeOsType(), this);
+    if (dlg.exec() == QDialog::Accepted) {
+        // Befehlsfolge nacheinander in die aktive Konsole schicken.
+        for (const QString &cmd : dlg.commands())
+            ws->sendToActiveConsole(cmd, true);
+    }
+}
+
+void MainWindow::openEncodingConverter()
+{
+    Workspace *ws = currentWorkspace();
+    if (!ws)
+        return;
+    FilePanel *panel = ws->activePanel();
+    const QString path = panel->selectedPath();
+    if (path.isEmpty() || !panel->provider()) {
+        QMessageBox::information(this, _t("Datei-Encoding konvertieren"),
+                                 _t("Bitte zuerst eine Datei markieren."));
+        return;
+    }
+    auto *dlg = new EncodingConverterDialog(m_bridge, panel->provider(), path, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    connect(dlg, &QDialog::accepted, panel, &FilePanel::refresh);
+    dlg->show();
+}
+
+void MainWindow::openSecurityAudit()
+{
+    Workspace *ws = currentWorkspace();
+    if (!ws)
+        return;
+    if (!ws->session()) {
+        QMessageBox::information(this, _t("Sicherheits-Audit (CVE)"),
+                                 _t("Dafür muss der Tab mit einem Linux-Server verbunden sein."));
+        return;
+    }
+    auto *dlg = new SecurityDialog(m_bridge, ws->session(), this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->show();
+}
+
+void MainWindow::openPlugins()
+{
+    PluginsDialog dlg(this);
     dlg.exec();
 }
 

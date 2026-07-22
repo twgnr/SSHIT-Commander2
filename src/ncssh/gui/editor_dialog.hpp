@@ -52,6 +52,7 @@ private:
     void findNext(bool backwards = false);
     void replaceCurrent(bool all);
     void gotoLine();
+    void explainWithAi();   // Datei/Config von der KI erklaeren lassen
     void updateTitle();
 
     AsyncBridge *m_bridge;

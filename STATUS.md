@@ -51,6 +51,13 @@ Stand des 1:1-Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 | `editor_dialog` · `highlighter` | Editor mit Zeilennummern, Syntax-Highlighting (JSON/XML/YAML/Python/INI/Shell), Suchen/Ersetzen, Gehe-zu-Zeile, Großdatei-Schutz |
 | `tunnel_dialog` | SSH-Tunnel öffnen/stoppen (-L/-R/-D) |
 | `bookmarks_dialog` | Lesezeichen anspringen/entfernen/exportieren/importieren |
+| `diff_dialog` | Verzeichnis-Vergleich/Sync, optional rekursiv, Angleichen über die Queue |
+| `netscan_dialog` | Netzwerk-Scanner: Ziele/Ports, Live-Hosts, MAC/Hersteller, Freigaben, Web |
+| `venv_dialog` | venv/pipenv anlegen & aktivieren, bekannte Umgebungen verwalten |
+| `encoding_converter_dialog` | Zeichensatz-Konverter inkl. EBCDIC, Auto-Erkennung, Vorschau |
+| `security_dialog` | CVE-Audit: OS/Pakete/sshd/ufw/Ports/Konten + OSV.dev-Abgleich |
+| `plugins_dialog` | Externe Plugins verwalten und testen |
+| `ai_chat_panel` | KI-Chat (lokales Ollama) mit Folgefragen; Buttons in Konsole und Editor |
 
 ## Build & Toolchain
 - CMake + Ninja + MSVC 2022; Qt 6.8.2 (`C:\Qt\6.8.2\msvc2022_64`)
@@ -64,17 +71,14 @@ Stand des 1:1-Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 Die Logik dieser Funktionen ist in `core/` bzw. `net/` **fertig portiert**; es fehlt
 nur die jeweilige Qt-Oberfläche:
 
-- Netzwerk-Scanner-Dialog (`core/netscan` + `core/netfs` stehen)
-- Sicherheits-Audit-Dialog (`core/secaudit` + OSV-Abfrage stehen)
-- venv-Dialog (`core/venvtools` steht)
-- Encoding-Konverter-Dialog (`core/encodings` steht)
-- Verzeichnis-Diff/Sync-Dialog (`core/diff` steht)
 - Makro-Manager & Key-Editor (`core/macros` + `core/macroactions` stehen)
-- KI-Chat-Panel (`core/ai` + `net/ollama` stehen)
 - Datei-/GitHub-Alarm-Dialoge (`core/filealarm` + `core/githubalarm` stehen)
-- Plugins-Dialog (`core/plugins` steht)
-- Clipboard-Manager, Tab-Favoriten-, Theme-Editor-, Hilfe-/Handbuch-Dialog
-- Bild-Vorschau, Minimap, Drag & Drop zwischen Panes
+- Clipboard-Manager, Tab-Favoriten-Dialog (`core/tabfavorites` steht)
+- Theme-Editor-Dialog (`gui/style` bietet die komplette API)
+- Hilfe-/Handbuch-Dialog, Bild-Vorschau, Minimap
+- Netzwerk-Modus einer Pane (`core/netfs` steht; der Scanner-Dialog liefert die Hosts)
+- sudo-Chip pro Pane (`net/sudofs` steht)
+- Drag & Drop zwischen Panes und aus dem Explorer
 
 Diese sind reine UI-Schichten auf bereits portierter Logik und lassen sich
 inkrementell ergänzen, ohne die Architektur zu ändern.

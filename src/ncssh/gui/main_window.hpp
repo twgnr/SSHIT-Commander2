@@ -35,6 +35,12 @@ private:
     void openSettings();
     void openKnownHosts();
     void openTunnels();
+    void openDirDiff();
+    void openNetscan();
+    void openVenv();
+    void openEncodingConverter();
+    void openSecurityAudit();
+    void openPlugins();
     void applyThemeByName(const QString &name);
 
     AsyncBridge *m_bridge;

@@ -52,6 +52,7 @@ private:
     void appendOutput(const QString &text);
     void switchToTerminal();
     void switchToCommands();
+    void explainWithAi();   // Terminalausgabe von der KI erklaeren lassen
 
     AsyncBridge *m_bridge;
     core::CommandRunner *m_runner = nullptr;

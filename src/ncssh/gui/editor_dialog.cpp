@@ -1,7 +1,9 @@
 #include "ncssh/gui/editor_dialog.hpp"
 
+#include "ncssh/core/ai.hpp"
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/settings.hpp"
+#include "ncssh/gui/ai_chat_panel.hpp"
 #include "ncssh/gui/highlighter.hpp"
 
 #include <QCheckBox>
@@ -135,6 +137,9 @@ EditorDialog::EditorDialog(AsyncBridge *bridge, core::FileSystemProvider *provid
     toolbar->addAction(_t("Speichern unter …"), this, [this] { save(true); });
     toolbar->addSeparator();
     toolbar->addAction(_t("Gehe zu Zeile"), this, &EditorDialog::gotoLine);
+    toolbar->addSeparator();
+    // KI: Datei/Config untersuchen oder befragen (nur bei aktivierter KI).
+    toolbar->addAction(_t("KI erklären"), this, &EditorDialog::explainWithAi);
     layout->addWidget(toolbar);
 
     m_editor = new CodeEditor(this);
@@ -331,6 +336,28 @@ void EditorDialog::gotoLine()
     QTextCursor cur(m_editor->document()->findBlockByNumber(line - 1));
     m_editor->setTextCursor(cur);
     m_editor->centerCursor();
+}
+
+void EditorDialog::explainWithAi()
+{
+    if (!core::aiEnabled()) {
+        QMessageBox::information(this, _t("KI"),
+                                 _t("Die KI ist nicht aktiviert (Einstellungen → KI)."));
+        return;
+    }
+    bool ok = false;
+    const QString question = QInputDialog::getText(
+        this, _t("KI erklären"),
+        _t("Frage zur Datei (leer = allgemein erklären):"), QLineEdit::Normal, QString(), &ok);
+    if (!ok)
+        return;
+    // Kontext deckeln — bei Dateien zaehlt der Anfang (Header/Direktiven).
+    const auto [content, truncated] = core::truncateFile(m_editor->toPlainText());
+    auto *panel = new AiChatPanel(
+        m_bridge, core::buildFileMessages(m_provider->basename(m_path), content, question),
+        _t("KI — Datei erklären"), this);
+    panel->setAttribute(Qt::WA_DeleteOnClose);
+    panel->show();
 }
 
 void EditorDialog::closeEvent(QCloseEvent *event)
