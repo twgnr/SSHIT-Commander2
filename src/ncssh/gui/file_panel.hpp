@@ -68,6 +68,9 @@ public:
     void selectAllMarks();             // Strg+A
     void clearMarks();
 
+    // Angezeigte Zusatzspalten (ohne "Name") — aus den Einstellungen.
+    QStringList visibleColumns() const;
+
     // App-weite Zwischenablage (Strg+C/X) — der Workspace holt sie sich beim
     // Einfuegen ab, weil nur er beide Panes kennt.
     static core::FileSystemProvider *clipboardProvider() { return s_clipProvider; }
@@ -124,7 +127,6 @@ private:
     // --- Spalten (frei waehlbar, in core/settings gespeichert) ---
     static QStringList optionalColumns();          // kanonische Reihenfolge
     static QString columnLabel(const QString &id);
-    QStringList visibleColumns() const;
     void setTableHeaders();
     void showHeaderMenu(const QPoint &pos);
     void toggleColumn(const QString &id, bool on);
