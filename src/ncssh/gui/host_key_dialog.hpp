@@ -20,6 +20,13 @@ public:
     static bool ask(const QString &host, int port, const QString &algorithm,
                     const QString &fingerprint, QWidget *parent = nullptr);
 
+    // Warnung bei GEAENDERTEM Host-Key: stellt erwarteten und erhaltenen
+    // Fingerprint gegenueber. true = der Nutzer will trotzdem vertrauen (der
+    // alte Pin wird dann ersetzt). Vorgabe ist Abbrechen.
+    static bool askChanged(const QString &host, int port, const QString &algorithm,
+                           const QString &expected, const QString &received,
+                           QWidget *parent = nullptr);
+
 private:
     bool m_trust = false;
 };

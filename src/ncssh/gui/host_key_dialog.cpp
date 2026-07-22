@@ -80,4 +80,55 @@ bool HostKeyDialog::ask(const QString &host, int port, const QString &algorithm,
     return dlg.exec() == QDialog::Accepted && dlg.trustPermanently();
 }
 
+bool HostKeyDialog::askChanged(const QString &host, int port, const QString &algorithm,
+                               const QString &expected, const QString &received,
+                               QWidget *parent)
+{
+    QDialog dlg(parent);
+    dlg.setWindowTitle(_t("Host-Key geändert"));
+    auto *layout = new QVBoxLayout(&dlg);
+
+    auto *warning = new QLabel(
+        QStringLiteral("<b style='color:#f85149'>%1</b><br><br>%2")
+            .arg(_t("HOST-KEY HAT SICH GEÄNDERT — möglicher MITM-Angriff!"),
+                 _t("Der Server meldet einen anderen Schlüssel als beim letzten Mal. "
+                    "Das kann eine Neuinstallation sein — oder jemand hängt sich "
+                    "dazwischen. Nur fortfahren, wenn die Änderung bekannt ist.")),
+        &dlg);
+    warning->setWordWrap(true);
+    layout->addWidget(warning);
+
+    auto *info = new QLabel(
+        _t("<b>Host:</b> %1:%2<br><b>Key-Typ:</b> %3")
+            .arg(host).arg(port).arg(algorithm.isEmpty() ? _t("unbekannt") : algorithm),
+        &dlg);
+    layout->addWidget(info);
+
+    QFont mono(QStringLiteral("Consolas"));
+    mono.setStyleHint(QFont::Monospace);
+    auto *form = new QFormLayout();
+    auto *expectedLabel = new QLabel(expected, &dlg);
+    expectedLabel->setFont(mono);
+    expectedLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    auto *receivedLabel = new QLabel(received, &dlg);
+    receivedLabel->setFont(mono);
+    receivedLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    form->addRow(_t("Erwartet:"), expectedLabel);
+    form->addRow(_t("Erhalten:"), receivedLabel);
+    layout->addLayout(form);
+
+    auto *buttons = new QHBoxLayout();
+    auto *cancel = new QPushButton(_t("Abbrechen"), &dlg);
+    cancel->setDefault(true);   // im Zweifel NICHT verbinden
+    auto *trust = new QPushButton(_t("Trotzdem vertrauen"), &dlg);
+    QObject::connect(cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+    QObject::connect(trust, &QPushButton::clicked, &dlg, &QDialog::accept);
+    buttons->addWidget(cancel);
+    buttons->addStretch(1);
+    buttons->addWidget(trust);
+    layout->addLayout(buttons);
+
+    return dlg.exec() == QDialog::Accepted;
+}
+
 } // namespace ncssh::gui

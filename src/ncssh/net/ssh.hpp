@@ -35,6 +35,21 @@ public:
     explicit HostKeyError(const QString &msg) : std::runtime_error(msg.toStdString()) {}
 };
 
+// Der gepinnte Fingerprint passt nicht zum gelieferten. Traegt beide mit, damit
+// die Oberflaeche sie gegenueberstellen kann; die Verbindung ist zu diesem
+// Zeitpunkt bereits abgebrochen (vor der Authentifizierung).
+class HostKeyChangedError : public HostKeyError {
+public:
+    HostKeyChangedError(const QString &msg, QString expectedFp, QString receivedFp,
+                        QString keyAlgorithm)
+        : HostKeyError(msg), expected(std::move(expectedFp)),
+          received(std::move(receivedFp)), algorithm(std::move(keyAlgorithm)) {}
+
+    QString expected;
+    QString received;
+    QString algorithm;
+};
+
 class SFTPFileSystem;
 class RemoteCommandRunner;
 class RemoteShell;

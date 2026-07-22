@@ -321,9 +321,12 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
             if (*exact == fp) {
                 status = QStringLiteral("known");
             } else {
-                throw HostKeyError(
+                // Abbruch VOR der Authentifizierung — es gehen keine
+                // Zugangsdaten an einen moeglicherweise fremden Server.
+                throw HostKeyChangedError(
                     QStringLiteral("HOST-KEY HAT SICH GEÄNDERT! Möglicher MITM-Angriff.\n"
-                                   "Erwartet: %1\nErhalten: %2").arg(*exact, fp));
+                                   "Erwartet: %1\nErhalten: %2").arg(*exact, fp),
+                    *exact, fp, algo);
             }
         } else {
             const auto legacy = hostkeys->getLegacy(profile.host, profile.port);

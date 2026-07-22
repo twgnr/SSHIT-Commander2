@@ -6,7 +6,17 @@ namespace ncssh::net {
 
 SSHSessionPtr SessionManager::open(const core::ServerProfile &profile)
 {
-    SSHSessionPtr session = connectSession(profile, &hostkeys);
+    clearMismatch();
+    SSHSessionPtr session;
+    try {
+        session = connectSession(profile, &hostkeys);
+    } catch (const HostKeyChangedError &err) {
+        // Fingerprints festhalten, damit die Oberflaeche sie zeigen kann; der
+        // Fehler wird unveraendert weitergereicht.
+        setMismatch({true, profile.host, profile.port, err.algorithm, err.expected,
+                     err.received});
+        throw;
+    }
     m_sessions.push_back(session);
     return session;
 }

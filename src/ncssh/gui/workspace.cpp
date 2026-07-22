@@ -532,9 +532,26 @@ void Workspace::connectTo(const core::ServerProfile &profile)
             }
             emit connectionChanged();
         },
-        [this](const QString &err) {
-            QMessageBox::critical(this, _t("Verbindungsfehler"), err);
-            emit statusMessage(err);
+        [this, profile](const QString &err) {
+            // Geaenderter Host-Key: der Versuch wurde vor der Authentifizierung
+            // abgebrochen. Erst nach ausdruecklicher Zustimmung erneut versuchen.
+            const net::HostKeyMismatch mismatch = m_sessions->lastMismatch();
+            if (mismatch.valid) {
+                m_sessions->clearMismatch();
+                if (HostKeyDialog::askChanged(mismatch.host, mismatch.port,
+                                              mismatch.algorithm, mismatch.expected,
+                                              mismatch.received, this)) {
+                    m_sessions->hostkeys.add(mismatch.host, mismatch.port,
+                                             mismatch.received, mismatch.algorithm);
+                    m_sessions->hostkeys.save();
+                    connectTo(profile);   // jetzt passt der Pin
+                } else {
+                    emit statusMessage(_t("Abgebrochen — Host-Key nicht bestätigt."));
+                }
+                return;
+            }
+            QMessageBox::critical(this, _t("Verbindung fehlgeschlagen"), err);
+            emit statusMessage(_t("Verbindung fehlgeschlagen"));
         });
 }
 
