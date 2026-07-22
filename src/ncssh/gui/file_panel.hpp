@@ -8,6 +8,8 @@
 #include "ncssh/core/models.hpp"
 #include "ncssh/gui/bridge.hpp"
 
+#include <functional>
+#include <QStringList>
 #include <QWidget>
 #include <memory>
 #include <vector>
@@ -17,6 +19,8 @@ class QTableWidget;
 class QLabel;
 class QComboBox;
 class QPushButton;
+class QMenu;
+class QTimer;
 
 namespace ncssh::gui {
 
@@ -40,9 +44,29 @@ public:
     QString currentPath() const { return m_path; }
     QString selectedPath() const;                 // markierte Datei (Vollpfad) oder ""
     std::vector<QString> selectedPaths() const;   // Mehrfachauswahl
+    // Markierter Eintrag oder nullptr (auch bei ".."); zeigt in m_rows.
+    const core::FileEntry *selectedEntry() const;
     void setHeaderTitle(const QString &title);
     void refresh();
     void navigateTo(const QString &path);
+
+    // --- Verlauf (Alt+Links / Alt+Rechts) ---
+    void goBack();
+    void goForward();
+    bool canGoBack() const { return m_histPos > 0; }
+    bool canGoForward() const { return m_histPos >= 0 && m_histPos < m_history.size() - 1; }
+
+    // --- Markieren ---
+    void markByPattern(bool select);   // Num + / Num -
+    void invertMarks();                // Num *
+    void selectAllMarks();             // Strg+A
+    void clearMarks();
+
+    // App-weite Zwischenablage (Strg+C/X) — der Workspace holt sie sich beim
+    // Einfuegen ab, weil nur er beide Panes kennt.
+    static core::FileSystemProvider *clipboardProvider() { return s_clipProvider; }
+    static QStringList clipboardPaths() { return s_clipPaths; }
+    static bool clipboardIsMove() { return s_clipMove; }
 
 signals:
     void activated();                             // Pane wurde fokussiert
@@ -54,6 +78,14 @@ signals:
     void selectionChanged(const QString &path);
     // Drop aus der anderen Pane bzw. aus dem Explorer (lokale Pfade).
     void filesDropped(const QStringList &paths, bool fromExplorer);
+    // Verschieben in die andere Pane (wie transferRequested, aber mit Loeschen).
+    void moveRequested(const QString &srcPath);
+    // Einfuegen aus der internen Zwischenablage; move = ausschneiden.
+    void pasteRequested(bool move);
+    // Verzeichnis-Vergleich mit der anderen Pane oeffnen.
+    void dirDiffRequested();
+    // Alarm-Trigger fuer das markierte Verzeichnis setzen.
+    void dirAlarmRequested(const QString &path);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -63,7 +95,7 @@ protected:
 
 private:
     void buildUi(const QString &title);
-    void loadDir(const QString &path);
+    void loadDir(const QString &path, bool record = true);
     void populate(const std::vector<core::FileEntry> &entries);
     void onDoubleClick(int row, int column);
     void goUp();
@@ -72,6 +104,7 @@ private:
     void opView();
     void opEdit();
     void opMkdir();
+    void opNewFile();
     void opDelete();
     void opRename();
     void opProperties();
@@ -82,16 +115,52 @@ private:
     void sortBy(int column);          // Spaltenkopf angeklickt
     void applyFilter(const QString &pattern);
 
+    // --- Kontextmenue-Aktionen ---
+    void opExecute();                            // mit dem Standardprogramm oeffnen
+    void openWithProgram(const QString &exe);    // mit einem bestimmten Programm
+    void openWithChooser();                      // "Oeffnen mit"-Dialog (Windows)
+    void addOpenWithMenu(QMenu *menu, bool isFile, const core::FileEntry *entry);
+    void opChecksum();
+    void opMakeZip();
+    void opExtract();
+    void copyPathToClipboard();
+    void clipCopy();
+    void clipCut();
+    void clipPaste();
+    // Fuehrt fn mit einem lokalen Pfad aus; Remote-Dateien werden vorher in einen
+    // temporaeren Ordner geholt.
+    void withLocalCopy(const std::function<void(const QString &)> &fn);
+
+    // --- Markieren / Tippsuche (Hilfen) ---
+    std::vector<int> markableRows() const;
+    void applySelection(const std::vector<int> &rows, bool select);
+    void markCurrent(bool select, bool toggle);  // Einfg / Leertaste
+    void typeAhead(const QString &ch);
+    void selectMatch(const QString &query);
+
     AsyncBridge *m_bridge;
     core::FileSystemProvider *m_provider = nullptr;
     QString m_path;
-    std::vector<core::FileEntry> m_entries;
+    std::vector<core::FileEntry> m_entries;      // Rohdaten des Verzeichnisses
+    std::vector<core::FileEntry> m_rows;         // sichtbare Zeilen (Index == Tabellenzeile)
     bool m_showHidden = true;
     QString m_filter;                 // Wildcard-Filter (Strg+F)
     int m_sortColumn = 0;             // 0 Name · 1 Groesse · 2 Datum · 3 Rechte
     bool m_sortAscending = true;
     bool m_sudoAvailable = false;
     bool m_sudoActive = false;
+
+    QStringList m_history;            // besuchte Pfade
+    qsizetype m_histPos = -1;         // Position im Verlauf
+    QString m_typeAheadBuffer;        // getippte Zeichen (Sprungsuche)
+    QTimer *m_typeAheadTimer = nullptr;
+
+    // App-weite Zwischenablage — funktioniert auch fuer Remote-Pfade und kennt
+    // den Unterschied zwischen Kopieren und Ausschneiden. (Original: Klassen-
+    // attribute von FilePanel.)
+    static core::FileSystemProvider *s_clipProvider;
+    static QStringList s_clipPaths;
+    static bool s_clipMove;
 
     core::BookmarkStore m_bookmarks;
     QString m_bookmarkKey = QStringLiteral("local");

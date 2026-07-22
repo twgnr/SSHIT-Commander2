@@ -66,18 +66,27 @@ public:
 signals:
     void statusMessage(const QString &msg);
     void connectionChanged();
+    // Aus dem Pane-Kontextmenue: Verzeichnis-Vergleich beider Seiten oeffnen.
+    void dirDiffRequested();
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
 
 private:
+    // moveSource: Quelle nach erfolgreicher Uebertragung entfernen (Verschieben).
     void startTransfer(core::FileSystemProvider *src, const QString &srcPath,
                        core::FileSystemProvider *dst, const QString &dstDir,
-                       const QString &overrideName = {});
+                       const QString &overrideName = {}, bool moveSource = false);
     // F5: Bestaetigungsdialog mit waehlbarem Zielordner, dann uebertragen.
     void confirmAndTransfer(core::FileSystemProvider *src,
                             const std::vector<QString> &srcPaths,
                             core::FileSystemProvider *dst, const QString &dstDir);
+    // Wie confirmAndTransfer, entfernt die Quelle aber nach Erfolg.
+    void confirmAndMove(core::FileSystemProvider *src,
+                        const std::vector<QString> &srcPaths,
+                        core::FileSystemProvider *dst, const QString &dstDir);
+    // Strg+V: Inhalt der internen Zwischenablage in target einfuegen.
+    void pasteInto(FilePanel *target, bool move);
     void setSudoMode(bool on);
     // Konsole in ein eigenes Fenster loesen bzw. zurueckholen.
     void undockConsole(ConsolePanel *console);

@@ -2,7 +2,9 @@
 
 #include "ncssh/core/dateformat.hpp"
 #include "ncssh/core/execfile.hpp"
+#include "ncssh/core/fileops.hpp"
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/core/openwith.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/file_icons.hpp"
 #include "ncssh/gui/bookmarks_dialog.hpp"
@@ -11,9 +13,20 @@
 #include "ncssh/gui/editor_dialog.hpp"
 #include "ncssh/gui/properties_dialog.hpp"
 
+#include <QAction>
+#include <QApplication>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDesktopServices>
+#include <QDir>
 #include <QDrag>
+#include <QFile>
+#include <QFileInfo>
+#include <QItemSelectionModel>
+#include <QProcess>
+#include <QSet>
+#include <QTimer>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
@@ -86,10 +99,24 @@ void FilePanel::buildUi(const QString &title)
     headerRow->addWidget(m_sudoChip);
     layout->addLayout(headerRow);
 
+    // Tippsuche: Puffer nach kurzer Tipppause verwerfen.
+    m_typeAheadTimer = new QTimer(this);
+    m_typeAheadTimer->setSingleShot(true);
+    m_typeAheadTimer->setInterval(900);
+    connect(m_typeAheadTimer, &QTimer::timeout, this, [this] { m_typeAheadBuffer.clear(); });
+
     auto *pathRow = new QHBoxLayout();
+    auto *back = new QPushButton(QStringLiteral("←"), this);
+    back->setFixedWidth(30);
+    back->setToolTip(_t("Zurück (Alt+←)"));
+    connect(back, &QPushButton::clicked, this, &FilePanel::goBack);
+    auto *forward = new QPushButton(QStringLiteral("→"), this);
+    forward->setFixedWidth(30);
+    forward->setToolTip(_t("Vor (Alt+→)"));
+    connect(forward, &QPushButton::clicked, this, &FilePanel::goForward);
     auto *up = new QPushButton(QStringLiteral("↑"), this);
     up->setFixedWidth(34);
-    up->setToolTip(_t("Hoch"));
+    up->setToolTip(_t("Übergeordneter Ordner"));
     connect(up, &QPushButton::clicked, this, &FilePanel::goUp);
     m_pathEdit = new QLineEdit(this);
     connect(m_pathEdit, &QLineEdit::returnPressed, this,
@@ -107,6 +134,8 @@ void FilePanel::buildUi(const QString &title)
     bookmarksBtn->setFixedWidth(28);
     bookmarksBtn->setToolTip(_t("Lesezeichen"));
     connect(bookmarksBtn, &QPushButton::clicked, this, &FilePanel::openBookmarks);
+    pathRow->addWidget(back);
+    pathRow->addWidget(forward);
     pathRow->addWidget(up);
     pathRow->addWidget(m_pathEdit, 1);
     pathRow->addWidget(m_starButton);
@@ -190,7 +219,23 @@ void FilePanel::navigateTo(const QString &path)
 void FilePanel::refresh()
 {
     if (!m_path.isEmpty())
-        loadDir(m_path);
+        loadDir(m_path, /*record=*/false);
+}
+
+void FilePanel::goBack()
+{
+    if (!canGoBack())
+        return;
+    --m_histPos;
+    loadDir(m_history.at(int(m_histPos)), /*record=*/false);
+}
+
+void FilePanel::goForward()
+{
+    if (!canGoForward())
+        return;
+    ++m_histPos;
+    loadDir(m_history.at(int(m_histPos)), /*record=*/false);
 }
 
 void FilePanel::goUp()
@@ -202,15 +247,23 @@ void FilePanel::goUp()
         navigateTo(parent);
 }
 
-void FilePanel::loadDir(const QString &path)
+void FilePanel::loadDir(const QString &path, bool record)
 {
     core::FileSystemProvider *provider = m_provider;
     m_bridge->run<std::vector<FileEntry>>(
         [provider, path] { return provider->listDir(path); },
-        [this, path](const std::vector<FileEntry> &entries) {
+        [this, path, record](const std::vector<FileEntry> &entries) {
+            if (record && path != m_path) {
+                // Verlauf: alles nach der aktuellen Position verwerfen
+                if (m_histPos >= 0 && m_histPos + 1 < m_history.size())
+                    m_history.erase(m_history.begin() + int(m_histPos) + 1, m_history.end());
+                m_history.append(path);
+                m_histPos = m_history.size() - 1;
+            }
             m_path = path;
             m_pathEdit->setText(path);
             m_entries = entries;
+            m_typeAheadBuffer.clear();   // Suchpuffer beim Verzeichniswechsel verwerfen
             populate(entries);
             updateBookmarkButton();
             emit pathChanged(path);
@@ -254,6 +307,7 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
 
     const bool showIcons = core::getSettingBool(QStringLiteral("show_file_icons"), true);
     m_table->setRowCount(0);
+    m_rows.clear();
     int row = 0;
     qint64 totalSize = 0;
     int fileCount = 0, dirCount = 0;
@@ -295,6 +349,7 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
         if (e.type != EntryType::Parent) {
             if (e.isDir()) ++dirCount; else { ++fileCount; totalSize += e.size; }
         }
+        m_rows.push_back(e);
         ++row;
     }
     QString status = QStringLiteral("%1 Ordner, %2 Dateien · %3")
@@ -353,20 +408,111 @@ std::vector<QString> FilePanel::selectedPaths() const
     return out;
 }
 
+// Der aktuell markierte Eintrag (nullptr, wenn nichts oder ".." markiert ist).
+const FileEntry *FilePanel::selectedEntry() const
+{
+    const int row = m_table->currentRow();
+    if (row < 0 || row >= int(m_rows.size()))
+        return nullptr;
+    const FileEntry &e = m_rows[size_t(row)];
+    return e.type == EntryType::Parent ? nullptr : &e;
+}
+
 void FilePanel::openContextMenu(const QPoint &pos)
 {
+    emit activated();   // diese Pane aktiv setzen
     QMenu menu(this);
-    menu.addAction(_t("Ansehen") + QStringLiteral("\tF3"), this, &FilePanel::opView);
-    menu.addAction(_t("Bearbeiten") + QStringLiteral("\tF4"), this, &FilePanel::opEdit);
+    const QString sel = selectedPath();
+    const bool hasSel = !sel.isEmpty();
+    const FileEntry *entry = selectedEntry();
+    const bool isFile = entry != nullptr && !entry->isDir();
+    const bool isDirSel = entry != nullptr && entry->isDir();
+    const bool local = m_provider && !m_provider->isRemote;
+
+    menu.addAction(_t("Ansehen (F3)"), this, &FilePanel::opView)->setEnabled(hasSel);
+    menu.addAction(_t("Bearbeiten (F4)"), this, &FilePanel::opEdit)->setEnabled(hasSel);
+    menu.addAction(_t("Ausführen (Standardprogramm)"), this, &FilePanel::opExecute)
+        ->setEnabled(isFile);
+    addOpenWithMenu(&menu, isFile, entry);
     menu.addSeparator();
-    menu.addAction(_t("Kopieren/Übertragen") + QStringLiteral("\tF5"), this,
-                   [this] { const QString p = selectedPath(); if (!p.isEmpty()) emit transferRequested(p); });
-    menu.addAction(_t("Umbenennen") + QStringLiteral("\tF6"), this, &FilePanel::opRename);
-    menu.addAction(_t("Neuer Ordner") + QStringLiteral("\tF7"), this, &FilePanel::opMkdir);
-    menu.addAction(_t("Löschen") + QStringLiteral("\tF8"), this, &FilePanel::opDelete);
+
+    menu.addAction(_t("Kopieren (Ctrl+C)"), this, &FilePanel::clipCopy)->setEnabled(hasSel);
+    menu.addAction(_t("Ausschneiden (Ctrl+X)"), this, &FilePanel::clipCut)->setEnabled(hasSel);
+    const QMimeData *osClip = QApplication::clipboard()->mimeData();
+    menu.addAction(_t("Einfügen (Ctrl+V)"), this, &FilePanel::clipPaste)
+        ->setEnabled(!s_clipPaths.isEmpty() || (osClip && osClip->hasUrls()));
     menu.addSeparator();
-    menu.addAction(_t("Eigenschaften"), this, &FilePanel::opProperties);
+
+    menu.addAction(_t("Kopieren → andere Pane (F5)"), this, [this] {
+        const QString p = selectedPath();
+        if (!p.isEmpty())
+            emit transferRequested(p);
+    })->setEnabled(hasSel);
+    menu.addAction(_t("Verschieben → andere Pane"), this, [this] {
+        const QString p = selectedPath();
+        if (!p.isEmpty())
+            emit moveRequested(p);
+    })->setEnabled(hasSel);
+    menu.addAction(_t("Umbenennen / Verschieben (F6)"), this, &FilePanel::opRename)
+        ->setEnabled(hasSel);
+    menu.addAction(_t("Rechte ändern …"), this, &FilePanel::opProperties)->setEnabled(hasSel);
+    menu.addAction(_t("Löschen (F8)"), this, &FilePanel::opDelete)->setEnabled(hasSel);
+    menu.addSeparator();
+
+    QMenu *marks = menu.addMenu(_t("Markieren"));
+    marks->addAction(_t("Nach Muster markieren … (Num +)"), this, [this] { markByPattern(true); });
+    marks->addAction(_t("Markierung nach Muster aufheben … (Num -)"), this,
+                     [this] { markByPattern(false); });
+    marks->addAction(_t("Auswahl umkehren (Num *)"), this, &FilePanel::invertMarks);
+    marks->addAction(_t("Alles markieren (Strg+A)"), this, &FilePanel::selectAllMarks);
+
+    menu.addAction(_t("Prüfsumme berechnen …"), this, &FilePanel::opChecksum)->setEnabled(hasSel);
+    if (local) {
+        menu.addAction(_t("ZIP-Archiv erstellen …"), this, &FilePanel::opMakeZip)
+            ->setEnabled(hasSel);
+        if (isFile && core::isArchive(entry->name))
+            menu.addAction(_t("Archiv entpacken …"), this, &FilePanel::opExtract);
+    }
+    menu.addSeparator();
+
+    menu.addAction(_t("Neuer Ordner (F7)"), this, &FilePanel::opMkdir);
+    menu.addAction(_t("Neue Datei …"), this, &FilePanel::opNewFile);
+    menu.addAction(_t("Pfad kopieren"), this, &FilePanel::copyPathToClipboard)->setEnabled(hasSel);
+    menu.addAction(_t("Eigenschaften …"), this, &FilePanel::opProperties)->setEnabled(hasSel);
+    menu.addSeparator();
+
+    if (isDirSel && local) {
+        menu.addAction(_t("Alarm Trigger für Verzeichnis setzen …"), this,
+                       [this, sel] { emit dirAlarmRequested(sel); });
+    }
+    menu.addAction(_t("Verzeichnisse vergleichen …"), this,
+                   [this] { emit dirDiffRequested(); });
+    menu.addSeparator();
+
+    QAction *hiddenAction = menu.addAction(_t("Versteckte Dateien"), this,
+                                           &FilePanel::toggleHidden);
+    hiddenAction->setCheckable(true);
+    hiddenAction->setChecked(m_showHidden);
+    menu.addAction(_t("Aktualisieren (Ctrl+R)"), this, &FilePanel::refresh);
     menu.exec(m_table->viewport()->mapToGlobal(pos));
+}
+
+void FilePanel::addOpenWithMenu(QMenu *menu, bool isFile, const FileEntry *entry)
+{
+    QMenu *sub = menu->addMenu(_t("Öffnen mit"));
+    sub->setEnabled(isFile);
+    if (!isFile || !entry)
+        return;
+    const int dot = entry->name.lastIndexOf(QLatin1Char('.'));
+    const QString ext = dot > 0 ? entry->name.mid(dot) : QString();
+    for (const auto &[name, exe] : core::programsForExtension(ext))
+        sub->addAction(name, this, [this, exe] { openWithProgram(exe); });
+    if (!sub->isEmpty())
+        sub->addSeparator();
+    sub->addAction(_t("Standardprogramm"), this, &FilePanel::opExecute);
+#ifdef Q_OS_WIN
+    sub->addAction(_t("Anderes Programm wählen …"), this, &FilePanel::openWithChooser);
+#endif
 }
 
 // Bekannte Bild-Endungen fuer die Vorschau (F3).
@@ -550,6 +696,369 @@ void FilePanel::opProperties()
     }
 }
 
+void FilePanel::opNewFile()
+{
+    if (!m_provider)
+        return;
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, _t("Neue Datei"),
+                                               _t("Name der Datei:"), QLineEdit::Normal,
+                                               QString(), &ok);
+    if (!ok || name.isEmpty())
+        return;
+    core::FileSystemProvider *provider = m_provider;
+    const QString target = provider->join(m_path, name);
+    m_bridge->run(
+        [provider, target] { provider->writeBytes(target, QByteArray()); },
+        [this] { refresh(); },
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+}
+
+// --- "Oeffnen mit" ---------------------------------------------------------
+// Remote-Dateien muessen erst lokal vorliegen; fn bekommt immer einen lokalen Pfad.
+void FilePanel::withLocalCopy(const std::function<void(const QString &)> &fn)
+{
+    const QString path = selectedPath();
+    if (path.isEmpty() || !m_provider)
+        return;
+    if (!m_provider->isRemote) {
+        fn(path);
+        return;
+    }
+    core::FileSystemProvider *provider = m_provider;
+    const QString name = provider->basename(path);
+    m_bridge->run<QByteArray>(
+        [provider, path] { return provider->readBytes(path, 100'000'000); },
+        [this, name, fn](const QByteArray &data) {
+            const QString dir = QDir::tempPath() + QStringLiteral("/sshit-open");
+            QDir().mkpath(dir);
+            const QString local = dir + QLatin1Char('/') + name;
+            QFile f(local);
+            if (!f.open(QIODevice::WriteOnly)) {
+                QMessageBox::warning(this, _t("Fehler"),
+                                     _t("Temporäre Datei nicht schreibbar."));
+                return;
+            }
+            f.write(data);
+            f.close();
+            fn(local);
+        },
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+}
+
+void FilePanel::opExecute()
+{
+    withLocalCopy([](const QString &local) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(local));
+    });
+}
+
+void FilePanel::openWithProgram(const QString &exe)
+{
+    withLocalCopy([this, exe](const QString &local) {
+        if (!QProcess::startDetached(exe, {local}))
+            QMessageBox::warning(this, _t("Fehler"),
+                                 _t("Programm konnte nicht gestartet werden: %1").arg(exe));
+    });
+}
+
+void FilePanel::openWithChooser()
+{
+    withLocalCopy([](const QString &local) {
+        // Windows-Standarddialog "Öffnen mit".
+        QProcess::startDetached(QStringLiteral("rundll32.exe"),
+                                {QStringLiteral("shell32.dll,OpenAs_RunDLL"), local});
+    });
+}
+
+// --- Pruefsumme / Archive ---------------------------------------------------
+
+void FilePanel::opChecksum()
+{
+    const QString path = selectedPath();
+    if (path.isEmpty() || !m_provider)
+        return;
+    const QStringList algos = {QStringLiteral("sha256"), QStringLiteral("sha1"),
+                               QStringLiteral("md5"), QStringLiteral("sha512")};
+    bool ok = false;
+    const QString algo = QInputDialog::getItem(this, _t("Prüfsumme"), _t("Verfahren:"),
+                                               algos, 0, false, &ok);
+    if (!ok || algo.isEmpty())
+        return;
+
+    core::FileSystemProvider *provider = m_provider;
+    const bool remote = provider->isRemote;
+    m_bridge->run<QString>(
+        [provider, path, algo, remote]() -> QString {
+            // Lokal gestreamt; remote ueber die Provider-Bytes (gedeckelt).
+            if (!remote)
+                return core::hashFile(path, algo);
+            return core::hashBytes(provider->readBytes(path, 100'000'000), algo);
+        },
+        [this, algo, path](const QString &digest) {
+            auto *box = new QMessageBox(QMessageBox::Information, _t("Prüfsumme"),
+                                        QStringLiteral("%1\n\n%2: %3")
+                                            .arg(path, algo.toUpper(), digest),
+                                        QMessageBox::Ok, this);
+            box->setAttribute(Qt::WA_DeleteOnClose);
+            box->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            box->show();
+        },
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+}
+
+void FilePanel::opMakeZip()
+{
+    if (!m_provider || m_provider->isRemote)
+        return;
+    const auto paths = selectedPaths();
+    if (paths.empty()) {
+        QMessageBox::information(this, _t("ZIP erstellen"), _t("Bitte Dateien/Ordner auswählen."));
+        return;
+    }
+    QStringList names;
+    for (const QString &p : paths)
+        names << m_provider->basename(p);
+
+    bool ok = false;
+    const QString suggestion = names.size() == 1
+                                   ? names.first() + QStringLiteral(".zip")
+                                   : QFileInfo(m_path).fileName() + QStringLiteral(".zip");
+    const QString archiveName = QInputDialog::getText(this, _t("ZIP-Archiv erstellen"),
+                                                      _t("Archivname:"), QLineEdit::Normal,
+                                                      suggestion, &ok);
+    if (!ok || archiveName.isEmpty())
+        return;
+    const QString archive = m_provider->join(m_path, archiveName);
+    const QString base = m_path;
+    m_bridge->run<int>(
+        [archive, base, names] { return core::makeZip(archive, base, names); },
+        [this, archiveName](int count) {
+            emit statusMessage(_t("ZIP erstellt: %1 (%2 Einträge)").arg(archiveName).arg(count));
+            refresh();
+        },
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+}
+
+void FilePanel::opExtract()
+{
+    const QString path = selectedPath();
+    if (path.isEmpty() || !m_provider || m_provider->isRemote)
+        return;
+    const QString stem = core::archiveStem(m_provider->basename(path));
+    bool ok = false;
+    const QString target = QInputDialog::getText(this, _t("Archiv entpacken"), _t("Zielpfad:"),
+                                                 QLineEdit::Normal,
+                                                 m_provider->join(m_path, stem), &ok);
+    if (!ok || target.isEmpty())
+        return;
+    m_bridge->run<int>(
+        [path, target] { return core::extractArchive(path, target); },
+        [this, target](int count) {
+            emit statusMessage(_t("%1 Eintrag/Einträge entpackt nach %2").arg(count).arg(target));
+            refresh();
+        },
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+}
+
+// --- Zwischenablage ---------------------------------------------------------
+
+core::FileSystemProvider *FilePanel::s_clipProvider = nullptr;
+QStringList FilePanel::s_clipPaths;
+bool FilePanel::s_clipMove = false;
+
+void FilePanel::copyPathToClipboard()
+{
+    const QString path = selectedPath();
+    if (!path.isEmpty())
+        QApplication::clipboard()->setText(path);
+}
+
+void FilePanel::clipCopy()
+{
+    const auto paths = selectedPaths();
+    if (paths.empty() || !m_provider)
+        return;
+    s_clipProvider = m_provider;
+    s_clipPaths.clear();
+    for (const QString &p : paths)
+        s_clipPaths << p;
+    s_clipMove = false;
+
+    QClipboard *cb = QApplication::clipboard();
+    if (!m_provider->isRemote) {
+        // Lokale Dateien zusaetzlich als URLs — dann nimmt sie auch der Explorer.
+        auto *mime = new QMimeData();
+        QList<QUrl> urls;
+        for (const QString &p : s_clipPaths)
+            urls << QUrl::fromLocalFile(p);
+        mime->setUrls(urls);
+        cb->setMimeData(mime);
+    } else {
+        // Remote: keine OS-URLs setzen, sonst schlaegt eine aeltere lokale
+        // Auswahl beim Einfuegen durch. Stattdessen die Pfade als Text.
+        cb->setText(s_clipPaths.join(QLatin1Char('\n')));
+    }
+    emit statusMessage(_t("%1 Eintrag/Einträge kopiert.").arg(s_clipPaths.size()));
+}
+
+void FilePanel::clipCut()
+{
+    const auto paths = selectedPaths();
+    if (paths.empty() || !m_provider)
+        return;
+    s_clipProvider = m_provider;
+    s_clipPaths.clear();
+    for (const QString &p : paths)
+        s_clipPaths << p;
+    s_clipMove = true;
+    emit statusMessage(_t("%1 Eintrag/Einträge zum Verschieben vorgemerkt.")
+                           .arg(s_clipPaths.size()));
+}
+
+void FilePanel::clipPaste()
+{
+    // Die interne Zwischenablage hat Vorrang — sie kennt auch Remote-Pfade
+    // und den Unterschied zwischen Kopieren und Ausschneiden.
+    if (!s_clipPaths.isEmpty()) {
+        emit pasteRequested(s_clipMove);
+        return;
+    }
+    const QMimeData *mime = QApplication::clipboard()->mimeData();
+    if (mime && mime->hasUrls()) {
+        QStringList local;
+        for (const QUrl &url : mime->urls()) {
+            if (url.isLocalFile())
+                local << url.toLocalFile();
+        }
+        if (!local.isEmpty())
+            emit filesDropped(local, true);
+    }
+}
+
+// --- Markieren --------------------------------------------------------------
+
+std::vector<int> FilePanel::markableRows() const
+{
+    std::vector<int> rows;
+    for (int i = 0; i < int(m_rows.size()); ++i) {
+        if (m_rows[size_t(i)].type != EntryType::Parent)
+            rows.push_back(i);
+    }
+    return rows;
+}
+
+void FilePanel::applySelection(const std::vector<int> &rows, bool select)
+{
+    QItemSelectionModel *sel = m_table->selectionModel();
+    const auto flag = (select ? QItemSelectionModel::Select : QItemSelectionModel::Deselect)
+                      | QItemSelectionModel::Rows;
+    for (int r : rows)
+        sel->select(m_table->model()->index(r, 0), flag);
+}
+
+void FilePanel::clearMarks()
+{
+    m_table->clearSelection();
+}
+
+void FilePanel::selectAllMarks()
+{
+    applySelection(markableRows(), true);
+}
+
+void FilePanel::invertMarks()
+{
+    QSet<int> chosen;
+    for (const QModelIndex &idx : m_table->selectionModel()->selectedRows())
+        chosen.insert(idx.row());
+    m_table->clearSelection();
+    std::vector<int> rest;
+    for (int r : markableRows()) {
+        if (!chosen.contains(r))
+            rest.push_back(r);
+    }
+    applySelection(rest, true);
+}
+
+void FilePanel::markByPattern(bool select)
+{
+    const QString title = select ? _t("Nach Muster markieren")
+                                 : _t("Markierung nach Muster aufheben");
+    bool ok = false;
+    const QString pattern = QInputDialog::getText(this, title,
+                                                  _t("Muster (Wildcards, z.B. *.jpg):"),
+                                                  QLineEdit::Normal, QStringLiteral("*"), &ok);
+    if (!ok)
+        return;
+    const QString trimmed = pattern.trimmed();
+    if (trimmed.isEmpty())
+        return;
+    const QRegularExpression rx(
+        QRegularExpression::wildcardToRegularExpression(trimmed),
+        QRegularExpression::CaseInsensitiveOption);
+    if (!rx.isValid())
+        return;
+    std::vector<int> hits;
+    for (int r : markableRows()) {
+        if (rx.match(m_rows[size_t(r)].name).hasMatch())
+            hits.push_back(r);
+    }
+    applySelection(hits, select);
+}
+
+void FilePanel::markCurrent(bool select, bool toggle)
+{
+    const int row = m_table->currentRow();
+    if (row < 0 || row >= int(m_rows.size()))
+        return;
+    QItemSelectionModel *sel = m_table->selectionModel();
+    const QModelIndex idx = m_table->model()->index(row, 0);
+    if (m_rows[size_t(row)].type != EntryType::Parent) {
+        auto command = toggle ? QItemSelectionModel::Toggle
+                              : (select ? QItemSelectionModel::Select
+                                        : QItemSelectionModel::Deselect);
+        sel->select(idx, command | QItemSelectionModel::Rows);
+    }
+    // Cursor weiterbewegen, ohne die bestehende Auswahl zu veraendern.
+    if (row + 1 < m_table->rowCount())
+        sel->setCurrentIndex(m_table->model()->index(row + 1, 0), QItemSelectionModel::NoUpdate);
+}
+
+// --- Tippsuche (Type-Ahead) -------------------------------------------------
+
+void FilePanel::typeAhead(const QString &ch)
+{
+    m_typeAheadBuffer += ch.toLower();
+    m_typeAheadTimer->start();
+    selectMatch(m_typeAheadBuffer);
+}
+
+void FilePanel::selectMatch(const QString &query)
+{
+    const auto rows = markableRows();
+    int match = -1;
+    for (int r : rows) {   // Praefix bevorzugt
+        if (m_rows[size_t(r)].name.toLower().startsWith(query)) {
+            match = r;
+            break;
+        }
+    }
+    if (match < 0) {       // sonst Teiltreffer
+        for (int r : rows) {
+            if (m_rows[size_t(r)].name.toLower().contains(query)) {
+                match = r;
+                break;
+            }
+        }
+    }
+    if (match < 0)
+        return;
+    m_table->selectRow(match);
+    if (QTableWidgetItem *item = m_table->item(match, 0))
+        m_table->scrollToItem(item);
+}
+
 void FilePanel::setSudoAvailable(bool available)
 {
     m_sudoAvailable = available;
@@ -698,6 +1207,39 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
         case Qt::Key_F7: opMkdir(); return true;
         case Qt::Key_F8: opDelete(); return true;
         case Qt::Key_Backspace: goUp(); return true;
+        case Qt::Key_Left:
+            if (ke->modifiers() & Qt::AltModifier) { goBack(); return true; }
+            break;
+        case Qt::Key_Right:
+            if (ke->modifiers() & Qt::AltModifier) { goForward(); return true; }
+            break;
+        case Qt::Key_Insert:
+            if (obj != m_filterEdit) { markCurrent(false, /*toggle=*/true); return true; }
+            break;
+        case Qt::Key_Plus:                // Num + : nach Muster markieren
+            if (obj != m_filterEdit) { markByPattern(true); return true; }
+            break;
+        case Qt::Key_Minus:               // Num - : Markierung aufheben
+            if (obj != m_filterEdit) { markByPattern(false); return true; }
+            break;
+        case Qt::Key_Asterisk:            // Num * : Auswahl umkehren
+            if (obj != m_filterEdit) { invertMarks(); return true; }
+            break;
+        case Qt::Key_A:
+            if (ke->modifiers() & Qt::ControlModifier) { selectAllMarks(); return true; }
+            break;
+        case Qt::Key_C:
+            if (ke->modifiers() & Qt::ControlModifier) { clipCopy(); return true; }
+            break;
+        case Qt::Key_X:
+            if (ke->modifiers() & Qt::ControlModifier) { clipCut(); return true; }
+            break;
+        case Qt::Key_V:
+            if (ke->modifiers() & Qt::ControlModifier) { clipPaste(); return true; }
+            break;
+        case Qt::Key_R:
+            if (ke->modifiers() & Qt::ControlModifier) { refresh(); return true; }
+            break;
         case Qt::Key_F:
             if (ke->modifiers() & Qt::ControlModifier) {  // Pane-Filter einblenden
                 m_filterEdit->setVisible(true);
@@ -725,6 +1267,18 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
             }
             break;
         default: break;
+        }
+        // Tippsuche: druckbare Zeichen springen zum passenden Eintrag.
+        if (obj == m_table && !(ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier))) {
+            const QString text = ke->text();
+            if (!text.isEmpty() && text.at(0).isPrint() && text.at(0) != QLatin1Char(' ')) {
+                typeAhead(text);
+                return true;
+            }
+            if (ke->key() == Qt::Key_Space) {   // Leertaste = markieren + weiter
+                markCurrent(false, /*toggle=*/true);
+                return true;
+            }
         }
     }
     return QWidget::eventFilter(obj, event);

@@ -140,6 +140,39 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
         confirmAndTransfer(m_rightPanel->provider(), m_rightPanel->selectedPaths(),
                            m_leftPanel->provider(), m_leftPanel->currentPath());
     });
+
+    // Verschieben in die andere Pane (Kontextmenue).
+    connect(m_leftPanel, &FilePanel::moveRequested, this, [this](const QString &) {
+        confirmAndMove(m_leftPanel->provider(), m_leftPanel->selectedPaths(),
+                       m_rightPanel->provider(), m_rightPanel->currentPath());
+    });
+    connect(m_rightPanel, &FilePanel::moveRequested, this, [this](const QString &) {
+        confirmAndMove(m_rightPanel->provider(), m_rightPanel->selectedPaths(),
+                       m_leftPanel->provider(), m_leftPanel->currentPath());
+    });
+
+    // Einfuegen aus der internen Zwischenablage (Strg+V) — Ziel ist diese Pane.
+    connect(m_leftPanel, &FilePanel::pasteRequested, this,
+            [this](bool move) { pasteInto(m_leftPanel, move); });
+    connect(m_rightPanel, &FilePanel::pasteRequested, this,
+            [this](bool move) { pasteInto(m_rightPanel, move); });
+
+    // Verzeichnis-Vergleich beider Panes.
+    for (FilePanel *p : {m_leftPanel, m_rightPanel})
+        connect(p, &FilePanel::dirDiffRequested, this, &Workspace::dirDiffRequested);
+}
+
+void Workspace::pasteInto(FilePanel *target, bool move)
+{
+    core::FileSystemProvider *src = FilePanel::clipboardProvider();
+    const QStringList paths = FilePanel::clipboardPaths();
+    if (!src || paths.isEmpty() || !target || !target->provider())
+        return;
+    std::vector<QString> list(paths.begin(), paths.end());
+    if (move)
+        confirmAndMove(src, list, target->provider(), target->currentPath());
+    else
+        confirmAndTransfer(src, list, target->provider(), target->currentPath());
 }
 
 Workspace::~Workspace()
@@ -407,7 +440,7 @@ void Workspace::confirmAndTransfer(core::FileSystemProvider *src,
 
 void Workspace::startTransfer(core::FileSystemProvider *src, const QString &srcPath,
                               core::FileSystemProvider *dst, const QString &dstDir,
-                              const QString &overrideName)
+                              const QString &overrideName, bool moveSource)
 {
     if (!src || !dst || srcPath.isEmpty() || dstDir.isEmpty())
         return;
@@ -418,7 +451,7 @@ void Workspace::startTransfer(core::FileSystemProvider *src, const QString &srcP
     emit statusMessage(QStringLiteral("Übertrage %1 …").arg(name));
     // Ziel-Pane nach Abschluss aktualisieren.
     connect(m_transfers, &TransferManager::jobUpdated, this,
-            [this, jobId, dst](int id) {
+            [this, jobId, src, srcPath, dst, moveSource](int id) {
                 if (id != jobId)
                     return;
                 const auto &jobs = m_transfers->jobs();
@@ -428,6 +461,17 @@ void Workspace::startTransfer(core::FileSystemProvider *src, const QString &srcP
                     return;
                 if (it->status == QLatin1String("done")) {
                     emit statusMessage(QStringLiteral("Übertragen: %1").arg(it->name));
+                    // Beim Verschieben die Quelle erst nach erfolgreicher
+                    // Uebertragung entfernen — nie vorher.
+                    if (moveSource) {
+                        m_bridge->run(
+                            [src, srcPath] { src->remove(srcPath, true); },
+                            [this, src] {
+                                if (src == m_leftPanel->provider()) m_leftPanel->refresh();
+                                if (src == m_rightPanel->provider()) m_rightPanel->refresh();
+                            },
+                            [this](const QString &err) { emit statusMessage(err); });
+                    }
                     if (dst == m_leftPanel->provider())
                         m_leftPanel->refresh();
                     if (dst == m_rightPanel->provider())
@@ -436,6 +480,32 @@ void Workspace::startTransfer(core::FileSystemProvider *src, const QString &srcP
                     emit statusMessage(it->error);
                 }
             });
+}
+
+void Workspace::confirmAndMove(core::FileSystemProvider *src,
+                               const std::vector<QString> &srcPaths,
+                               core::FileSystemProvider *dst, const QString &dstDir)
+{
+    if (!src || !dst || srcPaths.empty())
+        return;
+    QStringList names, sources;
+    for (const QString &p : srcPaths) {
+        names << src->basename(p);
+        sources << p;
+    }
+    TransferConfirmDialog dlg(
+        _t("Verschieben"), _t("Verschieben"), names, sources,
+        [dst](const QString &dir, const QString &name) { return dst->join(dir, name); },
+        dstDir,
+        [this, dst](const QString &current) -> QString {
+            DirChooserDialog chooser(m_bridge, dst, current, {}, this);
+            return chooser.exec() == QDialog::Accepted ? chooser.chosen() : QString();
+        },
+        {}, this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    for (const auto &[from, to] : dlg.results())
+        startTransfer(src, from, dst, dst->parent(to), dst->basename(to), /*moveSource=*/true);
 }
 
 } // namespace ncssh::gui
