@@ -32,6 +32,11 @@ public:
     // Lesezeichen-Gruppe dieser Pane (Profilname bzw. "local").
     void setBookmarkKey(const QString &key);
 
+    // sudo-Modus (nur remote/Linux): schaltet auf das sudo-Dateisystem um.
+    // Der Workspace stellt den Provider bereit; hier wird nur der Chip gefuehrt.
+    void setSudoAvailable(bool available);
+    bool sudoActive() const { return m_sudoActive; }
+
     QString currentPath() const { return m_path; }
     QString selectedPath() const;                 // markierte Datei (Vollpfad) oder ""
     std::vector<QString> selectedPaths() const;   // Mehrfachauswahl
@@ -44,6 +49,7 @@ signals:
     void pathChanged(const QString &path);
     void transferRequested(const QString &srcPath);  // F5 aus dieser Pane
     void statusMessage(const QString &msg);
+    void sudoToggled(bool on);                    // sudo-Chip umgeschaltet
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -66,12 +72,19 @@ private:
     void toggleBookmark();
     void openBookmarks();
     void updateBookmarkButton();
+    void sortBy(int column);          // Spaltenkopf angeklickt
+    void applyFilter(const QString &pattern);
 
     AsyncBridge *m_bridge;
     core::FileSystemProvider *m_provider = nullptr;
     QString m_path;
     std::vector<core::FileEntry> m_entries;
     bool m_showHidden = true;
+    QString m_filter;                 // Wildcard-Filter (Strg+F)
+    int m_sortColumn = 0;             // 0 Name · 1 Groesse · 2 Datum · 3 Rechte
+    bool m_sortAscending = true;
+    bool m_sudoAvailable = false;
+    bool m_sudoActive = false;
 
     core::BookmarkStore m_bookmarks;
     QString m_bookmarkKey = QStringLiteral("local");
@@ -81,6 +94,8 @@ private:
     QTableWidget *m_table = nullptr;
     QLabel *m_status = nullptr;
     QPushButton *m_starButton = nullptr;
+    QPushButton *m_sudoChip = nullptr;
+    QLineEdit *m_filterEdit = nullptr;
 };
 
 } // namespace ncssh::gui

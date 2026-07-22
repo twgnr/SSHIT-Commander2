@@ -34,7 +34,7 @@ Stand des 1:1-Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 | `style` | alle 4 Themes + benutzerdefinierte, QSS 1:1, Theme-Editor-API |
 | `app` · `main_window` | Tabs, Menüs (Aktionen/Tools/Ansicht/Hilfe), Toolbar, Statusleiste |
 | `workspace` | Tab = zwei Panes + zwei Konsolen + Verbindung, CWD-Sync bidirektional |
-| `file_panel` | Navigation, F3–F8, Kontextmenü, Eigenschaften, **Lesezeichen ☆/★ pro Server** |
+| `file_panel` | Navigation, F3–F8, Kontextmenü, Eigenschaften, **Lesezeichen ☆/★ pro Server**, Wildcard-Filter (`Strg+F`), klickbare Spalten-Sortierung, **Bild-Vorschau**, **sudo-Chip** |
 | `console_panel` | **Modus „Befehle“ ⇄ „Terminal“**, Historie ↑/↓, `cd`-Auflösung, Strg+C |
 | `ansi` | ANSI/VT-Renderer (SGR 16/256/Truecolor, CR/LF, Zeile löschen) |
 | `shell_backends` | lokales PTY über **Windows ConPTY** (ersetzt pywinpty), Remote via SSH-Shell |
@@ -78,11 +78,10 @@ Die Logik dieser Funktionen ist in `core/` bzw. `net/` **fertig portiert**; es f
 nur die jeweilige Qt-Oberfläche:
 
 - Makro-Manager & Key-Editor (`core/macros` + `core/macroactions` stehen)
-- Bild-Vorschau und Editor-Minimap
+- Editor-Minimap
 - Netzwerk-Modus einer Pane (`core/netfs` steht; der Scanner-Dialog liefert die Hosts)
-- sudo-Chip pro Pane (`net/sudofs` steht)
 - Drag & Drop zwischen Panes und aus dem Explorer
-- Abdockbare Konsolen-Spalte, Pane-Filter (`Strg+F`), Spalten-Sortierung per Klick
+- Abdockbare Konsolen-Spalte („⤢ Abdocken")
 
 Diese sind reine UI-Schichten auf bereits portierter Logik und lassen sich
 inkrementell ergänzen, ohne die Architektur zu ändern.

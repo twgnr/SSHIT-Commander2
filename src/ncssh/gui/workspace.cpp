@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <QDir>
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QSplitter>
 #include <QVBoxLayout>
@@ -77,6 +79,9 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     connect(m_leftConsole, &ConsolePanel::activated, this, [this] { m_rightActive = false; });
     connect(m_rightConsole, &ConsolePanel::activated, this, [this] { m_rightActive = true; });
 
+    // sudo-Modus der rechten Pane: auf das sudo-Dateisystem umschalten.
+    connect(m_rightPanel, &FilePanel::sudoToggled, this, &Workspace::setSudoMode);
+
     // Transfer: F5 aus einer Pane -> in das Verzeichnis der anderen Pane.
     connect(m_leftPanel, &FilePanel::transferRequested, this, [this](const QString &src) {
         startTransfer(m_leftPanel->provider(), src, m_rightPanel->provider(),
@@ -120,6 +125,46 @@ void Workspace::sendToActiveConsole(const QString &command, bool execute)
 FilePanel *Workspace::activePanel() const
 {
     return m_rightActive ? m_rightPanel : m_leftPanel;
+}
+
+void Workspace::setSudoMode(bool on)
+{
+    if (!m_session || !m_remoteFs)
+        return;
+    const QString keepPath = m_rightPanel->currentPath();
+    if (!on) {
+        m_rightPanel->setProvider(m_remoteFs.get(), keepPath);
+        m_sudoFs.reset();
+        emit statusMessage(_t("sudo-Modus aus."));
+        return;
+    }
+
+    // NOPASSWD pruefen; sonst das Passwort einmal erfragen (nur im RAM halten).
+    net::SSHSessionPtr session = m_session;
+    m_bridge->run<bool>(
+        [session] { return net::sudoNeedsPassword(session); },
+        [this, session, keepPath](bool needsPassword) {
+            if (needsPassword && !session->sudoPassword) {
+                bool ok = false;
+                const QString password = QInputDialog::getText(
+                    this, _t("sudo-Passwort"),
+                    _t("Passwort für sudo (wird nur im Speicher gehalten):"),
+                    QLineEdit::Password, QString(), &ok);
+                if (!ok || password.isEmpty()) {
+                    m_rightPanel->setSudoAvailable(true);  // Chip zuruecksetzen
+                    return;
+                }
+                if (!net::verifySudoPassword(session, password)) {
+                    QMessageBox::warning(this, _t("sudo"), _t("Passwort abgelehnt."));
+                    return;
+                }
+                session->sudoPassword = password;
+            }
+            m_sudoFs = std::make_unique<net::SudoFileSystem>(m_remoteFs.get(), session);
+            m_rightPanel->setProvider(m_sudoFs.get(), keepPath);
+            emit statusMessage(_t("sudo-Modus aktiv — Operationen laufen als root."));
+        },
+        [this](const QString &err) { QMessageBox::warning(this, _t("sudo"), err); });
 }
 
 QJsonObject Workspace::toJson() const
@@ -175,6 +220,8 @@ void Workspace::connectTo(const core::ServerProfile &profile)
             // Konsole-CWD folgt spaeter dem Pane-Home.
             m_rightConsole->setRunner(m_remoteRunner.get(), QStringLiteral("."));
             m_rightConsole->setSession(session);  // Terminal-Modus nutzt die SSH-Shell
+            // sudo-Chip nur bei POSIX-Servern anbieten.
+            m_rightPanel->setSudoAvailable(session->osType == QLatin1String("posix"));
             emit statusMessage(QStringLiteral("Verbunden: %1 (%2)")
                                    .arg(session->label(), session->osType));
             if (session->hostKeyStatus == QLatin1String("unknown")) {

@@ -16,12 +16,16 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QScrollArea>
 #include <QTableWidget>
 #include <QTextEdit>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace ncssh::gui {
 
@@ -53,9 +57,22 @@ void FilePanel::buildUi(const QString &title)
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(6);
 
+    // Kopfzeile mit sudo-Chip (nur remote/Linux aktivierbar)
+    auto *headerRow = new QHBoxLayout();
     m_header = new QLabel(title, this);
     m_header->setObjectName(QStringLiteral("PaneHeader"));
-    layout->addWidget(m_header);
+    m_sudoChip = new QPushButton(QStringLiteral("sudo"), this);
+    m_sudoChip->setObjectName(QStringLiteral("Chip"));
+    m_sudoChip->setCheckable(true);
+    m_sudoChip->setVisible(false);
+    m_sudoChip->setToolTip(_t("Operationen als root über sudo ausführen"));
+    connect(m_sudoChip, &QPushButton::toggled, this, [this](bool on) {
+        m_sudoActive = on;
+        emit sudoToggled(on);
+    });
+    headerRow->addWidget(m_header, 1);
+    headerRow->addWidget(m_sudoChip);
+    layout->addLayout(headerRow);
 
     auto *pathRow = new QHBoxLayout();
     auto *up = new QPushButton(QStringLiteral("↑"), this);
@@ -97,13 +114,25 @@ void FilePanel::buildUi(const QString &title)
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setAlternatingRowColors(true);
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
-    m_table->setSortingEnabled(false);
+    m_table->setSortingEnabled(false);   // eigene Sortierung (Ordner zuerst)
     connect(m_table, &QTableWidget::cellDoubleClicked, this, &FilePanel::onDoubleClick);
     connect(m_table, &QTableWidget::customContextMenuRequested, this,
             &FilePanel::openContextMenu);
+    // Klickbare Spalten-Sortierung
+    m_table->horizontalHeader()->setSectionsClickable(true);
+    connect(m_table->horizontalHeader(), &QHeaderView::sectionClicked, this,
+            &FilePanel::sortBy);
     m_table->installEventFilter(this);
     m_table->viewport()->installEventFilter(this);
     layout->addWidget(m_table, 1);
+
+    // Wildcard-Filter (Strg+F blendet ihn ein)
+    m_filterEdit = new QLineEdit(this);
+    m_filterEdit->setPlaceholderText(_t("Filter (z. B. *.log) — Esc blendet aus"));
+    m_filterEdit->setVisible(false);
+    connect(m_filterEdit, &QLineEdit::textChanged, this, &FilePanel::applyFilter);
+    m_filterEdit->installEventFilter(this);
+    layout->addWidget(m_filterEdit);
 
     m_status = new QLabel(this);
     m_status->setObjectName(QStringLiteral("Muted"));
@@ -174,12 +203,44 @@ void FilePanel::loadDir(const QString &path)
 
 void FilePanel::populate(const std::vector<FileEntry> &entries)
 {
+    // Sortieren nach der gewaehlten Spalte — ".." und Ordner bleiben oben.
+    std::vector<FileEntry> sorted = entries;
+    std::stable_sort(sorted.begin(), sorted.end(),
+                     [this](const FileEntry &a, const FileEntry &b) {
+        if (a.type == EntryType::Parent) return true;
+        if (b.type == EntryType::Parent) return false;
+        if (a.isDir() != b.isDir()) return a.isDir();
+        bool less;
+        switch (m_sortColumn) {
+        case 1:  less = a.size < b.size; break;
+        case 2:  less = a.modified < b.modified; break;
+        case 3:  less = a.permissions < b.permissions; break;
+        default: less = a.name.toLower() < b.name.toLower(); break;
+        }
+        return m_sortAscending ? less : !less;
+    });
+
+    // Wildcard-Filter (leer = alles).
+    QRegularExpression filterRe;
+    const bool filtering = !m_filter.isEmpty();
+    if (filtering) {
+        filterRe = QRegularExpression(
+            QRegularExpression::wildcardToRegularExpression(
+                m_filter.contains(QLatin1Char('*')) || m_filter.contains(QLatin1Char('?'))
+                    ? m_filter
+                    : QStringLiteral("*%1*").arg(m_filter)),
+            QRegularExpression::CaseInsensitiveOption);
+    }
+
     m_table->setRowCount(0);
     int row = 0;
     qint64 totalSize = 0;
     int fileCount = 0, dirCount = 0;
-    for (const FileEntry &e : entries) {
+    for (const FileEntry &e : sorted) {
         if (!m_showHidden && e.hidden && e.type != EntryType::Parent)
+            continue;
+        if (filtering && e.type != EntryType::Parent
+            && !filterRe.match(e.name).hasMatch())
             continue;
         m_table->insertRow(row);
         QString icon = e.type == EntryType::Parent ? QStringLiteral("↩ ")
@@ -201,8 +262,11 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
         }
         ++row;
     }
-    m_status->setText(QStringLiteral("%1 Ordner, %2 Dateien · %3")
-                          .arg(dirCount).arg(fileCount).arg(humanSize(totalSize)));
+    QString status = QStringLiteral("%1 Ordner, %2 Dateien · %3")
+                         .arg(dirCount).arg(fileCount).arg(humanSize(totalSize));
+    if (filtering)
+        status += QStringLiteral(" · Filter: %1").arg(m_filter);
+    m_status->setText(status);
 }
 
 void FilePanel::onDoubleClick(int row, int)
@@ -270,12 +334,65 @@ void FilePanel::openContextMenu(const QPoint &pos)
     menu.exec(m_table->viewport()->mapToGlobal(pos));
 }
 
+// Bekannte Bild-Endungen fuer die Vorschau (F3).
+static bool isImageFile(const QString &name)
+{
+    static const QStringList exts = {
+        QStringLiteral(".png"), QStringLiteral(".jpg"), QStringLiteral(".jpeg"),
+        QStringLiteral(".gif"), QStringLiteral(".bmp"), QStringLiteral(".webp"),
+        QStringLiteral(".svg"), QStringLiteral(".ico"),
+    };
+    const QString low = name.toLower();
+    for (const QString &ext : exts) {
+        if (low.endsWith(ext))
+            return true;
+    }
+    return false;
+}
+
 void FilePanel::opView()
 {
     const QString path = selectedPath();
     if (path.isEmpty() || !m_provider)
         return;
     core::FileSystemProvider *provider = m_provider;
+
+    // Bilder als Vorschau statt als Text anzeigen.
+    if (isImageFile(provider->basename(path))) {
+        m_bridge->run<QByteArray>(
+            [provider, path] { return provider->readBytes(path, 25'000'000); },
+            [this, path, provider](const QByteArray &data) {
+                QPixmap pixmap;
+                if (!pixmap.loadFromData(data)) {
+                    QMessageBox::warning(this, _t("Fehler"), _t("Bild nicht lesbar."));
+                    return;
+                }
+                auto *dlg = new QDialog(this);
+                dlg->setAttribute(Qt::WA_DeleteOnClose);
+                dlg->setWindowTitle(_t("Ansehen") + QStringLiteral(" — ")
+                                    + provider->basename(path));
+                auto *lay = new QVBoxLayout(dlg);
+                auto *scroll = new QScrollArea(dlg);
+                scroll->setWidgetResizable(true);
+                auto *label = new QLabel(scroll);
+                label->setAlignment(Qt::AlignCenter);
+                label->setPixmap(pixmap);
+                scroll->setWidget(label);
+                lay->addWidget(scroll);
+                auto *info = new QLabel(
+                    QStringLiteral("%1 × %2 · %3")
+                        .arg(pixmap.width()).arg(pixmap.height()).arg(humanSize(data.size())),
+                    dlg);
+                info->setObjectName(QStringLiteral("Muted"));
+                lay->addWidget(info);
+                dlg->resize(qMin(pixmap.width() + 60, 1100),
+                            qMin(pixmap.height() + 90, 800));
+                dlg->show();
+            },
+            [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        return;
+    }
+
     m_bridge->run<QString>(
         [provider, path] { return provider->readText(path); },
         [this, path](const QString &text) {
@@ -380,6 +497,31 @@ void FilePanel::opProperties()
     }
 }
 
+void FilePanel::setSudoAvailable(bool available)
+{
+    m_sudoAvailable = available;
+    m_sudoChip->setVisible(available);
+    if (!available && m_sudoChip->isChecked())
+        m_sudoChip->setChecked(false);
+}
+
+void FilePanel::sortBy(int column)
+{
+    if (column == m_sortColumn)
+        m_sortAscending = !m_sortAscending;
+    else {
+        m_sortColumn = column;
+        m_sortAscending = true;
+    }
+    populate(m_entries);
+}
+
+void FilePanel::applyFilter(const QString &pattern)
+{
+    m_filter = pattern.trimmed();
+    populate(m_entries);
+}
+
 void FilePanel::setBookmarkKey(const QString &key)
 {
     m_bookmarkKey = key;
@@ -433,6 +575,32 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
         case Qt::Key_F7: opMkdir(); return true;
         case Qt::Key_F8: opDelete(); return true;
         case Qt::Key_Backspace: goUp(); return true;
+        case Qt::Key_F:
+            if (ke->modifiers() & Qt::ControlModifier) {  // Pane-Filter einblenden
+                m_filterEdit->setVisible(true);
+                m_filterEdit->setFocus();
+                m_filterEdit->selectAll();
+                return true;
+            }
+            break;
+        case Qt::Key_Escape:
+            if (obj == m_filterEdit) {                    // Filter ausblenden
+                m_filterEdit->clear();
+                m_filterEdit->setVisible(false);
+                m_table->setFocus();
+                return true;
+            }
+            break;
+        case Qt::Key_Down:
+        case Qt::Key_Return:
+        case Qt::Key_Enter:
+            if (obj == m_filterEdit) {  // aus dem Filter zurueck in die Liste
+                m_table->setFocus();
+                if (m_table->rowCount() > 0 && m_table->currentRow() < 0)
+                    m_table->selectRow(0);
+                return true;
+            }
+            break;
         default: break;
         }
     }

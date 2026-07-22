@@ -8,6 +8,7 @@
 #include "ncssh/gui/tunnel_dialog.hpp"
 #include "ncssh/net/session.hpp"
 #include "ncssh/net/ssh.hpp"
+#include "ncssh/net/sudofs.hpp"
 
 #include <QJsonObject>
 #include <QWidget>
@@ -55,6 +56,7 @@ signals:
 private:
     void startTransfer(core::FileSystemProvider *src, const QString &srcPath,
                        core::FileSystemProvider *dst, const QString &dstDir);
+    void setSudoMode(bool on);
 
     AsyncBridge *m_bridge;
     net::SessionManager *m_sessions;
@@ -67,6 +69,7 @@ private:
     // Remote-Seite (nach Connect).
     net::SSHSessionPtr m_session;
     std::unique_ptr<net::SFTPFileSystem> m_remoteFs;
+    std::unique_ptr<net::SudoFileSystem> m_sudoFs;   // aktiv bei sudo-Chip
     std::unique_ptr<net::RemoteCommandRunner> m_remoteRunner;
 
     FilePanel *m_leftPanel = nullptr;
