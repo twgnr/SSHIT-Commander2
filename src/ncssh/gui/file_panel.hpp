@@ -9,6 +9,7 @@
 #include "ncssh/gui/bridge.hpp"
 
 #include <functional>
+#include <QSet>
 #include <QStringList>
 #include <QWidget>
 #include <memory>
@@ -21,6 +22,11 @@ class QComboBox;
 class QPushButton;
 class QMenu;
 class QTimer;
+class QScrollArea;
+class QHBoxLayout;
+class QStackedWidget;
+class QListView;
+class QAbstractItemView;
 
 namespace ncssh::gui {
 
@@ -115,6 +121,31 @@ private:
     void sortBy(int column);          // Spaltenkopf angeklickt
     void applyFilter(const QString &pattern);
 
+    // --- Spalten (frei waehlbar, in core/settings gespeichert) ---
+    static QStringList optionalColumns();          // kanonische Reihenfolge
+    static QString columnLabel(const QString &id);
+    QStringList visibleColumns() const;
+    void setTableHeaders();
+    void showHeaderMenu(const QPoint &pos);
+    void toggleColumn(const QString &id, bool on);
+    void applyColumnWidths();
+    QString columnValue(const QString &id, const core::FileEntry &entry) const;
+
+    // --- Breadcrumb-Pfadleiste ---
+    std::vector<std::pair<QString, QString>> breadcrumbParts() const;  // (Beschriftung, Pfad)
+    void buildBreadcrumb();
+    void beginPathEdit();             // Breadcrumb -> Eingabefeld
+    void endPathEdit();
+
+    // --- Ansicht: Detail (Tabelle) oder Kachel ---
+    QAbstractItemView *activeView() const;
+    void setViewMode(bool grid);
+
+    // --- Miniaturansichten (nur lokal, abschaltbar) ---
+    bool thumbsEnabled() const;
+    std::pair<int, int> visibleRows(int buffer = 8) const;   // [erste, letzte)
+    void loadVisibleThumbs();
+
     // --- Kontextmenue-Aktionen ---
     void opExecute();                            // mit dem Standardprogramm oeffnen
     void openWithProgram(const QString &exe);    // mit einem bestimmten Programm
@@ -145,7 +176,8 @@ private:
     std::vector<core::FileEntry> m_rows;         // sichtbare Zeilen (Index == Tabellenzeile)
     bool m_showHidden = true;
     QString m_filter;                 // Wildcard-Filter (Strg+F)
-    int m_sortColumn = 0;             // 0 Name · 1 Groesse · 2 Datum · 3 Rechte
+    QStringList m_fileCols;           // angezeigte Spalten; [0] ist immer "name"
+    QString m_sortKey = QStringLiteral("name");   // Spalten-Kennung, nach der sortiert wird
     bool m_sortAscending = true;
     bool m_sudoAvailable = false;
     bool m_sudoActive = false;
@@ -166,8 +198,16 @@ private:
     QString m_bookmarkKey = QStringLiteral("local");
 
     QLabel *m_header = nullptr;
+    QScrollArea *m_crumbScroll = nullptr;
+    QHBoxLayout *m_crumbLayout = nullptr;
     QLineEdit *m_pathEdit = nullptr;
     QTableWidget *m_table = nullptr;
+    QStackedWidget *m_viewStack = nullptr;
+    QListView *m_grid = nullptr;      // teilt Model UND Auswahl mit m_table
+    bool m_gridMode = false;
+    QTimer *m_thumbTimer = nullptr;   // Nachladen beim Scrollen entprellen
+    quint64 m_thumbToken = 0;         // verwirft Ergebnisse alter Verzeichnisse
+    QSet<QString> m_thumbRequested;
     QLabel *m_status = nullptr;
     QPushButton *m_starButton = nullptr;
     QPushButton *m_sudoChip = nullptr;

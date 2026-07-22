@@ -4,6 +4,7 @@
 #include "ncssh/core/execfile.hpp"
 #include "ncssh/core/fileops.hpp"
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/core/natsort.hpp"
 #include "ncssh/core/openwith.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/file_icons.hpp"
@@ -23,8 +24,20 @@
 #include <QDrag>
 #include <QFile>
 #include <QFileInfo>
+#include <QFrame>
+#include <QHash>
 #include <QItemSelectionModel>
+#include <QJsonArray>
+#include <QIcon>
+#include <QImage>
+#include <QLayoutItem>
+#include <QListView>
 #include <QProcess>
+#include <QScrollBar>
+#include <QSize>
+#include <QStackedWidget>
+#include <QToolButton>
+#include <QVariantMap>
 #include <QSet>
 #include <QTimer>
 #include <QDragEnterEvent>
@@ -57,6 +70,9 @@ namespace ncssh::gui {
 using core::_t;
 using core::EntryType;
 using core::FileEntry;
+
+// Bekannte Bild-Endungen (Vorschau F3 und Miniaturansichten).
+static bool isImageFile(const QString &name);
 
 static QString humanSize(qint64 bytes)
 {
@@ -118,9 +134,29 @@ void FilePanel::buildUi(const QString &title)
     up->setFixedWidth(34);
     up->setToolTip(_t("Übergeordneter Ordner"));
     connect(up, &QPushButton::clicked, this, &FilePanel::goUp);
+    // Pfad wahlweise als klickbare Breadcrumb-Leiste oder als Eingabefeld.
+    m_crumbScroll = new QScrollArea(this);
+    m_crumbScroll->setWidgetResizable(true);
+    m_crumbScroll->setFrameShape(QFrame::NoFrame);
+    m_crumbScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_crumbScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_crumbScroll->setFixedHeight(30);
+    m_crumbScroll->setToolTip(_t("Rechts in die leere Fläche klicken, um den Pfad einzugeben"));
+    auto *crumbHost = new QWidget(m_crumbScroll);
+    m_crumbLayout = new QHBoxLayout(crumbHost);
+    m_crumbLayout->setContentsMargins(2, 0, 2, 0);
+    m_crumbLayout->setSpacing(1);
+    m_crumbScroll->setWidget(crumbHost);
+    crumbHost->installEventFilter(this);   // Klick auf die leere Flaeche -> editieren
+
     m_pathEdit = new QLineEdit(this);
-    connect(m_pathEdit, &QLineEdit::returnPressed, this,
-            [this] { navigateTo(m_pathEdit->text()); });
+    m_pathEdit->setVisible(false);
+    m_pathEdit->installEventFilter(this);
+    connect(m_pathEdit, &QLineEdit::returnPressed, this, [this] {
+        const QString target = m_pathEdit->text();
+        endPathEdit();
+        navigateTo(target);
+    });
     auto *reload = new QPushButton(QStringLiteral("⟳"), this);
     reload->setFixedWidth(34);
     reload->setToolTip(_t("Neu laden"));
@@ -137,6 +173,7 @@ void FilePanel::buildUi(const QString &title)
     pathRow->addWidget(back);
     pathRow->addWidget(forward);
     pathRow->addWidget(up);
+    pathRow->addWidget(m_crumbScroll, 1);
     pathRow->addWidget(m_pathEdit, 1);
     pathRow->addWidget(m_starButton);
     pathRow->addWidget(bookmarksBtn);
@@ -144,12 +181,14 @@ void FilePanel::buildUi(const QString &title)
     layout->addLayout(pathRow);
     m_bookmarks.load();
 
-    m_table = new QTableWidget(0, 4, this);
-    m_table->setHorizontalHeaderLabels(
-        {_t("Name"), _t("Größe"), _t("Geändert"), _t("Rechte")});
+    m_table = new QTableWidget(0, 1, this);
+    setTableHeaders();
     m_table->horizontalHeader()->setStretchLastSection(false);
-    m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_table->verticalHeader()->setVisible(false);
+    // Rechtsklick auf die Kopfzeile: Spaltenauswahl
+    m_table->horizontalHeader()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_table->horizontalHeader(), &QHeaderView::customContextMenuRequested,
+            this, &FilePanel::showHeaderMenu);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -173,7 +212,45 @@ void FilePanel::buildUi(const QString &title)
     m_table->setDragEnabled(true);
     m_table->setDragDropMode(QAbstractItemView::DragOnly);
     setAcceptDrops(true);
-    layout->addWidget(m_table, 1);
+
+    // Kachelansicht: eigene QListView, die Model UND Auswahl der Tabelle teilt —
+    // damit bleibt die gesamte Markier-Logik unveraendert gueltig.
+    m_gridMode = core::getSettingBool(QStringLiteral("pane_grid"), false);
+    m_grid = new QListView(this);
+    m_grid->setModel(m_table->model());
+    m_grid->setSelectionModel(m_table->selectionModel());
+    m_grid->setModelColumn(0);
+    m_grid->setViewMode(QListView::IconMode);
+    m_grid->setResizeMode(QListView::Adjust);
+    m_grid->setMovement(QListView::Static);
+    m_grid->setWrapping(true);
+    m_grid->setUniformItemSizes(true);
+    m_grid->setWordWrap(true);
+    m_grid->setIconSize(QSize(64, 64));
+    m_grid->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_grid->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_grid->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_grid, &QListView::customContextMenuRequested, this,
+            &FilePanel::openContextMenu);
+    connect(m_grid, &QListView::activated, this,
+            [this](const QModelIndex &idx) { onDoubleClick(idx.row(), 0); });
+    m_grid->installEventFilter(this);
+
+    m_viewStack = new QStackedWidget(this);
+    m_viewStack->addWidget(m_table);   // 0 = Detail
+    m_viewStack->addWidget(m_grid);    // 1 = Kachel
+    m_viewStack->setCurrentIndex(m_gridMode ? 1 : 0);
+    layout->addWidget(m_viewStack, 1);
+
+    // Miniaturansichten nur fuer sichtbare Zeilen laden, beim Scrollen nach.
+    m_thumbTimer = new QTimer(this);
+    m_thumbTimer->setSingleShot(true);
+    m_thumbTimer->setInterval(80);
+    connect(m_thumbTimer, &QTimer::timeout, this, &FilePanel::loadVisibleThumbs);
+    connect(m_table->verticalScrollBar(), &QScrollBar::valueChanged, this,
+            [this] { m_thumbTimer->start(); });
+    connect(m_grid->verticalScrollBar(), &QScrollBar::valueChanged, this,
+            [this] { m_thumbTimer->start(); });
 
     // Wildcard-Filter (Strg+F blendet ihn ein)
     m_filterEdit = new QLineEdit(this);
@@ -191,6 +268,310 @@ void FilePanel::buildUi(const QString &title)
 void FilePanel::setHeaderTitle(const QString &title)
 {
     m_header->setText(title);
+}
+
+// --- Spalten ---------------------------------------------------------------
+
+QStringList FilePanel::optionalColumns()
+{
+    return {QStringLiteral("size"),  QStringLiteral("modified"), QStringLiteral("created"),
+            QStringLiteral("accessed"), QStringLiteral("type"),  QStringLiteral("ext"),
+            QStringLiteral("perm"),  QStringLiteral("owner")};
+}
+
+QString FilePanel::columnLabel(const QString &id)
+{
+    static const QHash<QString, QString> labels = {
+        {QStringLiteral("size"), _t("Größe")},       {QStringLiteral("modified"), _t("Geändert")},
+        {QStringLiteral("created"), _t("Erstellt")}, {QStringLiteral("accessed"), _t("Zugriff")},
+        {QStringLiteral("type"), _t("Typ")},         {QStringLiteral("ext"), _t("Endung")},
+        {QStringLiteral("perm"), _t("Rechte")},      {QStringLiteral("owner"), _t("Eigner")},
+    };
+    return labels.value(id, id);
+}
+
+QStringList FilePanel::visibleColumns() const
+{
+    const QVariant stored = core::getSetting(QStringLiteral("pane_columns"));
+    QStringList chosen = stored.toStringList();
+    if (chosen.isEmpty()) {
+        chosen = {QStringLiteral("size"), QStringLiteral("modified"),
+                  QStringLiteral("perm"), QStringLiteral("owner")};
+    }
+    // Nur gueltige Spalten, in kanonischer Reihenfolge.
+    QStringList out;
+    for (const QString &id : optionalColumns()) {
+        if (chosen.contains(id))
+            out << id;
+    }
+    return out;
+}
+
+void FilePanel::setTableHeaders()
+{
+    m_fileCols = QStringList{QStringLiteral("name")} + visibleColumns();
+    m_table->setColumnCount(m_fileCols.size());
+    QStringList labels{_t("Name")};
+    for (int i = 1; i < m_fileCols.size(); ++i)
+        labels << columnLabel(m_fileCols.at(i));
+    m_table->setHorizontalHeaderLabels(labels);
+    // Breiten frei einstellbar; gesetzt wird erst am Ende von populate().
+    QHeaderView *hh = m_table->horizontalHeader();
+    for (int c = 0; c < m_fileCols.size(); ++c)
+        hh->setSectionResizeMode(c, QHeaderView::Interactive);
+}
+
+void FilePanel::applyColumnWidths()
+{
+    static const QHash<QString, int> defaults = {
+        {QStringLiteral("name"), 280},     {QStringLiteral("size"), 80},
+        {QStringLiteral("modified"), 135}, {QStringLiteral("created"), 135},
+        {QStringLiteral("accessed"), 135}, {QStringLiteral("type"), 70},
+        {QStringLiteral("ext"), 60},       {QStringLiteral("perm"), 95},
+        {QStringLiteral("owner"), 120},
+    };
+    const QVariantMap widths =
+        core::getSetting(QStringLiteral("pane_col_widths")).toMap();
+    for (int c = 0; c < m_fileCols.size(); ++c) {
+        const QString id = m_fileCols.at(c);
+        m_table->setColumnWidth(c, widths.value(id, defaults.value(id, 100)).toInt());
+    }
+}
+
+void FilePanel::showHeaderMenu(const QPoint &pos)
+{
+    const QStringList visible = visibleColumns();
+    QMenu menu(this);
+    QAction *title = menu.addAction(_t("Spalten anzeigen"));
+    title->setEnabled(false);
+    menu.addSeparator();
+    for (const QString &id : optionalColumns()) {
+        QAction *action = menu.addAction(columnLabel(id));
+        action->setCheckable(true);
+        action->setChecked(visible.contains(id));
+        connect(action, &QAction::triggered, this,
+                [this, id](bool on) { toggleColumn(id, on); });
+    }
+    menu.exec(m_table->horizontalHeader()->mapToGlobal(pos));
+}
+
+void FilePanel::toggleColumn(const QString &id, bool on)
+{
+    QStringList cols = visibleColumns();
+    if (on && !cols.contains(id))
+        cols << id;
+    else if (!on)
+        cols.removeAll(id);
+    QStringList canonical;                       // kanonische Reihenfolge halten
+    for (const QString &c : optionalColumns()) {
+        if (cols.contains(c))
+            canonical << c;
+    }
+    core::setSetting(QStringLiteral("pane_columns"),
+                     QJsonArray::fromStringList(canonical));
+    setTableHeaders();
+    populate(m_entries);
+}
+
+QString FilePanel::columnValue(const QString &id, const FileEntry &e) const
+{
+    if (id == QLatin1String("size"))
+        return e.isDir() ? QStringLiteral("<DIR>") : humanSize(e.size);
+    if (id == QLatin1String("modified"))
+        return e.modified.isValid() ? core::formatDt(e.modified, QString()) : QString();
+    if (id == QLatin1String("created"))
+        return e.created.isValid() ? core::formatDt(e.created, QString()) : QString();
+    if (id == QLatin1String("accessed"))
+        return e.accessed.isValid() ? core::formatDt(e.accessed, QString()) : QString();
+    if (id == QLatin1String("type")) {
+        if (e.type == EntryType::Symlink)
+            return _t("Symlink");
+        return e.isDir() ? _t("Ordner") : _t("Datei");
+    }
+    if (id == QLatin1String("ext")) {
+        if (e.isDir())
+            return {};
+        const int dot = e.name.lastIndexOf(QLatin1Char('.'));
+        return dot > 0 ? e.name.mid(dot + 1) : QString();
+    }
+    if (id == QLatin1String("perm"))
+        return e.permString();
+    if (id == QLatin1String("owner")) {
+        if (e.owner.isEmpty() && e.group.isEmpty())
+            return {};
+        return e.owner + QLatin1Char(':') + e.group;
+    }
+    return {};
+}
+
+// --- Breadcrumb-Pfadleiste --------------------------------------------------
+
+std::vector<std::pair<QString, QString>> FilePanel::breadcrumbParts() const
+{
+    std::vector<std::pair<QString, QString>> parts;
+    if (!m_provider)
+        return parts;
+    QString p = m_path;
+    QSet<QString> seen;
+    while (!p.isEmpty() && !seen.contains(p)) {
+        seen.insert(p);
+        const QString label = m_provider->basename(p);
+        parts.emplace_back(label.isEmpty() ? p : label, p);
+        const QString parent = m_provider->parent(p);
+        if (parent.isEmpty() || parent == p)
+            break;
+        p = parent;
+    }
+    std::reverse(parts.begin(), parts.end());
+    return parts;
+}
+
+void FilePanel::buildBreadcrumb()
+{
+    while (QLayoutItem *item = m_crumbLayout->takeAt(0)) {
+        if (QWidget *w = item->widget())
+            w->deleteLater();
+        delete item;
+    }
+    const auto parts = breadcrumbParts();
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) {
+            auto *sep = new QLabel(QStringLiteral("›"));
+            sep->setObjectName(QStringLiteral("Muted"));
+            // Klicks gehen an die Flaeche darunter -> Pfad editieren
+            sep->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+            m_crumbLayout->addWidget(sep);
+        }
+        auto *btn = new QToolButton();
+        btn->setText(parts[i].first);
+        btn->setAutoRaise(true);
+        btn->setCursor(Qt::PointingHandCursor);
+        const QString full = parts[i].second;
+        connect(btn, &QToolButton::clicked, this, [this, full] { navigateTo(full); });
+        m_crumbLayout->addWidget(btn);
+    }
+    m_crumbLayout->addStretch();
+}
+
+// --- Ansicht: Detail / Kachel ----------------------------------------------
+
+QAbstractItemView *FilePanel::activeView() const
+{
+    return m_gridMode ? static_cast<QAbstractItemView *>(m_grid)
+                      : static_cast<QAbstractItemView *>(m_table);
+}
+
+void FilePanel::setViewMode(bool grid)
+{
+    m_gridMode = grid;
+    m_viewStack->setCurrentIndex(grid ? 1 : 0);
+    core::setSetting(QStringLiteral("pane_grid"), grid);
+    const int row = m_table->currentRow();
+    if (row >= 0)
+        activeView()->scrollTo(m_table->model()->index(row, 0));
+    loadVisibleThumbs();   // Miniaturen der neuen Ansicht nachladen
+}
+
+// --- Miniaturansichten ------------------------------------------------------
+
+// Geteilter Zwischenspeicher: "pfad\nmtime" -> Icon.
+static QHash<QString, QIcon> &thumbCache()
+{
+    static QHash<QString, QIcon> cache;
+    return cache;
+}
+
+bool FilePanel::thumbsEnabled() const
+{
+    if (!m_provider || m_provider->isRemote)
+        return false;   // nur lokal — remote waere jede Miniatur ein Download
+    return core::getSettingBool(QStringLiteral("pane_thumbnails"), false)
+           && core::getSettingBool(QStringLiteral("show_file_icons"), true);
+}
+
+std::pair<int, int> FilePanel::visibleRows(int buffer) const
+{
+    QAbstractItemView *view = activeView();
+    QAbstractItemModel *model = m_table->model();
+    const int n = model->rowCount();
+    if (n == 0)
+        return {0, 0};
+    const QRect vp = view->viewport()->rect();
+    const QModelIndex start = view->indexAt(vp.topLeft());
+    const int first = start.isValid() ? start.row() : 0;
+    int last = first;
+    for (int r = first; r < n; ++r) {
+        if (view->visualRect(model->index(r, 0)).top() > vp.bottom())
+            break;
+        last = r;
+    }
+    return {std::max(0, first - buffer), std::min(n, last + 1 + buffer)};
+}
+
+void FilePanel::loadVisibleThumbs()
+{
+    if (!thumbsEnabled())
+        return;
+    const int size = std::max(16, activeView()->iconSize().width());
+    const quint64 token = m_thumbToken;
+    const auto [from, to] = visibleRows();
+    for (int row = from; row < to; ++row) {
+        if (row < 0 || row >= int(m_rows.size()))
+            continue;
+        const FileEntry &e = m_rows[size_t(row)];
+        if (e.isDir() || !isImageFile(e.name))
+            continue;
+        const QString path = m_provider->join(m_path, e.name);
+        const qint64 mtime = e.modified.isValid() ? e.modified.toSecsSinceEpoch() : 0;
+        const QString key = path + QLatin1Char('\n') + QString::number(mtime);
+        if (auto it = thumbCache().constFind(key); it != thumbCache().constEnd()) {
+            if (QTableWidgetItem *item = m_table->item(row, 0))
+                item->setIcon(*it);
+            continue;
+        }
+        if (m_thumbRequested.contains(key))
+            continue;
+        m_thumbRequested.insert(key);
+        const QString name = e.name;
+        m_bridge->run<QImage>(
+            [path, size]() -> QImage {
+                // QImage ist thread-fest; QPixmap/QIcon erst im GUI-Thread.
+                QImage img(path);
+                if (img.isNull())
+                    return {};
+                return img.scaled(size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            },
+            [this, row, name, key, token](const QImage &img) {
+                if (token != m_thumbToken || img.isNull())
+                    return;   // Verzeichnis hat inzwischen gewechselt
+                const QIcon icon(QPixmap::fromImage(img));
+                if (thumbCache().size() > 800)
+                    thumbCache().clear();
+                thumbCache().insert(key, icon);
+                if (row < int(m_rows.size()) && m_rows[size_t(row)].name == name) {
+                    if (QTableWidgetItem *item = m_table->item(row, 0))
+                        item->setIcon(icon);
+                }
+            },
+            [](const QString &) {});
+    }
+}
+
+void FilePanel::beginPathEdit()
+{
+    m_pathEdit->setText(m_path);
+    m_crumbScroll->setVisible(false);
+    m_pathEdit->setVisible(true);
+    m_pathEdit->setFocus();
+    m_pathEdit->selectAll();
+}
+
+void FilePanel::endPathEdit()
+{
+    if (!m_pathEdit->isVisible())
+        return;
+    m_pathEdit->setVisible(false);
+    m_crumbScroll->setVisible(true);
 }
 
 void FilePanel::setProvider(core::FileSystemProvider *provider, const QString &startPath)
@@ -262,9 +643,14 @@ void FilePanel::loadDir(const QString &path, bool record)
             }
             m_path = path;
             m_pathEdit->setText(path);
+            endPathEdit();
+            buildBreadcrumb();
             m_entries = entries;
             m_typeAheadBuffer.clear();   // Suchpuffer beim Verzeichniswechsel verwerfen
+            ++m_thumbToken;              // Miniaturen des alten Ordners verwerfen
+            m_thumbRequested.clear();
             populate(entries);
+            loadVisibleThumbs();
             updateBookmarkButton();
             emit pathChanged(path);
         },
@@ -277,19 +663,34 @@ void FilePanel::loadDir(const QString &path, bool record)
 void FilePanel::populate(const std::vector<FileEntry> &entries)
 {
     // Sortieren nach der gewaehlten Spalte — ".." und Ordner bleiben oben.
+    // Namen wahlweise natuerlich (datei2 vor datei10), wie im Original.
+    const bool natural = core::getSettingBool(QStringLiteral("natural_sort"), true);
+    const QString key = m_sortKey;
+    auto nameLess = [natural](const FileEntry &a, const FileEntry &b) {
+        return natural ? core::naturalLess(a.name, b.name)
+                       : a.name.toLower() < b.name.toLower();
+    };
+    auto extOf = [](const FileEntry &e) {
+        const int dot = e.name.lastIndexOf(QLatin1Char('.'));
+        return dot > 0 ? e.name.mid(dot + 1).toLower() : QString();
+    };
+
     std::vector<FileEntry> sorted = entries;
     std::stable_sort(sorted.begin(), sorted.end(),
-                     [this](const FileEntry &a, const FileEntry &b) {
+                     [&](const FileEntry &a, const FileEntry &b) {
         if (a.type == EntryType::Parent) return true;
         if (b.type == EntryType::Parent) return false;
         if (a.isDir() != b.isDir()) return a.isDir();
         bool less;
-        switch (m_sortColumn) {
-        case 1:  less = a.size < b.size; break;
-        case 2:  less = a.modified < b.modified; break;
-        case 3:  less = a.permissions < b.permissions; break;
-        default: less = a.name.toLower() < b.name.toLower(); break;
-        }
+        if (key == QLatin1String("size"))          less = a.size < b.size;
+        else if (key == QLatin1String("modified")) less = a.modified < b.modified;
+        else if (key == QLatin1String("created"))  less = a.created < b.created;
+        else if (key == QLatin1String("accessed")) less = a.accessed < b.accessed;
+        else if (key == QLatin1String("type"))     less = int(a.type) < int(b.type);
+        else if (key == QLatin1String("ext"))      less = extOf(a) < extOf(b);
+        else if (key == QLatin1String("perm"))     less = a.permissions < b.permissions;
+        else if (key == QLatin1String("owner"))    less = a.owner.toLower() < b.owner.toLower();
+        else                                       less = nameLess(a, b);
         return m_sortAscending ? less : !less;
     });
 
@@ -339,13 +740,12 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
         if (core::isExecutable(e))
             nameItem->setForeground(QColor(QStringLiteral("#3fb950")));
         m_table->setItem(row, 0, nameItem);
-        m_table->setItem(row, 1, new QTableWidgetItem(
-                                     e.isDir() ? QString() : humanSize(e.size)));
-        m_table->setItem(row, 2, new QTableWidgetItem(
-                                     e.modified.isValid()
-                                         ? core::formatDt(e.modified, QString())
-                                         : QString()));
-        m_table->setItem(row, 3, new QTableWidgetItem(e.permString()));
+        for (int c = 1; c < m_fileCols.size(); ++c) {
+            m_table->setItem(row, c,
+                             new QTableWidgetItem(e.type == EntryType::Parent
+                                                      ? QString()
+                                                      : columnValue(m_fileCols.at(c), e)));
+        }
         if (e.type != EntryType::Parent) {
             if (e.isDir()) ++dirCount; else { ++fileCount; totalSize += e.size; }
         }
@@ -357,6 +757,8 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
     if (filtering)
         status += QStringLiteral(" · Filter: %1").arg(m_filter);
     m_status->setText(status);
+    // Erst hier, sonst verstellt der folgende Layout-Schritt die Breiten wieder.
+    applyColumnWidths();
 }
 
 void FilePanel::onDoubleClick(int row, int)
@@ -489,6 +891,10 @@ void FilePanel::openContextMenu(const QPoint &pos)
                    [this] { emit dirDiffRequested(); });
     menu.addSeparator();
 
+    QAction *gridAction = menu.addAction(_t("Kachelansicht"), this,
+                                         [this] { setViewMode(!m_gridMode); });
+    gridAction->setCheckable(true);
+    gridAction->setChecked(m_gridMode);
     QAction *hiddenAction = menu.addAction(_t("Versteckte Dateien"), this,
                                            &FilePanel::toggleHidden);
     hiddenAction->setCheckable(true);
@@ -515,7 +921,6 @@ void FilePanel::addOpenWithMenu(QMenu *menu, bool isFile, const FileEntry *entry
 #endif
 }
 
-// Bekannte Bild-Endungen fuer die Vorschau (F3).
 static bool isImageFile(const QString &name)
 {
     static const QStringList exts = {
@@ -1069,10 +1474,13 @@ void FilePanel::setSudoAvailable(bool available)
 
 void FilePanel::sortBy(int column)
 {
-    if (column == m_sortColumn)
+    if (column < 0 || column >= m_fileCols.size())
+        return;
+    const QString key = m_fileCols.at(column);
+    if (key == m_sortKey) {
         m_sortAscending = !m_sortAscending;
-    else {
-        m_sortColumn = column;
+    } else {
+        m_sortKey = key;
         m_sortAscending = true;
     }
     populate(m_entries);
@@ -1171,6 +1579,17 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
 {
     if (event->type() == QEvent::FocusIn || event->type() == QEvent::MouseButtonPress) {
         emit activated();
+    }
+    // Klick auf die freie Flaeche neben den Breadcrumbs -> Pfad eingeben.
+    if (m_crumbScroll && obj == m_crumbScroll->widget()
+        && event->type() == QEvent::MouseButtonPress) {
+        beginPathEdit();
+        return true;
+    }
+    // Pfadfeld verlassen -> zurueck zur Breadcrumb-Ansicht.
+    if (obj == m_pathEdit && event->type() == QEvent::FocusOut) {
+        endPathEdit();
+        return false;
     }
     // Ziehen aus der Pane starten (auch fuer Remote-Pfade und den Explorer).
     if (obj == m_table->viewport() && event->type() == QEvent::MouseMove) {
