@@ -75,6 +75,10 @@ private:
     void onTileClicked(int index);
     void onTileHeld(int index);
     void runKey(const QJsonObject &config, int index);
+    // Sequenz: jeder Schritt erst nach Abschluss des vorherigen.
+    void runSteps(std::vector<QJsonObject> steps, const QString &keyId);
+    void exportLayers();
+    void importLayers();
     void toggleMode(bool runMode);
     void pollForeground();
     core::macros::Layer *currentLayer();

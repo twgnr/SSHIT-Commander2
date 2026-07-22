@@ -34,7 +34,7 @@ VenvDialog::VenvDialog(AsyncBridge *bridge, const QString &projectDir, const QSt
     auto *layout = new QVBoxLayout(this);
 
     // --- Neue Umgebung ---
-    auto *setupBox = new QGroupBox(_t("Neue Umgebung anlegen"), this);
+    auto *setupBox = new QGroupBox(_t("Neue Umgebung:"), this);
     auto *form = new QFormLayout(setupBox);
 
     auto *projRow = new QHBoxLayout();
@@ -62,7 +62,7 @@ VenvDialog::VenvDialog(AsyncBridge *bridge, const QString &projectDir, const QSt
     m_python = new QComboBox(setupBox);
     for (const auto &[label, command] : core::discoverPythons())
         m_python->addItem(label, command);
-    form->addRow(_t("Python-Version"), m_python);
+    form->addRow(_t("Python"), m_python);
 
     m_install = new QLineEdit(core::detectInstall(projectDir), setupBox);
     m_install->setPlaceholderText(_t("z. B. pip install -r requirements.txt (leer = keine)"));
@@ -87,7 +87,7 @@ VenvDialog::VenvDialog(AsyncBridge *bridge, const QString &projectDir, const QSt
     layout->addWidget(m_preview);
 
     // --- Bekannte Umgebungen ---
-    layout->addWidget(new QLabel(_t("Bekannte Umgebungen"), this));
+    layout->addWidget(new QLabel(_t("Bekannte Umgebungen (venv/pipenv):"), this));
     m_table = new QTableWidget(0, 5, this);
     m_table->setHorizontalHeaderLabels({_t("Name"), _t("Typ"), _t("Version"), _t("Projekt"),
                                         _t("Pfad")});

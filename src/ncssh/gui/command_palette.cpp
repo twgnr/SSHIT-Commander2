@@ -27,11 +27,11 @@ CommandPalette::CommandPalette(const QString &osType, QWidget *parent)
 
     auto *filterRow = new QHBoxLayout();
     m_search = new QLineEdit(this);
-    m_search->setPlaceholderText(_t("Suchen (Name, Kategorie, Beschreibung) …"));
+    m_search->setPlaceholderText(_t("Suche (Name, Kategorie, Beschreibung)…"));
     connect(m_search, &QLineEdit::textChanged, this, &CommandPalette::refill);
     m_osFilter = new QComboBox(this);
     m_osFilter->addItem(_t("Aktuelles OS"), osType);
-    m_osFilter->addItem(_t("Alle"), QStringLiteral("all"));
+    m_osFilter->addItem(_t("Beide"), QStringLiteral("all"));
     m_osFilter->addItem(_t("Nur Linux/Unix"), QStringLiteral("posix"));
     m_osFilter->addItem(_t("Nur Windows"), QStringLiteral("windows"));
     m_osFilter->addItem(_t("Plattformübergreifend"), QStringLiteral("any"));

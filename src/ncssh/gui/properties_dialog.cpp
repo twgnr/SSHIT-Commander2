@@ -36,7 +36,7 @@ PropertiesDialog::PropertiesDialog(AsyncBridge *bridge, core::FileSystemProvider
                                    QWidget *parent)
     : QDialog(parent), m_bridge(bridge), m_provider(provider), m_path(path)
 {
-    setWindowTitle(_t("Eigenschaften") + QStringLiteral(" — ") + entry.name);
+    setWindowTitle(_t("Eigenschaften — %1").arg(entry.name));
     resize(460, 460);
 
     auto *layout = new QVBoxLayout(this);

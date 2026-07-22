@@ -44,13 +44,13 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     // KI: die letzte Terminalausgabe erklaeren lassen (nur bei aktivierter KI).
     auto *aiButton = new QPushButton(_t("KI"), this);
     aiButton->setObjectName(QStringLiteral("Chip"));
-    aiButton->setToolTip(_t("Ausgabe/Fehler von der KI erklären lassen"));
+    aiButton->setToolTip(_t("Ausgabe/Fehler mit KI erklären"));
     connect(aiButton, &QPushButton::clicked, this, &ConsolePanel::explainWithAi);
     // Abdocken: die Konsole wird zu einem eigenen Fenster; die Pane bekommt
     // dadurch den vollen Platz der Spalte.
     m_dockButton = new QPushButton(QStringLiteral("⤢"), this);
     m_dockButton->setObjectName(QStringLiteral("Chip"));
-    m_dockButton->setToolTip(_t("Abdocken"));
+    m_dockButton->setToolTip(_t("⤢ Abdocken"));
     connect(m_dockButton, &QPushButton::clicked, this, [this] {
         if (m_docked)
             emit undockRequested();
@@ -135,7 +135,7 @@ void ConsolePanel::setDocked(bool docked)
 {
     m_docked = docked;
     m_dockButton->setText(docked ? QStringLiteral("⤢") : QStringLiteral("⤵"));
-    m_dockButton->setToolTip(docked ? _t("Abdocken") : _t("Andocken"));
+    m_dockButton->setToolTip(docked ? _t("⤢ Abdocken") : _t("⤵ Andocken"));
 }
 
 void ConsolePanel::setSession(const net::SSHSessionPtr &session)

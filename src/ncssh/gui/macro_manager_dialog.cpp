@@ -7,6 +7,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QJsonArray>
 #include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
 #include <QGridLayout>
@@ -234,40 +235,9 @@ void MacroManagerDialog::buildUi()
     topRow->addStretch(1);
     auto *exportBtn = new QPushButton(_t("Exportieren …"), this);
     auto *importBtn = new QPushButton(_t("Importieren …"), this);
-    connect(exportBtn, &QPushButton::clicked, this, [this] {
-        const QString path = getSaveFileName(
-            this, _t("Layer exportieren"), QStringLiteral("macros.json"),
-            QStringLiteral("JSON (*.json)"));
-        if (path.isEmpty())
-            return;
-        try {
-            mc::writeExport(m_config, path);
-            m_status->setText(_t("Exportiert."));
-        } catch (const std::exception &exc) {
-            QMessageBox::warning(this, _t("Fehler"), QString::fromUtf8(exc.what()));
-        }
-    });
-    connect(importBtn, &QPushButton::clicked, this, [this] {
-        const QString path = getOpenFileName(
-            this, _t("Layer importieren"), QString(), QStringLiteral("JSON (*.json)"));
-        if (path.isEmpty())
-            return;
-        try {
-            const auto imported = mc::readImport(path);
-            for (auto it = imported.begin(); it != imported.end(); ++it) {
-                mc::Layer layer = it.value();
-                const QString name = m_config.uniqueName(it.key());
-                layer.name = name;
-                m_config.layers.insert(name, layer);
-                m_config.order.append(name);
-            }
-            mc::save(m_config);
-            refreshLayers();
-            m_status->setText(QStringLiteral("%1 Layer importiert.").arg(imported.size()));
-        } catch (const std::exception &exc) {
-            QMessageBox::warning(this, _t("Fehler"), QString::fromUtf8(exc.what()));
-        }
-    });
+    connect(exportBtn, &QPushButton::clicked, this, &MacroManagerDialog::exportLayers);
+    // Import mit Auswahl — vorher wurde alles aus der Datei uebernommen.
+    connect(importBtn, &QPushButton::clicked, this, &MacroManagerDialog::importLayers);
     topRow->addWidget(exportBtn);
     topRow->addWidget(importBtn);
     right->addLayout(topRow);
@@ -504,8 +474,21 @@ void MacroManagerDialog::runKey(const QJsonObject &config, int index)
         return;
     }
 
-    // Alles Uebrige laeuft im Worker (Tastatur/Maus/HTTP koennen blockieren).
     const QString keyId = QStringLiteral("%1:%2").arg(m_currentLayer).arg(index);
+
+    // Sequenz: Schritte der Reihe nach, jeder erst nach Abschluss des
+    // vorherigen — sonst wuerden Verzoegerungen und Reihenfolge wirkungslos.
+    if (type == QLatin1String("sequence")) {
+        std::vector<QJsonObject> steps;
+        for (const QJsonValue &v : payload.toArray()) {
+            if (v.isObject())
+                steps.push_back(v.toObject());
+        }
+        runSteps(std::move(steps), keyId);
+        return;
+    }
+
+    // Alles Uebrige laeuft im Worker (Tastatur/Maus/HTTP koennen blockieren).
     ma::ExecContext *ctx = &m_context;
     m_bridge->run<QString>(
         [type, payload, ctx, keyId]() -> QString {
@@ -517,6 +500,111 @@ void MacroManagerDialog::runKey(const QJsonObject &config, int index)
                 m_status->setText(error);
         },
         [this](const QString &err) { m_status->setText(err); });
+}
+
+void MacroManagerDialog::runSteps(std::vector<QJsonObject> steps, const QString &keyId)
+{
+    if (steps.empty())
+        return;
+    const QJsonObject step = steps.front();
+    steps.erase(steps.begin());
+
+    const QString type = step.value(QStringLiteral("action_type")).toString();
+    const QJsonValue payload = step.value(QStringLiteral("payload"));
+    ma::ExecContext *ctx = &m_context;
+    m_bridge->run<QString>(
+        [type, payload, ctx, keyId]() -> QString {
+            const auto error = ma::executeAction(type, payload, ctx, keyId);
+            return error.value_or(QString());
+        },
+        // Naechster Schritt erst, wenn dieser durch ist.
+        [this, steps = std::move(steps), keyId](const QString &error) mutable {
+            if (!error.isEmpty()) {
+                // Bei einem Fehler die Sequenz abbrechen, statt blind
+                // weiterzumachen — die Folgeschritte bauen darauf auf.
+                m_status->setText(error);
+                return;
+            }
+            runSteps(std::move(steps), keyId);
+        },
+        [this](const QString &err) { m_status->setText(err); });
+}
+
+void MacroManagerDialog::exportLayers()
+{
+    const QString path = getSaveFileName(this, _t("Makros exportieren"),
+                                         QStringLiteral("makros-export.json"),
+                                         _t("JSON-Dateien (*.json)"));
+    if (path.isEmpty())
+        return;
+    try {
+        mc::writeExport(m_config, path);
+        QMessageBox::information(this, _t("Makro-Manager"),
+                                 _t("%1 Layer exportiert.").arg(m_config.layers.size()));
+    } catch (const std::exception &exc) {
+        QMessageBox::warning(this, _t("Makro-Manager"),
+                             _t("Export fehlgeschlagen: %1").arg(QString::fromUtf8(exc.what())));
+    }
+}
+
+void MacroManagerDialog::importLayers()
+{
+    const QString path = getOpenFileName(this, _t("Makros importieren"), QString(),
+                                         _t("JSON-Dateien (*.json)"));
+    if (path.isEmpty())
+        return;
+    QMap<QString, mc::Layer> incoming;
+    try {
+        incoming = mc::readImport(path);
+    } catch (const std::exception &exc) {
+        QMessageBox::warning(this, _t("Makro-Manager"),
+                             _t("Import fehlgeschlagen: %1").arg(QString::fromUtf8(exc.what())));
+        return;
+    }
+    if (incoming.isEmpty()) {
+        QMessageBox::information(this, _t("Makro-Manager"), _t("Keine Layer in der Datei."));
+        return;
+    }
+
+    // Auswahl, was uebernommen werden soll.
+    QDialog dlg(this);
+    dlg.setWindowTitle(_t("Layer importieren"));
+    auto *layout = new QVBoxLayout(&dlg);
+    layout->addWidget(new QLabel(_t("Zu importierende Layer auswählen:"), &dlg));
+    auto *list = new QListWidget(&dlg);
+    for (auto it = incoming.begin(); it != incoming.end(); ++it) {
+        auto *item = new QListWidgetItem(it.key(), list);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Checked);
+    }
+    layout->addWidget(list, 1);
+    auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    layout->addWidget(box);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    QStringList added;
+    for (int i = 0; i < list->count(); ++i) {
+        if (list->item(i)->checkState() != Qt::Checked)
+            continue;
+        const QString key = list->item(i)->text();
+        mc::Layer layer = incoming.value(key);
+        // Namenskonflikte aufloesen, statt vorhandene Layer zu ersetzen.
+        const QString name = m_config.uniqueName(layer.name);
+        layer.name = name;
+        m_config.layers.insert(name, layer);
+        m_config.order.append(name);
+        added << name;
+    }
+    if (added.isEmpty())
+        return;
+    mc::save(m_config);
+    refreshLayers();
+    QMessageBox::information(this, _t("Makro-Manager"),
+                             _t("%1 Layer importiert: %2")
+                                 .arg(added.size()).arg(added.join(QStringLiteral(", "))));
 }
 
 void MacroManagerDialog::toggleMode(bool runMode)

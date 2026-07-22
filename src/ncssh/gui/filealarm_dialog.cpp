@@ -208,7 +208,8 @@ FileAlarmDialog::FileAlarmDialog(FileAlarmManager *manager, QWidget *parent)
             [this](int, int) { editAlarm(); });
     layout->addWidget(m_table, 2);
 
-    layout->addWidget(new QLabel(_t("Ereignisse"), this));
+    layout->addWidget(new QLabel(
+        _t("Überwachte Ordner — Häkchen schaltet einen Alarm an/aus:"), this));
     m_events = new QListWidget(this);
     layout->addWidget(m_events, 1);
     connect(manager, &FileAlarmManager::event, this,

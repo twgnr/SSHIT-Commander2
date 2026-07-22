@@ -145,7 +145,7 @@ ClipboardDialog::ClipboardDialog(ClipboardManager *manager, QWidget *parent)
 
     m_table = new QTableWidget(0, 4, this);
     m_table->setHorizontalHeaderLabels({QStringLiteral("#"), _t("Typ"), _t("Zeit"),
-                                        _t("Inhalt")});
+                                        _t("Inhalt / Name")});
     m_table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
     m_table->verticalHeader()->setVisible(false);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
