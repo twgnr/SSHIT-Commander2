@@ -162,6 +162,30 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     // Verzeichnis-Vergleich beider Panes.
     for (FilePanel *p : {m_leftPanel, m_rightPanel})
         connect(p, &FilePanel::dirDiffRequested, this, &Workspace::dirDiffRequested);
+
+    // Netzwerk-Modus: Aktionen aus dem Host-Kontextmenue.
+    for (FilePanel *p : {m_leftPanel, m_rightPanel}) {
+        connect(p, &FilePanel::rescanRequested, this, &Workspace::rescanRequested);
+        connect(p, &FilePanel::connectToHostRequested, this,
+                [this](const QString &host) {
+                    // Profil aus dem Host bauen; Zugangsdaten erfragt das
+                    // Hauptfenster ueber connectHostRequested.
+                    emit connectHostRequested(host);
+                });
+        connect(p, &FilePanel::exitNetworkModeRequested, this, [this, p] {
+            // Zurueck auf das lokale Dateisystem der jeweiligen Seite.
+            p->setHeaderTitle(p == m_leftPanel ? _t("Lokal")
+                                               : (m_session ? m_session->label()
+                                                            : _t("Remote (nicht verbunden)")));
+            p->setBookmarkKey(p == m_leftPanel ? QStringLiteral("local")
+                                               : QStringLiteral("remote"));
+            core::FileSystemProvider *back =
+                (p == m_rightPanel && m_remoteFs) ? static_cast<core::FileSystemProvider *>(
+                                                        m_remoteFs.get())
+                                                  : m_localFs.get();
+            p->setProvider(back, back == m_localFs.get() ? QDir::homePath() : QString());
+        });
+    }
 }
 
 void Workspace::pasteInto(FilePanel *target, bool move)

@@ -540,6 +540,33 @@ Workspace *MainWindow::addTab()
     });
     // Verzeichnis-Vergleich aus dem Pane-Kontextmenue.
     connect(ws, &Workspace::dirDiffRequested, this, &MainWindow::openDirDiff);
+    // Netzwerk-Modus: erneut scannen bzw. zu einem gefundenen Host verbinden.
+    connect(ws, &Workspace::rescanRequested, this, &MainWindow::openNetscan);
+    connect(ws, &Workspace::connectHostRequested, this, [this](const QString &host) {
+        // Vorhandenes Profil bevorzugen, sonst eines aus der Adresse bauen.
+        core::ProfileStore store;
+        store.load();
+        core::ServerProfile profile;
+        bool found = false;
+        for (const auto &p : store.profiles()) {
+            if (p.host == host) {
+                profile = p;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            profile.name = host;
+            profile.host = host;
+            profile.authMethod = QStringLiteral("password");
+        }
+        if (!prepareCredentials(profile))
+            return;
+        if (Workspace *target = currentWorkspace()) {
+            statusBar()->showMessage(_t("Verbinde zu %1 …").arg(profile.display()), 8000);
+            target->connectTo(profile);
+        }
+    });
     m_tabs->setCurrentIndex(index);
     return ws;
 }

@@ -95,6 +95,10 @@ signals:
     void dirDiffRequested();
     // Alarm-Trigger fuer das markierte Verzeichnis setzen.
     void dirAlarmRequested(const QString &path);
+    // --- Netzwerk-Modus (net://) ---
+    void connectToHostRequested(const QString &host);  // SSH zu diesem Host
+    void rescanRequested();                            // Scanner erneut starten
+    void exitNetworkModeRequested();                   // zurueck zum Dateisystem
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -109,6 +113,9 @@ private:
     void onDoubleClick(int row, int column);
     void goUp();
     void openContextMenu(const QPoint &pos);
+    // True, solange die Pane die Host-Liste des Scanners zeigt.
+    bool hostMode() const;
+    void openHostMenu(const QPoint &pos);
     // Datei-Operationen (F-Tasten)
     void opView();
     void opEdit();
@@ -121,6 +128,8 @@ private:
     void toggleBookmark();
     void openBookmarks();
     void updateBookmarkButton();
+    // Statuszeile: Verzeichnis-Zusammenfassung plus aktuelle Auswahl.
+    void updateSelectionStatus();
     void sortBy(int column);          // Spaltenkopf angeklickt
     void applyFilter(const QString &pattern);
 
@@ -211,6 +220,7 @@ private:
     quint64 m_thumbToken = 0;         // verwirft Ergebnisse alter Verzeichnisse
     QSet<QString> m_thumbRequested;
     QLabel *m_status = nullptr;
+    QString m_baseStatus;             // Zusammenfassung ohne Auswahl-Teil
     QPushButton *m_starButton = nullptr;
     QPushButton *m_sudoChip = nullptr;
     QLineEdit *m_filterEdit = nullptr;

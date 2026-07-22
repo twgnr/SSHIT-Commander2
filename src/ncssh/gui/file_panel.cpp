@@ -5,6 +5,7 @@
 #include "ncssh/core/fileops.hpp"
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/natsort.hpp"
+#include "ncssh/core/netscan.hpp"
 #include "ncssh/core/openwith.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/file_icons.hpp"
@@ -168,8 +169,22 @@ void FilePanel::buildUi(const QString &title)
     connect(m_starButton, &QPushButton::clicked, this, &FilePanel::toggleBookmark);
     auto *bookmarksBtn = new QPushButton(QStringLiteral("▾"), this);
     bookmarksBtn->setFixedWidth(28);
-    bookmarksBtn->setToolTip(_t("Lesezeichen"));
-    connect(bookmarksBtn, &QPushButton::clicked, this, &FilePanel::openBookmarks);
+    bookmarksBtn->setToolTip(_t("Lesezeichen dieses Servers"));
+    // Aufklappmenue mit den gemerkten Pfaden — schneller als der Dialog.
+    connect(bookmarksBtn, &QPushButton::clicked, this, [this, bookmarksBtn] {
+        QMenu menu(this);
+        const QStringList paths = m_bookmarks.list(m_bookmarkKey);
+        if (paths.isEmpty()) {
+            menu.addAction(_t("(keine Lesezeichen)"))->setEnabled(false);
+        } else {
+            for (const QString &path : paths)
+                menu.addAction(path, this, [this, path] { navigateTo(path); });
+        }
+        menu.addSeparator();
+        menu.addAction(_t("★ Aktuellen Pfad merken"), this, &FilePanel::toggleBookmark);
+        menu.addAction(_t("Verwalten…"), this, &FilePanel::openBookmarks);
+        menu.exec(bookmarksBtn->mapToGlobal(QPoint(0, bookmarksBtn->height())));
+    });
     pathRow->addWidget(back);
     pathRow->addWidget(forward);
     pathRow->addWidget(up);
@@ -198,9 +213,10 @@ void FilePanel::buildUi(const QString &title)
     connect(m_table, &QTableWidget::cellDoubleClicked, this, &FilePanel::onDoubleClick);
     connect(m_table, &QTableWidget::customContextMenuRequested, this,
             &FilePanel::openContextMenu);
-    // Auswahl an die Vorschau melden.
+    // Auswahl an die Vorschau melden und die Statuszeile nachziehen.
     connect(m_table, &QTableWidget::itemSelectionChanged, this, [this] {
         emit selectionChanged(selectedPath());
+        updateSelectionStatus();
     });
     // Klickbare Spalten-Sortierung
     m_table->horizontalHeader()->setSectionsClickable(true);
@@ -755,11 +771,12 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
         m_rows.push_back(e);
         ++row;
     }
-    QString status = QStringLiteral("%1 Ordner, %2 Dateien · %3")
-                         .arg(dirCount).arg(fileCount).arg(humanSize(totalSize));
+    m_baseStatus = _t("%1 Einträge (%2 Ordner, %3 Dateien)")
+                       .arg(dirCount + fileCount).arg(dirCount).arg(fileCount)
+                   + QStringLiteral(" · ") + humanSize(totalSize);
     if (filtering)
-        status += QStringLiteral(" · Filter: %1").arg(m_filter);
-    m_status->setText(status);
+        m_baseStatus += QStringLiteral(" · Filter: %1").arg(m_filter);
+    updateSelectionStatus();
     // Erst hier, sonst verstellt der folgende Layout-Schritt die Breiten wieder.
     applyColumnWidths();
 }
@@ -823,9 +840,98 @@ const FileEntry *FilePanel::selectedEntry() const
     return e.type == EntryType::Parent ? nullptr : &e;
 }
 
+// Im Netzwerk-Modus (net://) zeigt die Pane Hosts statt Dateien — dort ergeben
+// die Datei-Operationen keinen Sinn, dafuer host-spezifische Aktionen.
+bool FilePanel::hostMode() const
+{
+    return m_path.startsWith(QLatin1String("net://"))
+           && m_path.count(QLatin1Char('/')) <= 2;
+}
+
+void FilePanel::openHostMenu(const QPoint &pos)
+{
+    const FileEntry *entry = selectedEntry();
+    QMenu menu(this);
+
+    if (entry) {
+        const QVariantMap extra = entry->extra;
+        const QString ip = extra.value(QStringLiteral("ip")).toString();
+        const QString mac = extra.value(QStringLiteral("mac")).toString();
+        const QVariantList webList = extra.value(QStringLiteral("web")).toList();
+        QVariantList portList = extra.value(QStringLiteral("ports")).toList();
+        QVector<int> ports;
+        for (const QVariant &p : portList)
+            ports.append(p.toInt());
+
+        // SSH nur anbieten, wenn Port 22 offen ist — sonst laeuft der Versuch
+        // in einen Timeout.
+        const bool sshOpen = ports.contains(22);
+        QAction *connectAct = menu.addAction(
+            sshOpen ? _t("SSH verbinden") : _t("SSH verbinden (Port 22 nicht offen)"));
+        connectAct->setEnabled(sshOpen && !ip.isEmpty());
+        connect(connectAct, &QAction::triggered, this,
+                [this, ip] { emit connectToHostRequested(ip); });
+
+        menu.addSeparator();
+        if (!webList.isEmpty()) {
+            QAction *web = menu.addAction(_t("Weboberfläche öffnen"));
+            web->setToolTip(_t("Kontextmenü: Weboberfläche im Browser öffnen"));
+            const QString url = webList.first().toString();
+            connect(web, &QAction::triggered, this,
+                    [url] { QDesktopServices::openUrl(QUrl(url)); });
+        }
+        QAction *rdp = menu.addAction(_t("RDP öffnen"));
+        rdp->setEnabled(ports.contains(3389) && !ip.isEmpty());
+        connect(rdp, &QAction::triggered, this, [this, ip] {
+#ifdef Q_OS_WIN
+            QProcess::startDetached(QStringLiteral("mstsc.exe"),
+                                    {QStringLiteral("/v:") + ip});
+#else
+            Q_UNUSED(ip);
+            QMessageBox::information(this, _t("RDP öffnen"),
+                                     _t("RDP wird nur unter Windows unterstützt."));
+#endif
+        });
+
+        menu.addSeparator();
+        QAction *wol = menu.addAction(_t("Wake-on-LAN senden"));
+        wol->setEnabled(!mac.isEmpty());
+        connect(wol, &QAction::triggered, this, [this, mac] {
+            if (core::wakeOnLan(mac))
+                emit statusMessage(_t("Wake-on-LAN gesendet an %1").arg(mac));
+            else
+                QMessageBox::warning(this, _t("Wake-on-LAN"),
+                                     _t("Wake-on-LAN fehlgeschlagen."));
+        });
+
+        menu.addSeparator();
+        QAction *copyIp = menu.addAction(_t("IP kopieren"));
+        copyIp->setEnabled(!ip.isEmpty());
+        connect(copyIp, &QAction::triggered, this,
+                [ip] { QApplication::clipboard()->setText(ip); });
+        if (extra.value(QStringLiteral("shares")).toBool()) {
+            QAction *shares = menu.addAction(_t("Freigaben anzeigen"));
+            connect(shares, &QAction::triggered, this, [this, entry] {
+                emit statusMessage(_t("Suche Freigaben auf %1 …").arg(entry->name));
+                navigateTo(m_provider->join(m_path, entry->name));
+            });
+        }
+        menu.addSeparator();
+    }
+
+    menu.addAction(_t("Erneut scannen"), this, [this] { emit rescanRequested(); });
+    menu.addAction(_t("Netzwerkscanner schließen"), this,
+                   [this] { emit exitNetworkModeRequested(); });
+    menu.exec(m_table->viewport()->mapToGlobal(pos));
+}
+
 void FilePanel::openContextMenu(const QPoint &pos)
 {
     emit activated();   // diese Pane aktiv setzen
+    if (hostMode()) {
+        openHostMenu(pos);
+        return;
+    }
     QMenu menu(this);
     const QString sel = selectedPath();
     const bool hasSel = !sel.isEmpty();
@@ -1517,6 +1623,37 @@ void FilePanel::toggleBookmark()
     m_bookmarks.save();
     updateBookmarkButton();
     emit statusMessage(nowMarked ? _t("Lesezeichen gesetzt.") : _t("Lesezeichen entfernt."));
+}
+
+// Zeigt neben der Verzeichnis-Zusammenfassung, was gerade markiert ist.
+void FilePanel::updateSelectionStatus()
+{
+    QSet<int> rows;
+    for (const QModelIndex &idx : m_table->selectionModel()->selectedRows())
+        rows.insert(idx.row());
+    // ".." zaehlt nicht als Auswahl.
+    qint64 size = 0;
+    int count = 0;
+    for (int r : rows) {
+        if (r < 0 || r >= int(m_rows.size()))
+            continue;
+        const FileEntry &e = m_rows[size_t(r)];
+        if (e.type == EntryType::Parent)
+            continue;
+        ++count;
+        size += e.size;
+    }
+    if (count == 0) {
+        m_status->setText(m_baseStatus);
+    } else if (count == 1) {
+        const FileEntry *entry = selectedEntry();
+        m_status->setText(entry ? _t("%1 · ausgewählt: %2 (%3)")
+                                      .arg(m_baseStatus, entry->name, humanSize(entry->size))
+                                : m_baseStatus);
+    } else {
+        m_status->setText(_t("%1 markiert · %2").arg(count).arg(humanSize(size))
+                          + QStringLiteral("  ·  ") + m_baseStatus);
+    }
 }
 
 void FilePanel::openBookmarks()

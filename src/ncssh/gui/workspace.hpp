@@ -92,6 +92,9 @@ signals:
     void connectionChanged();
     // Aus dem Pane-Kontextmenue: Verzeichnis-Vergleich beider Seiten oeffnen.
     void dirDiffRequested();
+    // Netzwerk-Modus: Scanner erneut oeffnen bzw. zu einem Host verbinden.
+    void rescanRequested();
+    void connectHostRequested(const QString &host);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
