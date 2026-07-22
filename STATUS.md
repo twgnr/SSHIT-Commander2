@@ -4,13 +4,16 @@ Stand des Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 
 > **Wichtige Einordnung.** Die Architektur steht vollständig: jedes Modul des
 > Originals hat ein C++-Gegenstück, der Kern (`core/`, `net/`) ist inhaltlich
-> nachgezogen und durch 116 Tests abgesichert. Die **Oberfläche ist noch nicht
-> ganz auf dem Stand des Originals**: der Vergleich der i18n-Kataloge zeigt
-> aktuell 457 von 1352 Bedienelementen ohne Entsprechung (erste Erhebung: 620).
-> Nachgezogen sind inzwischen `file_panel`, `settings_dialog`, `search_dialog`,
-> `server_manager`, `bulk_rename_dialog`, `terminal_widget` und Teile von
-> `main_window`. Größte verbliebene Baustelle ist `main_window` selbst, dazu
-> `help_dialog`, `netscan_dialog` und `macro_manager_dialog`.
+> nachgezogen und durch **132 Tests** abgesichert — damit sind alle 15
+> Testdateien des Originals abgedeckt. Die **Oberfläche ist noch nicht ganz auf
+> dem Stand des Originals**: der Vergleich der i18n-Kataloge zeigt aktuell 329
+> von 1352 Bedienelementen ohne Entsprechung (erste Erhebung: 620).
+> Abgeschlossen sind `settings_dialog`, `search_dialog`, `netscan_dialog`,
+> `console_panel`, `encoding_converter` und `filealarm_dialog`; weitgehend
+> nachgezogen `file_panel`, `server_manager`, `bulk_rename_dialog`,
+> `terminal_widget`, `security_dialog`, `editor_dialog` und `venv_dialog`.
+> Größte verbliebene Baustellen: `main_window`, die Handbuchtexte im
+> `help_dialog` und `macro_manager_dialog`.
 > Vollständige Liste: [GAPS.md](GAPS.md).
 
 ## Portiert
@@ -123,7 +126,8 @@ die einzige Oberfläche.
 
 | Original | Port |
 |---|---|
-| `tests/` (15 Dateien, 120 Tests) | `tests/` — eigenes Harness + CTest, **116 Tests** (netscan, netfs, bulkrename, lsparse, execfile, filealarm, githubalarm, paneutils, secaudit, configio, i18n, ai, transfer, sudofs, ansi); offen sind die beiden Qt-Dialog-Tests und `smoke_gui.py` |
+| `tests/` (15 Dateien, 120 Tests) | `tests/` — eigenes Harness + CTest, **132 Tests**; alle 15 Testdateien abgedeckt |
+| `smoke_gui.py` | `tests/test_smoke_gui.cpp` — Offscreen-Test der Oberfläche (Kernlogik deckt der Rest ab) |
 | `tools/i18n_extract.py` | portiert — sucht `_t("…")` in den C++-Quellen |
 | `i18n/en.json` | **1106 Schlüssel, 100 % übersetzt**, keine verwaisten Einträge |
 | `pyproject.toml`, `Pipfile`, `build-nuitka.ps1` | ersetzt durch `CMakeLists.txt`, `build.ps1`, `test.ps1` |
@@ -132,7 +136,7 @@ Tests laufen mit `.\test.ps1` (oder `ctest --test-dir build`).
 
 ## Bekannte Einschränkungen
 
-- **Die GUI ist noch nicht ganz auf dem Funktionsumfang des Originals** — 457 von
+- **Die GUI ist noch nicht ganz auf dem Funktionsumfang des Originals** — 329 von
   1352 Bedienelementen fehlen bzw. sind anders formuliert (Start: 620).
   Vollständige Aufstellung in [GAPS.md](GAPS.md). Wake-on-LAN und „RDP öffnen"
   liegen weiterhin nur im Kern, ohne Menüanbindung.
