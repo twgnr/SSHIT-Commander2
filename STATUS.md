@@ -4,14 +4,14 @@ Stand des Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 
 > **Wichtige Einordnung.** Die Architektur steht vollständig: jedes Modul des
 > Originals hat ein C++-Gegenstück, der Kern (`core/`, `net/`) ist inhaltlich
-> nachgezogen und durch **142 Tests** abgesichert — alle 15 Testdateien des
-> Originals sind abgedeckt, plus eigene für ansi, keytools und shortcuts. Von
-> der Oberfläche sind noch **123 Bedienelemente offen** (erste Erhebung: 620).
-> `file_panel`, `server_manager`, `console_panel` und `editor_dialog` liegen beim
-> Zeilenverhältnis bei 1,0 oder darüber; der größte Rückstand bleibt
-> `main_window` (0,41) und `macro_manager_dialog` (0,58). Der `help_dialog` wirkt
-> mit 0,50 unvollständig, hat aber alle 32 Themen — nur kompakter als das
-> HTML-Original. Vollständige Liste und behobene Funktionsfehler: [GAPS.md](GAPS.md).
+> nachgezogen und durch **156 Tests** abgesichert. Ein systematischer
+> Interaktions-, Menü-, Einstellungs- und Funktions-Audit gegen das Original ist
+> durchgeführt: Tasten-/Kontextmenü-Feinheiten, das Strg+F9-Status-Feature,
+> sechs wirkungslose Einstellungen, mehrere Persistenz-Lücken (Pane-Ausrichtung,
+> Spaltenbreiten, Konsolen-Zustand) und echte Funktionsfehler (Transfer-Resume
+> war ein No-Op; keyboard-interactive-Auth fehlte) sind behoben. Verbleibende
+> Abweichungen sind überwiegend kosmetische Status-Meldungstexte. Details:
+> [GAPS.md](GAPS.md).
 
 ## Portiert
 
@@ -123,23 +123,27 @@ die einzige Oberfläche.
 
 | Original | Port |
 |---|---|
-| `tests/` (15 Dateien, 120 Tests) | `tests/` — eigenes Harness + CTest, **142 Tests**; alle 15 Testdateien abgedeckt |
+| `tests/` (15 Dateien, 120 Tests) | `tests/` — eigenes Harness + CTest, **156 Tests**; alle 15 Testdateien abgedeckt, plus ansi/keytools/shortcuts/tunnels/secrets/profiles/ssh_algs/macro_dock |
 | `smoke_gui.py` | `tests/test_smoke_gui.cpp` — Offscreen-Test der Oberfläche (Kernlogik deckt der Rest ab) |
 | `tools/i18n_extract.py` | portiert — sucht `_t("…")` in den C++-Quellen |
-| `i18n/en.json` | **1106 Schlüssel, 100 % übersetzt**, keine verwaisten Einträge |
+| `i18n/en.json` | **~1640 Schlüssel, 100 % übersetzt**, keine verwaisten Einträge |
 | `pyproject.toml`, `Pipfile`, `build-nuitka.ps1` | ersetzt durch `CMakeLists.txt`, `build.ps1`, `test.ps1` |
 
 Tests laufen mit `.\test.ps1` (oder `ctest --test-dir build`).
 
 ## Bekannte Einschränkungen
 
-- **Die GUI ist noch nicht ganz auf dem Funktionsumfang des Originals** — 135
-  Bedienelemente fehlen (Start: 620). Vollständige Aufstellung in
-  [GAPS.md](GAPS.md); Schwerpunkt `main_window` und die Handbuchtexte.
-- Systemweite Makro-Hotkeys (außerhalb des Fensters) sind nicht umgesetzt.
-- Die libssh2-Schicht (Auth, SFTP, PTY, Tunnel) ist gegen die Semantik des Originals
-  gebaut, aber **noch nicht gegen einen echten Server getestet** — dort ist am ehesten
-  Nacharbeit zu erwarten.
+- Verbleibende GUI-Abweichungen sind überwiegend **kosmetische Status-Meldungs­texte**
+  und Handbuch-Prosa; die funktionalen Bedienelemente, Menüs und Einstellungen sind
+  nachgezogen. Aufstellung in [GAPS.md](GAPS.md).
+- Die libssh2-Schicht ist inzwischen **gegen einen echten OpenSSH-Server validiert**
+  (Handshake/KEX, Host-Key, Auth). Dabei behoben: Keepalive vor dem Handshake (brach
+  jeden KEX ab), fehlendes ECDSA/ECDH im WinCNG-Build, keyboard-interactive-Auth-
+  Fallback und ein Transfer-Resume, das in Wahrheit neu kopierte. **Nicht** breit
+  getestet sind exotische Auth-/SFTP-/Tunnel-Kombinationen gegen diverse Server.
+- WinCNG kann **kein ed25519-Hostkey und kein curve25519** — Server, die
+  ausschließlich diese anbieten, brauchen ein anderes Krypto-Backend (OpenSSL/wolfSSL).
+  Server mit ecdsa/rsa-Hostkey und ecdh/DH funktionieren.
 - Globale Makro-Hotkeys (systemweite Tastenkürzel außerhalb des Fensters) sind nicht
   umgesetzt; im Makro-Manager lösen Tasten per Klick aus.
 - Der Terminal-Modus rendert über einen ANSI-Parser auf `QPlainTextEdit`, nicht über
