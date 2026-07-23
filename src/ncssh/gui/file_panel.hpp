@@ -222,6 +222,7 @@ private:
     bool m_sortAscending = true;
     bool m_sudoAvailable = false;
     bool m_sudoActive = false;
+    bool m_userResizing = false;   // Nutzer zieht gerade eine Spaltenbreite
 
     QHash<QString, QKeySequence> m_opShortcuts;   // konfigurierte Datei-Op-Kuerzel
     QStringList m_history;            // besuchte Pfade

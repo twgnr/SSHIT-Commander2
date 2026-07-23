@@ -32,6 +32,7 @@
 #include <QHash>
 #include <QItemSelectionModel>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QIcon>
 #include <QImage>
 #include <QLayoutItem>
@@ -259,6 +260,18 @@ void FilePanel::buildUi(const QString &title)
     m_table->horizontalHeader()->setSectionsClickable(true);
     connect(m_table->horizontalHeader(), &QHeaderView::sectionClicked, this,
             &FilePanel::sortBy);
+    // Vom Nutzer gezogene Spaltenbreiten merken (nur echte Maus-Resizes, nicht
+    // die programmatischen aus applyColumnWidths).
+    m_table->horizontalHeader()->installEventFilter(this);
+    connect(m_table->horizontalHeader(), &QHeaderView::sectionResized, this,
+            [this](int index, int, int newSize) {
+                if (!m_userResizing || index < 0 || index >= m_fileCols.size())
+                    return;
+                QVariantMap widths = core::getSetting(QStringLiteral("pane_col_widths")).toMap();
+                widths[m_fileCols.at(index)] = newSize;
+                core::setSetting(QStringLiteral("pane_col_widths"),
+                                 QJsonObject::fromVariantMap(widths));
+            });
     m_table->installEventFilter(this);
     m_table->viewport()->installEventFilter(this);
     // Drag & Drop: Ziehen aus der Pane heraus, Fallenlassen hinein.
@@ -1963,6 +1976,14 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
 {
     if (event->type() == QEvent::FocusIn || event->type() == QEvent::MouseButtonPress) {
         emit activated();
+    }
+    // Spaltenbreiten: nur vom Nutzer gezogene Resizes speichern (Maus gedrueckt).
+    if (obj == m_table->horizontalHeader()) {
+        if (event->type() == QEvent::MouseButtonPress)
+            m_userResizing = true;
+        else if (event->type() == QEvent::MouseButtonRelease)
+            m_userResizing = false;
+        return false;
     }
     // Klick auf die freie Flaeche neben den Breadcrumbs -> Pfad eingeben.
     if (m_crumbScroll && obj == m_crumbScroll->widget()
