@@ -53,7 +53,7 @@ PropertiesDialog::PropertiesDialog(AsyncBridge *bridge, core::FileSystemProvider
     if (entry.created.isValid())
         form->addRow(_t("Erstellt"), new QLabel(core::formatDt(entry.created, QString()), this));
     if (!entry.owner.isEmpty())
-        form->addRow(_t("Eigner"), new QLabel(entry.owner + QStringLiteral(" / ") + entry.group, this));
+        form->addRow(_t("Eigentümer"), new QLabel(entry.owner + QStringLiteral(" / ") + entry.group, this));
     if (!entry.linkTarget.isEmpty())
         form->addRow(_t("Symlink-Ziel"), new QLabel(entry.linkTarget, this));
     layout->addLayout(form);
@@ -78,8 +78,12 @@ PropertiesDialog::PropertiesDialog(AsyncBridge *bridge, core::FileSystemProvider
     const QStringList whoLabels = {_t("Eigner"), _t("Gruppe"), _t("Andere")};
     const QStringList bitLabels = {QStringLiteral("r"), QStringLiteral("w"), QStringLiteral("x")};
     grid->addWidget(new QLabel(QString(), permBox), 0, 0);
-    for (int b = 0; b < 3; ++b)
-        grid->addWidget(new QLabel(bitLabels[b], permBox), 0, b + 1);
+    const QStringList bitTips = {_t("Lesen"), _t("Schreiben"), _t("Ausführen")};
+    for (int b = 0; b < 3; ++b) {
+        auto *head = new QLabel(bitLabels[b], permBox);
+        head->setToolTip(bitTips[b]);
+        grid->addWidget(head, 0, b + 1);
+    }
     for (int who = 0; who < 3; ++who) {
         grid->addWidget(new QLabel(whoLabels[who], permBox), who + 1, 0);
         for (int b = 0; b < 3; ++b) {
@@ -103,6 +107,7 @@ PropertiesDialog::PropertiesDialog(AsyncBridge *bridge, core::FileSystemProvider
     syncFromChecks();
 
     auto *box = new QDialogButtonBox(QDialogButtonBox::Apply | QDialogButtonBox::Close, this);
+    box->button(QDialogButtonBox::Apply)->setText(_t("Rechte anwenden"));
     connect(box->button(QDialogButtonBox::Apply), &QPushButton::clicked, this,
             &PropertiesDialog::applyChmod);
     connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -152,7 +157,9 @@ void PropertiesDialog::applyChmod()
     m_bridge->run(
         [provider, path, mode] { provider->chmod(path, mode); },
         [this] { accept(); },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) {
+            QMessageBox::warning(this, _t("Rechte ändern fehlgeschlagen"), err);
+        });
 }
 
 } // namespace ncssh::gui
