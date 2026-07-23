@@ -277,6 +277,7 @@ void MacroManagerDialog::buildUi()
     dockLayout->setContentsMargins(0, 0, 0, 0);
     dockLayout->addWidget(new QLabel(_t("Andocken:"), this));
     m_dockCombo = new QComboBox(m_dockRow);
+    m_dockCombo->setObjectName(QStringLiteral("MacroDockCombo"));
     m_dockCombo->addItem(_t("Freischwebend"), QStringLiteral("float"));
     m_dockCombo->addItem(_t("Links"), QStringLiteral("left"));
     m_dockCombo->addItem(_t("Rechts"), QStringLiteral("right"));
@@ -293,6 +294,7 @@ void MacroManagerDialog::buildUi()
     auto *right = new QVBoxLayout();
     auto *topRow = new QHBoxLayout();
     m_modeButton = new QPushButton(this);
+    m_modeButton->setObjectName(QStringLiteral("MacroModeButton"));
     m_modeButton->setCheckable(true);
     m_modeButton->setChecked(m_runMode);
     connect(m_modeButton, &QPushButton::toggled, this, &MacroManagerDialog::toggleMode);
@@ -767,10 +769,15 @@ void MacroManagerDialog::onDockCombo()
     const QString side = m_dockCombo->currentData().toString();
     m_config.dock = side;
     saveConfig();
-    // Im Bearbeiten-Modus nur merken (Fenster bleibt schwebend); im Ausfuehren-
-    // Modus sofort anwenden.
-    if (m_runMode)
+    if (m_runMode) {
+        // Bereits im Ausfuehren-Modus: Seite direkt anwenden.
         setDock(side, /*persist=*/false);
+    } else if (side != QLatin1String("float")) {
+        // Bearbeiten-Modus ist immer schwebend. Damit die Auswahl "Rechts" o.ae.
+        // sofort sichtbar wird, schalten wir in den Ausfuehren-Modus — das
+        // Umschalten wendet die gemerkte Seite an (toggleMode -> setDock).
+        m_modeButton->setChecked(true);
+    }
 }
 
 void MacroManagerDialog::syncDockCombo()
