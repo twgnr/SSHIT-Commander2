@@ -204,9 +204,17 @@ EditorDialog::EditorDialog(AsyncBridge *bridge, core::FileSystemProvider *provid
     findRow->addWidget(repAllBtn);
     layout->addLayout(findRow);
 
+    // Statusleiste: Meldung links, Cursor-/Datei-Info rechts.
+    auto *statusRow = new QHBoxLayout();
     m_status = new QLabel(this);
     m_status->setObjectName(QStringLiteral("Muted"));
-    layout->addWidget(m_status);
+    m_cursorInfo = new QLabel(this);
+    m_cursorInfo->setObjectName(QStringLiteral("Muted"));
+    statusRow->addWidget(m_status, 1);
+    statusRow->addWidget(m_cursorInfo);
+    layout->addLayout(statusRow);
+    connect(m_editor, &QPlainTextEdit::cursorPositionChanged, this,
+            &EditorDialog::updateCursorInfo);
 
     // Tastenkuerzel
     connect(new QShortcut(QKeySequence(QStringLiteral("Ctrl+S")), this), &QShortcut::activated,
@@ -225,6 +233,20 @@ EditorDialog::EditorDialog(AsyncBridge *bridge, core::FileSystemProvider *provid
 
     updateTitle();
     load();
+}
+
+void EditorDialog::updateCursorInfo()
+{
+    const QTextCursor cursor = m_editor->textCursor();
+    const int line = cursor.blockNumber() + 1;
+    const int col = cursor.positionInBlock() + 1;
+    const int bytes = m_editor->toPlainText().toUtf8().size();
+    // EOL-Konvention grob aus dem Rohtext ablesen (Anzeige, nicht bindend).
+    const QString eol = m_editor->toPlainText().contains(QStringLiteral("\r\n"))
+                            ? QStringLiteral("CRLF")
+                            : QStringLiteral("LF");
+    m_cursorInfo->setText(_t("Z %1, Sp %2   ·   %3 Bytes   ·   %4")
+                              .arg(line).arg(col).arg(bytes).arg(eol));
 }
 
 void EditorDialog::updateTitle()
@@ -261,6 +283,7 @@ void EditorDialog::load()
             m_editor->setPlainText(text);
             m_dirty = false;
             updateTitle();
+            updateCursorInfo();
         },
         [this](const QString &err) {
             m_status->setText(err);

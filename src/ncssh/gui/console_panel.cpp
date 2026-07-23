@@ -233,10 +233,17 @@ void ConsolePanel::runCommand(const QString &command, bool execute)
             runner->stream(command, cwd, [&emit](const QString &line) { emit(line); }, cancel);
         },
         [this](const QString &line) { appendOutput(line); },
-        [this] {
+        [this, runner] {
             m_running = nullptr;
             setBusy(false);
-            m_status->setText(_t("✓ fertig"));
+            // Exit-Code anzeigen, sofern der Runner ihn geliefert hat.
+            const auto code = runner->lastExitStatus;
+            if (code && *code == 0)
+                m_status->setText(_t("✓ fertig (Exit 0)"));
+            else if (code)
+                m_status->setText(_t("✗ Exit %1").arg(*code));
+            else
+                m_status->setText(_t("✓ fertig"));
         },
         [this](const QString &err) {
             appendOutput(_t("[Fehler] %1").arg(err));

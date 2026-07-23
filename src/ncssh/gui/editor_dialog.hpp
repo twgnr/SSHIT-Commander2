@@ -58,6 +58,7 @@ private:
     void codecheckWithAi();        // Quellcode auf Fehler pruefen lassen
     void openEncodingConverter();  // Zeichensatz der Datei umwandeln
     void updateTitle();
+    void updateCursorInfo();   // Zeile/Spalte/Bytes/EOL rechts
 
     AsyncBridge *m_bridge;
     core::FileSystemProvider *m_provider;
@@ -72,6 +73,7 @@ private:
     QLineEdit *m_replace = nullptr;
     QCheckBox *m_caseSensitive = nullptr;
     QLabel *m_status = nullptr;
+    QLabel *m_cursorInfo = nullptr;
 };
 
 } // namespace ncssh::gui
