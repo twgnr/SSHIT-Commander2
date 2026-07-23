@@ -49,5 +49,6 @@ TEST(ssh_algs, ecdh_and_ecdsa_are_offered)
     CHECK(offers(s, LIBSSH2_METHOD_KEX, "diffie-hellman-group14-sha256"));
 
     libssh2_session_free(s);
-    libssh2_exit();
+    // Bewusst KEIN libssh2_exit(): die App ruft es nie, und ein Exit+Re-Init
+    // wuerde andere Tests (echte Verbindung) beeinflussen.
 }

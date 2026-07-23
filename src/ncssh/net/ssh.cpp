@@ -316,7 +316,6 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
     session->m_session = sess;
     libssh2_session_set_blocking(sess, 1);
     libssh2_session_set_timeout(sess, 20000);
-    libssh2_keepalive_config(sess, 1, 30);
 
     if (const int rc = libssh2_session_handshake(sess, session->m_socket); rc != 0) {
         QString message = QStringLiteral("SSH-Handshake fehlgeschlagen: %1").arg(lastSshError(sess));
@@ -331,6 +330,11 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
                 "Host-Key bzw. ecdh/diffie-hellman als Schlüsseltausch erlaubt.");
         throw HostKeyError(message);
     }
+
+    // Keepalive ERST NACH dem Handshake konfigurieren. Wird es vorher gesetzt,
+    // scheitert der Schluesseltausch mit "Unable to exchange encryption keys"
+    // (libssh2-Eigenheit — die Keepalive-Logik greift sonst in den KEX ein).
+    libssh2_keepalive_config(sess, 1, 30);
 
     // --- Host-Key-Pruefung VOR jeder Authentifizierung ---
     QString algo;
