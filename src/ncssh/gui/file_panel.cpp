@@ -101,6 +101,10 @@ FilePanel::FilePanel(AsyncBridge *bridge, const QString &title, QWidget *parent)
 void FilePanel::buildUi(const QString &title)
 {
     setObjectName(QStringLiteral("Pane"));
+    // QWidget-Unterklassen zeichnen den Stylesheet-Rahmen nur mit diesem
+    // Attribut — sonst bleibt der (aktive) #Pane[active="true"]-Rahmen unsichtbar.
+    setAttribute(Qt::WA_StyledBackground, true);
+    setProperty("active", false);
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(6);

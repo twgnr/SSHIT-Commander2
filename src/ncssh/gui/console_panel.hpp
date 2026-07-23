@@ -21,6 +21,8 @@ class QPushButton;
 
 class QVBoxLayout;
 
+namespace ncssh::core { class FileSystemProvider; }
+
 namespace ncssh::gui {
 
 class FilePanel;
@@ -34,6 +36,8 @@ public:
     // Runner setzen (Eigentum beim Aufrufer). cwd wird uebernommen.
     void setRunner(core::CommandRunner *runner, const QString &cwd);
     void setCwd(const QString &cwd);
+    // Dateisystem fuer die Tab-Pfadvervollstaendigung im Befehlsmodus.
+    void setCompletionProvider(core::FileSystemProvider *provider) { m_completionProvider = provider; }
     QString cwd() const { return m_cwd; }
 
     // Session fuer den Terminal-Modus (leer = lokale Shell).
@@ -41,6 +45,9 @@ public:
 
     // Beschriftung des Abdock-Knopfes umschalten.
     void setDocked(bool docked);
+
+    // Aktiv-Markierung (blauer Rahmen ueber #ConsolePanel[active="true"]).
+    void setActive(bool active);
 
     void runCommand(const QString &command, bool execute = true);
     // Terminalausgabe von der KI erklaeren lassen (auch ueber das Tools-Menue).
@@ -67,9 +74,11 @@ private:
     void hideSearch();
     void searchStep(bool forward);
     void cancelRunning();         // laufenden Befehl abbrechen (Strg+C / Esc)
+    void complete();              // Tab: letztes Wort als Pfad vervollstaendigen
 
     AsyncBridge *m_bridge;
     core::CommandRunner *m_runner = nullptr;
+    core::FileSystemProvider *m_completionProvider = nullptr;
     net::SSHSessionPtr m_session;
     QString m_cwd;
 

@@ -101,6 +101,8 @@ protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
 
 private:
+    // Aktive Pane + Konsole blau umranden (Property "active" je Seite setzen).
+    void highlightActive();
     // moveSource: Quelle nach erfolgreicher Uebertragung entfernen (Verschieben).
     void startTransfer(core::FileSystemProvider *src, const QString &srcPath,
                        core::FileSystemProvider *dst, const QString &dstDir,
@@ -157,6 +159,10 @@ private:
     PreviewPanel *m_rightPreview = nullptr;
     ConsolePanel *m_leftConsole = nullptr;
     ConsolePanel *m_rightConsole = nullptr;
+    // Pane/Konsole, in der die aktuelle Verbindung liegt. Beim Verbinden auf die
+    // aktive Seite gesetzt; solange nichts verbunden ist, zeigt es auf rechts.
+    FilePanel *m_connectedPanel = nullptr;
+    ConsolePanel *m_connectedConsole = nullptr;
     bool m_rightActive = false;  // zuletzt fokussierte Seite
     TunnelManager m_tunnels;     // offene Port-Weiterleitungen dieser Sitzung
     QTimer *m_healthTimer = nullptr;   // Keepalive-Wecker

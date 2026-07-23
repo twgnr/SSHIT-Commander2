@@ -4,9 +4,11 @@
 #include "ncssh/core/i18n.hpp"
 
 #include "ncssh/core/ai.hpp"
+#include "ncssh/core/filesystem.hpp"
 #include "ncssh/gui/ai_chat_panel.hpp"
 #include "ncssh/gui/terminal_widget.hpp"
 
+#include <QDir>
 #include <QFont>
 #include <QMessageBox>
 #include <QHBoxLayout>
@@ -17,6 +19,7 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QStackedWidget>
+#include <QStyle>
 #include <QTextDocument>
 #include <QVBoxLayout>
 
@@ -28,6 +31,10 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     : QWidget(parent), m_bridge(bridge)
 {
     setObjectName(QStringLiteral("ConsolePanel"));
+    // Ohne dieses Attribut zeichnet die QWidget-Unterklasse den aktiven Rahmen
+    // (#ConsolePanel[active="true"]) nicht.
+    setAttribute(Qt::WA_StyledBackground, true);
+    setProperty("active", false);
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(6);
@@ -137,6 +144,16 @@ void ConsolePanel::setDocked(bool docked)
     m_docked = docked;
     m_dockButton->setText(docked ? QStringLiteral("⤢") : QStringLiteral("⤵"));
     m_dockButton->setToolTip(docked ? _t("⤢ Abdocken") : _t("⤵ Andocken"));
+}
+
+void ConsolePanel::setActive(bool active)
+{
+    if (property("active").toBool() == active)
+        return;
+    setProperty("active", active);
+    // Dynamische Property wirkt erst nach erneutem Polish des Stylesheets.
+    style()->unpolish(this);
+    style()->polish(this);
 }
 
 void ConsolePanel::setSession(const net::SSHSessionPtr &session)
@@ -290,6 +307,103 @@ void ConsolePanel::appendOutput(const QString &text)
     m_output->verticalScrollBar()->setValue(m_output->verticalScrollBar()->maximum());
 }
 
+void ConsolePanel::complete()
+{
+    if (!m_completionProvider)
+        return;
+    const int pos = m_input->cursorPosition();
+    const QString text = m_input->text();
+    const QString before = text.left(pos);
+    const QString after = text.mid(pos);
+    // Token-Anfang: in offenen Anfuehrungszeichen ab dem Quote (Leerzeichen
+    // gehoeren dann zum Pfad), sonst ab dem letzten Leerzeichen.
+    const bool inQuotes = (before.count(QLatin1Char('"')) % 2) == 1;
+    const int start = inQuotes ? before.lastIndexOf(QLatin1Char('"')) + 1
+                               : before.lastIndexOf(QLatin1Char(' ')) + 1;
+    const QString token = before.mid(start);
+    const int cut = qMax(token.lastIndexOf(QLatin1Char('/')),
+                         token.lastIndexOf(QLatin1Char('\\'))) + 1;
+    const QString dirPart = token.left(cut);
+    const QString prefix = token.mid(cut);
+    const QString sep = m_completionProvider->isRemote ? QStringLiteral("/")
+                                                       : QString(QDir::separator());
+    const QString cwd = m_cwd.isEmpty() ? QStringLiteral(".") : m_cwd;
+    QString base;
+    if (dirPart.isEmpty())
+        base = cwd;
+    else if (dirPart.startsWith(QLatin1Char('/')) || QDir::isAbsolutePath(dirPart))
+        base = dirPart;
+    else
+        base = m_completionProvider->join(cwd, dirPart);
+
+    core::FileSystemProvider *provider = m_completionProvider;
+    m_bridge->run<std::vector<core::FileEntry>>(
+        [provider, base] { return provider->listDir(base); },
+        [this, text, pos, before, after, start, dirPart, prefix, inQuotes, sep](
+            const std::vector<core::FileEntry> &entries) {
+            // Inzwischen weitergetippt/abgeschickt? Dann nichts ueberschreiben.
+            if (m_input->text() != text || m_input->cursorPosition() != pos)
+                return;
+            std::vector<const core::FileEntry *> names;
+            for (const auto &e : entries) {
+                if (e.type == core::EntryType::Parent)
+                    continue;
+                if (e.name.startsWith(prefix))
+                    names.push_back(&e);
+            }
+            if (names.empty() && !prefix.isEmpty()) {  // Gross/Kleinschreibung egal
+                const QString low = prefix.toLower();
+                for (const auto &e : entries) {
+                    if (e.type == core::EntryType::Parent)
+                        continue;
+                    if (e.name.toLower().startsWith(low))
+                        names.push_back(&e);
+                }
+            }
+            if (names.empty())
+                return;
+
+            auto apply = [&](const QString &completed, bool closeToken) {
+                const bool quote = inQuotes || (dirPart + completed).contains(QLatin1Char(' '));
+                const QString lead = (quote && !inQuotes) ? QStringLiteral("\"") : QString();
+                const QString tail = closeToken ? (quote ? QStringLiteral("\" ")
+                                                         : QStringLiteral(" "))
+                                                : QString();
+                const QString newBefore = before.left(start) + lead + dirPart + completed + tail;
+                m_input->setText(newBefore + after);
+                m_input->setCursorPosition(newBefore.size());
+            };
+
+            if (names.size() == 1) {
+                const core::FileEntry *e = names.front();
+                if (e->type == core::EntryType::Dir)
+                    apply(e->name + sep, false);
+                else
+                    apply(e->name, true);
+                return;
+            }
+            // Gemeinsamen Anfang aller Kandidaten bestimmen.
+            QString common = names.front()->name;
+            for (const core::FileEntry *e : names) {
+                int i = 0;
+                while (i < common.size() && i < e->name.size() && common[i] == e->name[i])
+                    ++i;
+                common.truncate(i);
+            }
+            if (common.size() <= prefix.size()) {
+                // Nicht weiter eindeutig -> Kandidaten in der Ausgabe listen.
+                QStringList shown;
+                for (const core::FileEntry *e : names)
+                    shown << e->name + (e->type == core::EntryType::Dir ? QStringLiteral("/")
+                                                                        : QString());
+                appendOutput(shown.join(QStringLiteral("  ")));
+                return;
+            }
+            apply(common, false);
+        },
+        [](const QString &) {});
+}
+
 bool ConsolePanel::eventFilter(QObject *obj, QEvent *event)
 {
     if (obj == m_input && event->type() == QEvent::KeyPress) {
@@ -321,6 +435,12 @@ bool ConsolePanel::eventFilter(QObject *obj, QEvent *event)
         }
         if (ke->key() == Qt::Key_F && (ke->modifiers() & Qt::ControlModifier)) {
             showSearch();
+            return true;
+        }
+        // Tab vervollstaendigt den Pfad (wie in einer Shell), statt den Fokus zu
+        // wechseln. Shift+Tab bleibt der normale Rueckwaerts-Fokuswechsel.
+        if (ke->key() == Qt::Key_Tab && !(ke->modifiers() & Qt::ShiftModifier)) {
+            complete();
             return true;
         }
     }

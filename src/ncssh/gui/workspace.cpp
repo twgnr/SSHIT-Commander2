@@ -19,6 +19,7 @@
 #include <QMessageBox>
 #include <QAbstractButton>
 #include <QSplitter>
+#include <QStyle>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -73,8 +74,10 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     // Lokale Provider zuweisen
     m_leftPanel->setProvider(m_localFs.get());
     m_leftConsole->setRunner(m_localRunner.get(), QDir::homePath());
+    m_leftConsole->setCompletionProvider(m_localFs.get());
     m_rightPanel->setProvider(m_localFs.get());
     m_rightConsole->setRunner(m_localRunner.get(), QDir::homePath());
+    m_rightConsole->setCompletionProvider(m_localFs.get());
 
     // CWD-Sync: Pane -> Konsole
     connect(m_leftPanel, &FilePanel::pathChanged, m_leftConsole, &ConsolePanel::setCwd);
@@ -89,20 +92,25 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     for (ConsolePanel *c : {m_leftConsole, m_rightConsole})
         connect(c, &ConsolePanel::statusMessage, this, &Workspace::statusMessage);
 
-    // Aktive Seite merken (bestimmt Ziel von Befehlspalette/Werkzeugen).
-    connect(m_leftPanel, &FilePanel::activated, this, [this] { m_rightActive = false; });
-    connect(m_rightPanel, &FilePanel::activated, this, [this] { m_rightActive = true; });
-    connect(m_leftConsole, &ConsolePanel::activated, this, [this] { m_rightActive = false; });
-    connect(m_rightConsole, &ConsolePanel::activated, this, [this] { m_rightActive = true; });
+    // Aktive Seite merken (bestimmt Ziel von Befehlspalette/Werkzeugen) und die
+    // Pane/Konsole der aktiven Seite blau umranden.
+    connect(m_leftPanel, &FilePanel::activated, this, [this] { m_rightActive = false; highlightActive(); });
+    connect(m_rightPanel, &FilePanel::activated, this, [this] { m_rightActive = true; highlightActive(); });
+    connect(m_leftConsole, &ConsolePanel::activated, this, [this] { m_rightActive = false; highlightActive(); });
+    connect(m_rightConsole, &ConsolePanel::activated, this, [this] { m_rightActive = true; highlightActive(); });
 
-    // sudo-Modus der rechten Pane: auf das sudo-Dateisystem umschalten.
-    connect(m_rightPanel, &FilePanel::sudoToggled, this, &Workspace::setSudoMode);
+    // Solange nichts verbunden ist, liegt die (potenzielle) Verbindung rechts.
+    m_connectedPanel = m_rightPanel;
+    m_connectedConsole = m_rightConsole;
 
-    // Trennen-Chip im Header der rechten Pane.
-    connect(m_rightPanel, &FilePanel::disconnectRequested, this, [this] {
-        if (m_session)
-            disconnectSession();
-    });
+    // sudo-/Trennen-Chip beider Panes: wirkt auf die Pane mit der Verbindung.
+    for (FilePanel *p : {m_leftPanel, m_rightPanel}) {
+        connect(p, &FilePanel::sudoToggled, this, &Workspace::setSudoMode);
+        connect(p, &FilePanel::disconnectRequested, this, [this] {
+            if (m_session)
+                disconnectSession();
+        });
+    }
 
     // Vorschau-Panel: zeigt die markierte Datei der jeweiligen Pane.
     connect(m_leftPanel, &FilePanel::selectionChanged, this, [this](const QString &path) {
@@ -193,6 +201,9 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
             p->setProvider(back, back == m_localFs.get() ? QDir::homePath() : QString());
         });
     }
+
+    // Startzustand: linke Pane ist aktiv -> gleich blau umranden.
+    highlightActive();
 }
 
 void Workspace::pasteInto(FilePanel *target, bool move)
@@ -300,12 +311,19 @@ void Workspace::disconnectSession()
     m_session.reset();
     // Reihenfolge zaehlt: erst die Verbraucher abhaengen, dann die Objekte
     // freigeben — sonst zeigt eine Pane noch auf ein totes Dateisystem.
-    m_rightPanel->setSudoAvailable(false);
-    m_rightPanel->setConnected(false);
-    m_rightConsole->setSession({});
-    m_rightConsole->setRunner(m_localRunner.get(), QDir::homePath());
-    m_rightPanel->setHeaderTitle(_t("Remote (nicht verbunden)"));
-    m_rightPanel->setProvider(m_localFs.get(), QDir::homePath());
+    FilePanel *panel = m_connectedPanel ? m_connectedPanel : m_rightPanel;
+    ConsolePanel *console = m_connectedConsole ? m_connectedConsole : m_rightConsole;
+    panel->setSudoAvailable(false);
+    panel->setConnected(false);
+    console->setSession({});
+    console->setRunner(m_localRunner.get(), QDir::homePath());
+    console->setCompletionProvider(m_localFs.get());
+    // Rechte Pane bekommt wieder ihren Remote-Platzhalter, die linke "Lokal".
+    panel->setHeaderTitle(panel == m_leftPanel ? _t("Lokal")
+                                               : _t("Remote (nicht verbunden)"));
+    panel->setProvider(m_localFs.get(), QDir::homePath());
+    m_connectedPanel = m_rightPanel;
+    m_connectedConsole = m_rightConsole;
     m_sudoFs.reset();
     m_remoteRunner.reset();
     m_remoteFs.reset();
@@ -395,6 +413,21 @@ FilePanel *Workspace::activePanel() const
     return m_rightActive ? m_rightPanel : m_leftPanel;
 }
 
+void Workspace::highlightActive()
+{
+    // Aktive Seite (Pane + Konsole) markieren, andere zuruecksetzen.
+    for (auto *panel : {m_leftPanel, m_rightPanel}) {
+        const bool active = (panel == m_rightPanel) == m_rightActive;
+        if (panel->property("active").toBool() != active) {
+            panel->setProperty("active", active);
+            panel->style()->unpolish(panel);
+            panel->style()->polish(panel);
+        }
+    }
+    m_leftConsole->setActive(!m_rightActive);
+    m_rightConsole->setActive(m_rightActive);
+}
+
 void Workspace::showNetworkHosts(const std::vector<core::HostResult> &hosts,
                                  const QString &side)
 {
@@ -471,9 +504,10 @@ void Workspace::setSudoMode(bool on)
 {
     if (!m_session || !m_remoteFs)
         return;
-    const QString keepPath = m_rightPanel->currentPath();
+    FilePanel *const panel = m_connectedPanel;  // Pane mit der Verbindung
+    const QString keepPath = panel->currentPath();
     if (!on) {
-        m_rightPanel->setProvider(m_remoteFs.get(), keepPath);
+        panel->setProvider(m_remoteFs.get(), keepPath);
         m_sudoFs.reset();
         emit statusMessage(_t("sudo-Modus aus."));
         return;
@@ -494,7 +528,7 @@ void Workspace::setSudoMode(bool on)
                 this, _t("sudo-Passwort"), _t("sudo-Passwort für %1:").arg(host),
                 QLineEdit::Password, QString(), &ok);
             if (!ok || password.isEmpty()) {
-                m_rightPanel->setSudoActive(false);   // Chip zurueckstellen
+                m_connectedPanel->setSudoActive(false);   // Chip zurueckstellen
                 return;
             }
             // Pruefung geht ueber SSH — nicht im GUI-Thread, sonst haengt das
@@ -505,7 +539,7 @@ void Workspace::setSudoMode(bool on)
                     if (!accepted) {
                         QMessageBox::warning(this, _t("sudo"),
                                              _t("sudo-Authentifizierung fehlgeschlagen."));
-                        m_rightPanel->setSudoActive(false);
+                        m_connectedPanel->setSudoActive(false);
                         return;
                     }
                     session->sudoPassword = password;
@@ -513,19 +547,19 @@ void Workspace::setSudoMode(bool on)
                 },
                 [this](const QString &err) {
                     QMessageBox::warning(this, _t("sudo"), err);
-                    m_rightPanel->setSudoActive(false);
+                    m_connectedPanel->setSudoActive(false);
                 });
         },
         [this](const QString &err) {
             QMessageBox::warning(this, _t("sudo"), err);
-            m_rightPanel->setSudoActive(false);
+            m_connectedPanel->setSudoActive(false);
         });
 }
 
 void Workspace::enableSudoFilesystem(const QString &keepPath)
 {
     m_sudoFs = std::make_unique<net::SudoFileSystem>(m_remoteFs.get(), m_session);
-    m_rightPanel->setProvider(m_sudoFs.get(), keepPath);
+    m_connectedPanel->setProvider(m_sudoFs.get(), keepPath);
     emit statusMessage(_t("sudo-Modus aktiv — Operationen laufen als root."));
 }
 
@@ -567,25 +601,33 @@ void Workspace::restoreFrom(const QJsonObject &state)
 
 void Workspace::connectTo(const core::ServerProfile &profile)
 {
+    // Verbindung landet in der aktiven Pane (wie im Original). Die Zielpane wird
+    // JETZT festgehalten — bis das Ergebnis eintrifft, kann sich der Fokus aendern.
+    FilePanel *panel = activePanel();
+    ConsolePanel *console = (panel == m_rightPanel) ? m_rightConsole : m_leftConsole;
+    m_connectedPanel = panel;
+    m_connectedConsole = console;
+
     net::SessionManager *sessions = m_sessions;
     m_bridge->run<net::SSHSessionPtr>(
         [sessions, profile] { return sessions->open(profile); },
-        [this, profile](const net::SSHSessionPtr &session) {
+        [this, profile, panel, console](const net::SSHSessionPtr &session) {
             m_session = session;
             m_remoteFs = session->filesystem();
             m_remoteRunner = session->runner();
-            m_rightPanel->setHeaderTitle(session->label());
+            panel->setHeaderTitle(session->label());
             // Lesezeichen getrennt je Verbindung (Profilname).
-            m_rightPanel->setBookmarkKey(profile.name.isEmpty() ? session->label()
-                                                                : profile.name);
-            m_rightPanel->setProvider(m_remoteFs.get());
+            panel->setBookmarkKey(profile.name.isEmpty() ? session->label()
+                                                          : profile.name);
+            panel->setProvider(m_remoteFs.get());
             // Konsole-CWD folgt spaeter dem Pane-Home.
-            m_rightConsole->setRunner(m_remoteRunner.get(), QStringLiteral("."));
-            m_rightConsole->setSession(session);  // Terminal-Modus nutzt die SSH-Shell
+            console->setRunner(m_remoteRunner.get(), QStringLiteral("."));
+            console->setCompletionProvider(m_remoteFs.get());  // Tab-Pfade vom Server
+            console->setSession(session);  // Terminal-Modus nutzt die SSH-Shell
             // sudo-Chip nur bei POSIX-Servern anbieten; Trennen-Chip bei jeder
             // Verbindung.
-            m_rightPanel->setSudoAvailable(session->osType == QLatin1String("posix"));
-            m_rightPanel->setConnected(true);
+            panel->setSudoAvailable(session->osType == QLatin1String("posix"));
+            panel->setConnected(true);
             emit statusMessage(QStringLiteral("Verbunden: %1 (%2)")
                                    .arg(session->label(), session->osType));
             if (session->hostKeyStatus == QLatin1String("unknown")) {
