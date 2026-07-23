@@ -98,6 +98,12 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     // sudo-Modus der rechten Pane: auf das sudo-Dateisystem umschalten.
     connect(m_rightPanel, &FilePanel::sudoToggled, this, &Workspace::setSudoMode);
 
+    // Trennen-Chip im Header der rechten Pane.
+    connect(m_rightPanel, &FilePanel::disconnectRequested, this, [this] {
+        if (m_session)
+            disconnectSession();
+    });
+
     // Vorschau-Panel: zeigt die markierte Datei der jeweiligen Pane.
     connect(m_leftPanel, &FilePanel::selectionChanged, this, [this](const QString &path) {
         if (m_leftPreview->isVisible())
@@ -295,6 +301,7 @@ void Workspace::disconnectSession()
     // Reihenfolge zaehlt: erst die Verbraucher abhaengen, dann die Objekte
     // freigeben — sonst zeigt eine Pane noch auf ein totes Dateisystem.
     m_rightPanel->setSudoAvailable(false);
+    m_rightPanel->setConnected(false);
     m_rightConsole->setSession({});
     m_rightConsole->setRunner(m_localRunner.get(), QDir::homePath());
     m_rightPanel->setHeaderTitle(_t("Remote (nicht verbunden)"));
@@ -575,8 +582,10 @@ void Workspace::connectTo(const core::ServerProfile &profile)
             // Konsole-CWD folgt spaeter dem Pane-Home.
             m_rightConsole->setRunner(m_remoteRunner.get(), QStringLiteral("."));
             m_rightConsole->setSession(session);  // Terminal-Modus nutzt die SSH-Shell
-            // sudo-Chip nur bei POSIX-Servern anbieten.
+            // sudo-Chip nur bei POSIX-Servern anbieten; Trennen-Chip bei jeder
+            // Verbindung.
             m_rightPanel->setSudoAvailable(session->osType == QLatin1String("posix"));
+            m_rightPanel->setConnected(true);
             emit statusMessage(QStringLiteral("Verbunden: %1 (%2)")
                                    .arg(session->label(), session->osType));
             if (session->hostKeyStatus == QLatin1String("unknown")) {

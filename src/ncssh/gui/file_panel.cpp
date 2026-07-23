@@ -117,7 +117,15 @@ void FilePanel::buildUi(const QString &title)
         m_sudoActive = on;
         emit sudoToggled(on);
     });
+    // Trennen-Chip: nur an einer verbundenen Seite sichtbar.
+    m_disconnectChip = new QPushButton(_t("⏏ Trennen"), this);
+    m_disconnectChip->setObjectName(QStringLiteral("Chip"));
+    m_disconnectChip->setVisible(false);
+    m_disconnectChip->setToolTip(_t("Verbindung dieser Seite trennen"));
+    connect(m_disconnectChip, &QPushButton::clicked, this,
+            [this] { emit disconnectRequested(); });
     headerRow->addWidget(m_header, 1);
+    headerRow->addWidget(m_disconnectChip);
     headerRow->addWidget(m_sudoChip);
     layout->addLayout(headerRow);
 
@@ -1730,6 +1738,12 @@ void FilePanel::triggerOp(const QString &id)
     else if (id == QLatin1String("mkdir")) opMkdir();
     else if (id == QLatin1String("delete")) opDelete();
     else if (id == QLatin1String("hidden")) toggleHidden();
+}
+
+void FilePanel::setConnected(bool connected)
+{
+    if (m_disconnectChip)
+        m_disconnectChip->setVisible(connected);
 }
 
 void FilePanel::setSudoActive(bool active)

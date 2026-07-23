@@ -47,6 +47,8 @@ public:
     // sudo-Modus (nur remote/Linux): schaltet auf das sudo-Dateisystem um.
     // Der Workspace stellt den Provider bereit; hier wird nur der Chip gefuehrt.
     void setSudoAvailable(bool available);
+    // Trennen-Chip im Header ein-/ausblenden (verbundene Remote-Seite).
+    void setConnected(bool connected);
     bool sudoActive() const { return m_sudoActive; }
     // Chip-Zustand setzen, ohne sudoToggled auszuloesen — fuer den Fall, dass
     // das Umschalten fehlschlaegt und der Haken zurueck muss.
@@ -102,6 +104,8 @@ signals:
     void dirDiffRequested();
     // Alarm-Trigger fuer das markierte Verzeichnis setzen.
     void dirAlarmRequested(const QString &path);
+    // Trennen-Chip im Pane-Header geklickt.
+    void disconnectRequested();
     // --- Netzwerk-Modus (net://) ---
     void connectToHostRequested(const QString &host);  // SSH zu diesem Host
     void rescanRequested();                            // Scanner erneut starten
@@ -236,6 +240,7 @@ private:
     QString m_baseStatus;             // Zusammenfassung ohne Auswahl-Teil
     QPushButton *m_starButton = nullptr;
     QPushButton *m_sudoChip = nullptr;
+    QPushButton *m_disconnectChip = nullptr;
     QLineEdit *m_filterEdit = nullptr;
 };
 
