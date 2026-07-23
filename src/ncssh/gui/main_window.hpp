@@ -6,6 +6,7 @@
 #include "ncssh/gui/bridge.hpp"
 #include "ncssh/net/session.hpp"
 
+#include <QHash>
 #include <QMainWindow>
 #include <memory>
 
@@ -63,6 +64,9 @@ private:
     void restoreSession();
     void applyThemeByName(const QString &name);
     void buildStatusBar();
+    // Konfigurierte Tastenkuerzel auf die registrierten Menue-Aktionen legen.
+    void applyShortcuts();
+    void openKeyTools();   // SSH-Schluessel erzeugen/konvertieren
     // Verbindungs-, Host-Key- und Tunnel-Anzeige nachziehen.
     void updateConnectionStatus();
     // Fragt fehlende Zugangsdaten ab (Benutzer, Passphrase, Passwort).
@@ -89,6 +93,8 @@ private:
     QLabel *m_tunnelLabel = nullptr;
     QLabel *m_alarmNotice = nullptr;    // anklickbar, oeffnet die Alarm-Liste
     QLabel *m_githubNotice = nullptr;
+    // Menue-Aktionen mit konfigurierbarem Kuerzel: ID -> Aktion.
+    QHash<QString, QAction *> m_shortcutActions;
     int m_pendingAlarms = 0;
     int m_pendingRepos = 0;
     std::unique_ptr<net::SessionManager> m_sessions;

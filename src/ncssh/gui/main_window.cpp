@@ -7,6 +7,7 @@
 #include "ncssh/core/keytools.hpp"
 #include "ncssh/core/profiles.hpp"
 #include "ncssh/core/settings.hpp"
+#include "ncssh/core/shortcuts.hpp"
 #include "ncssh/gui/ai_chat_panel.hpp"
 #include "ncssh/gui/file_dialogs.hpp"
 #include "ncssh/gui/bulk_rename_dialog.hpp"
@@ -27,6 +28,7 @@
 #include "ncssh/gui/tab_favorites_dialog.hpp"
 #include "ncssh/gui/venv_dialog.hpp"
 #include "ncssh/gui/history_dialog.hpp"
+#include "ncssh/gui/key_dialog.hpp"
 #include "ncssh/gui/known_hosts_dialog.hpp"
 #include "ncssh/gui/macro_manager_dialog.hpp"
 #include "ncssh/gui/search_dialog.hpp"
@@ -227,29 +229,38 @@ MainWindow::~MainWindow()
 
 void MainWindow::buildMenus()
 {
+    // Registriert eine Aktion unter ihrer Kuerzel-ID; das konfigurierte Kuerzel
+    // wird spaeter ueber applyShortcuts() gesetzt. Vorher wurden die Kuerzel
+    // fest verdrahtet, wodurch der Tastenkuerzel-Tab der Einstellungen ohne
+    // Wirkung blieb.
+    const auto reg = [this](const QString &id, QAction *action) {
+        m_shortcutActions.insert(id, action);
+        return action;
+    };
+
     // --- Aktionen ---
     QMenu *actions = menuBar()->addMenu(_t("&Aktionen"));
-    QAction *connectAct = actions->addAction(_t("SSH verbinden"), this,
-                                             &MainWindow::openServerManager);
-    connectAct->setShortcut(QKeySequence(Qt::Key_F9));
-    QAction *newTabAct = actions->addAction(_t("Neuer Tab"), this, [this] { addTab(); });
-    newTabAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+N")));
-    QAction *transfersAct = actions->addAction(_t("Übertragungen"), this,
-                                               &MainWindow::openTransfers);
-    transfersAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+T")));
-    QAction *paletteAct = actions->addAction(_t("Befehlspalette"), this,
-                                             &MainWindow::openCommandPalette);
-    paletteAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+P")));
-    QAction *historyAct = actions->addAction(_t("Verlauf & Favoriten"), this,
-                                             &MainWindow::openHistory);
-    historyAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+H")));
-    QAction *tunnelAct = actions->addAction(_t("SSH-Tunnel"), this, &MainWindow::openTunnels);
-    tunnelAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+T")));
-    actions->addAction(_t("Tab-Favoriten — Tab-Layouts speichern/öffnen"), this,
-                       &MainWindow::openTabFavorites);
+    reg(QStringLiteral("connect"),
+        actions->addAction(_t("SSH verbinden"), this, &MainWindow::openServerManager));
+    reg(QStringLiteral("new_tab"),
+        actions->addAction(_t("Neuer Tab"), this, [this] { addTab(); }));
+    reg(QStringLiteral("transfers"),
+        actions->addAction(_t("Übertragungen"), this, &MainWindow::openTransfers));
+    reg(QStringLiteral("palette"),
+        actions->addAction(_t("Befehlspalette"), this, &MainWindow::openCommandPalette));
+    reg(QStringLiteral("history"),
+        actions->addAction(_t("Verlauf & Favoriten"), this, &MainWindow::openHistory));
+    reg(QStringLiteral("tunnels"),
+        actions->addAction(_t("SSH-Tunnel"), this, &MainWindow::openTunnels));
+    reg(QStringLiteral("tab_favorites"),
+        actions->addAction(_t("Tab-Favoriten — Tab-Layouts speichern/öffnen"), this,
+                           &MainWindow::openTabFavorites));
     actions->addSeparator();
-    actions->addAction(_t("Tab umbenennen …"), this, &MainWindow::renameCurrentTab);
-    actions->addAction(_t("Verbindung trennen"), this, &MainWindow::disconnectCurrentTab);
+    reg(QStringLiteral("rename_tab"),
+        actions->addAction(_t("Tab umbenennen …"), this, &MainWindow::renameCurrentTab));
+    reg(QStringLiteral("disconnect"),
+        actions->addAction(_t("Verbindung trennen"), this,
+                           &MainWindow::disconnectCurrentTab));
     actions->addSeparator();
     actions->addAction(_t("Lesezeichen exportieren …"), this,
                        [this] { exportBookmarks(); });
@@ -257,31 +268,33 @@ void MainWindow::buildMenus()
                        [this] { importBookmarks(); });
     actions->addSeparator();
     QAction *quitAct = actions->addAction(_t("Beenden"), this, &QWidget::close);
-    quitAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Q")));
+    quitAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Q")));   // fest, nicht konfigurierbar
 
     // --- Tools ---
     QMenu *tools = menuBar()->addMenu(_t("&Tools"));
-    QAction *searchName = tools->addAction(_t("Datei-Suche (Name) …"), this,
-                                           [this] { openSearch(QStringLiteral("name")); });
-    searchName->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")));
-    QAction *searchContent = tools->addAction(_t("Inhalts-Suche (grep) …"), this,
-                                              [this] { openSearch(QStringLiteral("content")); });
-    searchContent->setShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+F")));
+    reg(QStringLiteral("search_name"),
+        tools->addAction(_t("Datei-Suche (Name) …"), this,
+                         [this] { openSearch(QStringLiteral("name")); }));
+    reg(QStringLiteral("search_content"),
+        tools->addAction(_t("Inhalts-Suche (grep) …"), this,
+                         [this] { openSearch(QStringLiteral("content")); }));
     tools->addSeparator();
-    QAction *bulkAct = tools->addAction(_t("Massen-Umbenennen …"), this,
-                                        &MainWindow::openBulkRename);
-    bulkAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+R")));
-    QAction *diffAct = tools->addAction(_t("Datei-Vergleich …"), this, &MainWindow::openFileDiff);
-    diffAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+D")));
-    QAction *dirDiffAct = tools->addAction(_t("Verzeichnis-Vergleich …"), this,
-                                           &MainWindow::openDirDiff);
-    dirDiffAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+D")));
+    reg(QStringLiteral("bulk_rename"),
+        tools->addAction(_t("Massen-Umbenennen …"), this, &MainWindow::openBulkRename));
+    reg(QStringLiteral("file_diff"),
+        tools->addAction(_t("Datei-Vergleich …"), this, &MainWindow::openFileDiff));
+    reg(QStringLiteral("dir_diff"),
+        tools->addAction(_t("Verzeichnis-Vergleich …"), this, &MainWindow::openDirDiff));
     tools->addSeparator();
-    tools->addAction(_t("Datei-Encoding konvertieren …"), this,
-                     &MainWindow::openEncodingConverter);
-    tools->addAction(_t("venv verwalten …"), this, &MainWindow::openVenv);
+    reg(QStringLiteral("encoding_convert"),
+        tools->addAction(_t("Datei-Encoding konvertieren …"), this,
+                         &MainWindow::openEncodingConverter));
+    reg(QStringLiteral("venv_setup"),
+        tools->addAction(_t("venv verwalten …"), this, &MainWindow::openVenv));
     tools->addAction(_t("Netzwerkscanner …"), this, &MainWindow::openNetscan);
     tools->addAction(_t("Sicherheits-Audit (CVE) …"), this, &MainWindow::openSecurityAudit);
+    tools->addAction(_t("SSH-Schlüssel erzeugen / konvertieren …"), this,
+                     &MainWindow::openKeyTools);
     tools->addAction(_t("Plugins"), this, &MainWindow::openPlugins);
     tools->addSeparator();
 
@@ -300,9 +313,8 @@ void MainWindow::buildMenus()
     tools->addAction(_t("Makro-Manager"), this, &MainWindow::openMacroManager);
     tools->addSeparator();
     tools->addAction(_t("Bekannte Host-Keys …"), this, &MainWindow::openKnownHosts);
-    QAction *settingsAct = tools->addAction(_t("Einstellungen …"), this,
-                                            &MainWindow::openSettings);
-    settingsAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+,")));
+    reg(QStringLiteral("settings"),
+        tools->addAction(_t("Einstellungen …"), this, &MainWindow::openSettings));
 
     // --- Clipboard ---
     QMenu *clipboard = menuBar()->addMenu(_t("Clipboard"));
@@ -333,14 +345,15 @@ void MainWindow::buildMenus()
             ws->setPanesVertical(on);
     });
     panes->addSeparator();
-    panes->addAction(_t("Panes tauschen"), this, [this] {
+    reg(QStringLiteral("swap_panes"), panes->addAction(_t("Panes tauschen"), this, [this] {
         if (Workspace *ws = currentWorkspace())
             ws->swapPanes();
-    });
-    panes->addAction(_t("Panes synchronisieren"), this, [this] {
-        if (Workspace *ws = currentWorkspace())
-            ws->syncPanes();
-    });
+    }));
+    reg(QStringLiteral("sync_panes"),
+        panes->addAction(_t("Panes synchronisieren"), this, [this] {
+            if (Workspace *ws = currentWorkspace())
+                ws->syncPanes();
+        }));
     panes->addSeparator();
     QAction *broadcastAct = panes->addAction(_t("Befehl an beide Konsolen …"), this,
                                              &MainWindow::broadcastCommand);
@@ -366,11 +379,13 @@ void MainWindow::buildMenus()
 
     // --- Hilfe ---
     QMenu *help = menuBar()->addMenu(_t("&Hilfe"));
-    QAction *helpAct = help->addAction(_t("Hilfe"), this, [this] { openHelp(1); });
-    helpAct->setShortcut(QKeySequence(Qt::Key_F1));
+    reg(QStringLiteral("help"),
+        help->addAction(_t("Hilfe"), this, [this] { openHelp(1); }));
     help->addAction(_t("Tastenkürzel"), this, [this] { openHelp(0); });
     help->addSeparator();
     help->addAction(_t("Über SSHIT-Commander …"), this, &MainWindow::showAbout);
+
+    applyShortcuts();   // konfigurierte Kuerzel auf die registrierten Aktionen legen
 
     // --- Toolbar (gezeichnete Icons in der Textfarbe des Themes) ---
     auto *toolbar = addToolBar(_t("Haupt"));
@@ -453,6 +468,23 @@ void MainWindow::askAiAboutFile(bool codecheck)
             panel->show();
         },
         [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+}
+
+void MainWindow::applyShortcuts()
+{
+    const QHash<QString, QString> shortcuts = core::getShortcuts();
+    for (auto it = m_shortcutActions.begin(); it != m_shortcutActions.end(); ++it) {
+        const QString key = shortcuts.value(it.key());
+        it.value()->setShortcut(key.isEmpty() ? QKeySequence() : QKeySequence(key));
+    }
+}
+
+void MainWindow::openKeyTools()
+{
+    // SSH-Schluessel erzeugen/konvertieren — vorher nur ueber den Server-Manager
+    // erreichbar.
+    KeyDialog dlg(m_bridge, this);
+    dlg.exec();
 }
 
 void MainWindow::showAbout()
@@ -861,10 +893,14 @@ void MainWindow::openSettings()
 {
     SettingsDialog dlg(this, m_bridge);
     if (dlg.exec() == QDialog::Accepted) {
-        // Theme greift sofort, Sprache/Schriftgroessen nach Neustart.
+        // Theme und Tastenkuerzel greifen sofort, Sprache/Schriftgroessen nach
+        // Neustart.
         applyTheme(qApp, core::getSettingString(QStringLiteral("theme"), defaultTheme()));
+        applyShortcuts();
         statusBar()->showMessage(
-            _t("Einstellungen gespeichert (Sprache/Schriftgrößen nach Neustart)."), 8000);
+            _t("Einstellungen gespeichert (Pane-Schrift sofort; Terminal/Editor ab nächstem "
+               "Öffnen)."),
+            8000);
     }
 }
 
