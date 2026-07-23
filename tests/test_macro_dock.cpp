@@ -49,6 +49,11 @@ TEST(macro_dock, right_dock_shows_keys_in_run_mode)
         CHECK(dock->widget() != nullptr);
         // Das Tastenraster muss im angedockten Inhalt vorhanden sein.
         CHECK(dock->findChildren<gui::KeyTile *>().size() > 0);
+        // Angedockt: nur Tasten — Modus-Knopf ausgeblendet.
+        auto *mb = dock->findChild<QPushButton *>(QStringLiteral("MacroModeButton"));
+        CHECK(mb != nullptr);
+        if (mb)
+            CHECK(!mb->isVisible());
     }
 
     qputenv("APPDATA", oldAppData);

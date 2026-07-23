@@ -71,6 +71,10 @@ public:
     // zeigen und hervorheben; merkt sich "geoeffnet" fuer den naechsten Start.
     void present();
 
+    // Toolbar-Knopf "Makro-Manager": bringt zum Bearbeiten immer die schwebende
+    // Oberflaeche nach vorne (loest eine angedockte Leiste dafuer ab).
+    void openManager();
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 
@@ -126,6 +130,7 @@ private:
     // schwebenden Dialog (m_dialogLayout) und einem QDockWidget umziehen kann.
     QVBoxLayout *m_dialogLayout = nullptr;
     QWidget *m_content = nullptr;
+    QVBoxLayout *m_rightLayout = nullptr;  // rechte Spalte (Modus/Raster/Status)
     QWidget *m_leftPanel = nullptr;   // Layer-Editor (nur Bearbeiten-Modus)
     QWidget *m_dockRow = nullptr;     // "Andocken:"-Zeile (nur Bearbeiten-Modus)
     QComboBox *m_dockCombo = nullptr;

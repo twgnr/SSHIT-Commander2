@@ -1116,33 +1116,42 @@ void MainWindow::openGithubAlarms()
     dlg.exec();
 }
 
-void MainWindow::openMacroManager()
+void MainWindow::ensureMacroDialog()
 {
     // Einmalig anlegen und danach nur noch hervorholen — so bleibt der Zustand
-    // (angedockt/schwebend, Modus) erhalten und die Leiste kann sich andocken.
-    if (!m_macroDialog) {
-        // Makros koennen Befehle an die aktive bzw. alle Konsolen schicken.
-        auto sshSend = [this](const QString &command, bool run) {
-            if (Workspace *ws = currentWorkspace())
+    // (angedockt/schwebend, Modus) erhalten.
+    if (m_macroDialog)
+        return;
+    // Makros koennen Befehle an die aktive bzw. alle Konsolen schicken.
+    auto sshSend = [this](const QString &command, bool run) {
+        if (Workspace *ws = currentWorkspace())
+            ws->sendToActiveConsole(command, run);
+    };
+    auto sshBroadcast = [this](const QString &command, bool run) {
+        for (int i = 0; i < m_tabs->count(); ++i) {
+            if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i)))
                 ws->sendToActiveConsole(command, run);
-        };
-        auto sshBroadcast = [this](const QString &command, bool run) {
-            for (int i = 0; i < m_tabs->count(); ++i) {
-                if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i)))
-                    ws->sendToActiveConsole(command, run);
-            }
-        };
-        m_macroDialog = new MacroManagerDialog(m_bridge, sshSend, sshBroadcast, this);
-    }
-    m_macroDialog->present();
+        }
+    };
+    m_macroDialog = new MacroManagerDialog(m_bridge, sshSend, sshBroadcast, this);
+}
+
+void MainWindow::openMacroManager()
+{
+    // Toolbar-Knopf: zum Bearbeiten die schwebende Oberflaeche nach vorne holen
+    // (eine angedockte Leiste zeigt nur die Tasten und wird dafuer abgeloest).
+    ensureMacroDialog();
+    m_macroDialog->openManager();
 }
 
 void MainWindow::restoreMacroManager()
 {
     // Beim Start: War die Makroleiste zuletzt geoeffnet, holen wir sie zurueck
     // (angedockte Leiste erscheint dann gleich am gemerkten Rand).
-    if (core::macros::load().open)
-        openMacroManager();
+    if (core::macros::load().open) {
+        ensureMacroDialog();
+        m_macroDialog->present();
+    }
 }
 
 void MainWindow::openTabFavorites()

@@ -292,6 +292,7 @@ void MacroManagerDialog::buildUi()
 
     // --- Rechte Spalte: Raster ---
     auto *right = new QVBoxLayout();
+    m_rightLayout = right;
     auto *topRow = new QHBoxLayout();
     m_modeButton = new QPushButton(this);
     m_modeButton->setObjectName(QStringLiteral("MacroModeButton"));
@@ -700,14 +701,34 @@ void MacroManagerDialog::updateModeLabel()
 
 void MacroManagerDialog::applyModeVisibility()
 {
-    // Layer-Editor, Andock-Auswahl und Schliessen-Knopf nur im Bearbeiten-Modus.
     const bool edit = !m_runMode;
+    const bool docked = m_dockSide != QLatin1String("float");
+    // Layer-Editor, Andock-Auswahl und Schliessen-Knopf nur im Bearbeiten-Modus.
     if (m_leftPanel)
         m_leftPanel->setVisible(edit);
     if (m_dockRow)
         m_dockRow->setVisible(edit);
     if (m_closeButton)
-        m_closeButton->setVisible(edit && m_dockSide == QLatin1String("float"));
+        m_closeButton->setVisible(edit && !docked);
+    // Angedockt nur die Tasten zeigen: kein Modus-Knopf, keine Statuszeile
+    // (zum Bearbeiten oeffnet man den Makro-Manager erneut).
+    if (m_modeButton)
+        m_modeButton->setVisible(!docked);
+    if (m_status)
+        m_status->setVisible(!docked);
+
+    // Raender: angedockt so eng wie moeglich an den Fensterrand, sonst normal.
+    const int margin = docked ? 0 : 9;
+    if (m_content && m_content->layout())
+        m_content->layout()->setContentsMargins(margin, margin, margin, margin);
+    if (m_rightLayout) {
+        m_rightLayout->setContentsMargins(0, 0, 0, 0);
+        m_rightLayout->setSpacing(docked ? 0 : 6);
+    }
+    if (m_grid) {
+        m_grid->setContentsMargins(0, 0, 0, 0);
+        m_grid->setSpacing(docked ? 2 : 6);
+    }
 }
 
 void MacroManagerDialog::toggleMode(bool runMode)
@@ -750,6 +771,21 @@ void MacroManagerDialog::present()
         m_dock->show();
         m_dock->raise();
     }
+}
+
+void MacroManagerDialog::openManager()
+{
+    // Zum Bearbeiten immer die schwebende Oberflaeche zeigen. Ist die Leiste
+    // angedockt, loest der Wechsel in den Bearbeiten-Modus sie ab (schwebend).
+    if (!m_config.open) {
+        m_config.open = true;
+        saveConfig();
+    }
+    if (m_runMode)
+        m_modeButton->setChecked(false);  // -> toggleMode(false): Bearbeiten + schwebend
+    show();
+    raise();
+    activateWindow();
 }
 
 void MacroManagerDialog::closeEvent(QCloseEvent *event)
