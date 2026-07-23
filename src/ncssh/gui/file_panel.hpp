@@ -67,6 +67,10 @@ public:
     // Fuehrt die Datei-Operation zur Kuerzel-ID aus (view/edit/copy/…).
     // Public, damit die Haupt-Toolbar auf die aktive Pane wirken kann.
     void triggerOp(const QString &id);
+    // Ansicht der Pane umschalten (fuer das Ansicht-Menue des Hauptfensters).
+    void toggleHidden();
+    void setViewMode(bool grid);
+    bool gridMode() const { return m_gridMode; }
 
     // --- Verlauf (Alt+Links / Alt+Rechts) ---
     void goBack();
@@ -138,7 +142,6 @@ private:
     void opDelete();
     void opRename();
     void opProperties();
-    void toggleHidden();
     void toggleBookmark();
     void openBookmarks();
     void updateBookmarkButton();
@@ -166,7 +169,6 @@ private:
 
     // --- Ansicht: Detail (Tabelle) oder Kachel ---
     QAbstractItemView *activeView() const;
-    void setViewMode(bool grid);
 
     // --- Miniaturansichten (nur lokal, abschaltbar) ---
     bool thumbsEnabled() const;

@@ -14,6 +14,7 @@ class QTabWidget;
 class QAction;
 class QLabel;
 class QToolButton;
+class QMenu;
 
 namespace ncssh::gui {
 
@@ -55,6 +56,7 @@ private:
     void openEncodingConverter();
     void openSecurityAudit();
     void openPlugins();
+    void populatePluginsMenu();   // dynamisches Plugins-Menue (Schnellstart)
     void openThemeEditor();
     void openClipboard();
     void openHelp(int tab);
@@ -110,6 +112,7 @@ private:
     GithubAlarmManager *m_githubAlarms = nullptr;
     QTabWidget *m_tabs = nullptr;
     QToolButton *m_tabPlus = nullptr;  // "+" direkt neben dem letzten Tab
+    QMenu *m_pluginsMenu = nullptr;    // dynamisch (aboutToShow) befuellt
     MacroManagerDialog *m_macroDialog = nullptr;  // einmalig; present()/andockbar
 };
 

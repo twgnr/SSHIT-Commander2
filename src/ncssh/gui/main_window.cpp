@@ -6,6 +6,7 @@
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/keytools.hpp"
 #include "ncssh/core/macros.hpp"
+#include "ncssh/core/plugins.hpp"
 #include "ncssh/core/profiles.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/core/shortcuts.hpp"
@@ -44,6 +45,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -65,6 +67,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+#include <QUrl>
 #include <algorithm>
 #include <utility>
 
@@ -313,7 +316,6 @@ void MainWindow::buildMenus()
     tools->addAction(_t("Sicherheits-Audit (CVE) …"), this, &MainWindow::openSecurityAudit);
     tools->addAction(_t("SSH-Schlüssel erzeugen / konvertieren …"), this,
                      &MainWindow::openKeyTools);
-    tools->addAction(_t("Plugins"), this, &MainWindow::openPlugins);
     tools->addSeparator();
 
     // --- KI: arbeitet auf der markierten Datei der aktiven Pane ---
@@ -333,6 +335,11 @@ void MainWindow::buildMenus()
     tools->addAction(_t("Bekannte Host-Keys …"), this, &MainWindow::openKnownHosts);
     reg(QStringLiteral("settings"),
         tools->addAction(_t("Einstellungen …"), this, &MainWindow::openSettings));
+
+    // --- Plugins (dynamisch: jedes Plugin als Schnellstart) ---
+    m_pluginsMenu = menuBar()->addMenu(_t("&Plugins"));
+    connect(m_pluginsMenu, &QMenu::aboutToShow, this, &MainWindow::populatePluginsMenu);
+    populatePluginsMenu();
 
     // --- Clipboard ---
     QMenu *clipboard = menuBar()->addMenu(_t("Clipboard"));
@@ -385,6 +392,24 @@ void MainWindow::buildMenus()
     }
     view->addAction(_t("Theme-Editor …"), this, &MainWindow::openThemeEditor);
     view->addSeparator();
+    // Versteckte Dateien der aktiven Pane umschalten (wie im Original auch im Menue).
+    view->addAction(_t("Versteckte Dateien"), this, [this] {
+        if (Workspace *ws = currentWorkspace())
+            if (FilePanel *panel = ws->activePanel())
+                panel->toggleHidden();
+    });
+    // Kachelansicht global fuer alle Panes umschalten (Einstellung pane_grid).
+    QAction *gridAct = view->addAction(_t("Kachelansicht"));
+    gridAct->setCheckable(true);
+    gridAct->setChecked(core::getSettingBool(QStringLiteral("pane_grid"), false));
+    connect(gridAct, &QAction::toggled, this, [this](bool on) {
+        for (int i = 0; i < m_tabs->count(); ++i) {
+            if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i))) {
+                ws->leftPanel()->setViewMode(on);
+                ws->rightPanel()->setViewMode(on);
+            }
+        }
+    });
     QAction *previewAct = view->addAction(_t("Vorschau-Panel"));
     previewAct->setCheckable(true);
     previewAct->setShortcut(QKeySequence(Qt::Key_F2 | Qt::CTRL));
@@ -1081,6 +1106,33 @@ void MainWindow::openPlugins()
 {
     PluginsDialog dlg(this);
     dlg.exec();
+}
+
+void MainWindow::populatePluginsMenu()
+{
+    // Bei jedem Oeffnen neu einlesen, damit Aenderungen ohne Neustart wirken.
+    m_pluginsMenu->clear();
+    const std::vector<core::plugins::Plugin> items = core::plugins::loadAll();
+    for (const core::plugins::Plugin &p : items) {
+        const QString label = p.name.isEmpty() ? p.exe : p.name;
+        m_pluginsMenu->addAction(label, this, [this, id = p.id] {
+            const auto all = core::plugins::loadAll();
+            if (const core::plugins::Plugin *p = core::plugins::byId(all, id)) {
+                try {
+                    core::plugins::launch(*p);
+                } catch (const std::exception &e) {
+                    QMessageBox::warning(this, _t("Plugin"),
+                                         QString::fromUtf8(e.what()));
+                }
+            }
+        });
+    }
+    if (!items.empty())
+        m_pluginsMenu->addSeparator();
+    m_pluginsMenu->addAction(_t("Plugins verwalten …"), this, &MainWindow::openPlugins);
+    m_pluginsMenu->addAction(_t("Plugin-Ordner öffnen"), this, [] {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(core::plugins::pluginsDir()));
+    });
 }
 
 void MainWindow::openThemeEditor()
