@@ -223,6 +223,45 @@ TEST(transfer, overwrite_existing_target)
     CHECK_EQ(readFile(dst), QByteArrayLiteral("NEU"));
 }
 
+TEST(transfer, resume_continues_partial_file)
+{
+    QTemporaryDir tmp;
+    CHECK(tmp.isValid());
+    const QString src = tmp.filePath(QStringLiteral("a.bin"));
+    const QString dst = tmp.filePath(QStringLiteral("b.bin"));
+    const QByteArray data = randomBytes(500000);
+    writeFile(src, data);
+    // Teil-Ziel: erste 200000 Bytes sind bereits (korrekt) da.
+    const qint64 partial = 200000;
+    writeFile(dst, data.left(int(partial)));
+
+    LocalFileSystem fs;
+    std::vector<qint64> seen;
+    transferWithProgress(&fs, src, &fs, dst, [&](qint64 c, qint64) { seen.push_back(c); },
+                         /*resume=*/true);
+
+    CHECK_EQ(readFile(dst), data);             // vollstaendig und korrekt
+    CHECK(!seen.empty());
+    CHECK_EQ(seen.back(), qint64(data.size())); // Fortschritt endet bei der Gesamtgroesse
+    // Resume: der Fortschritt beginnt bei den bereits vorhandenen Bytes, nicht bei 0.
+    CHECK(seen.front() >= partial);
+}
+
+TEST(transfer, resume_skips_completed_file)
+{
+    QTemporaryDir tmp;
+    CHECK(tmp.isValid());
+    const QString src = tmp.filePath(QStringLiteral("a.bin"));
+    const QString dst = tmp.filePath(QStringLiteral("b.bin"));
+    const QByteArray data = randomBytes(4096);
+    writeFile(src, data);
+    writeFile(dst, data);   // Ziel ist schon vollstaendig
+
+    LocalFileSystem fs;
+    transferWithProgress(&fs, src, &fs, dst, [](qint64, qint64) {}, /*resume=*/true);
+    CHECK_EQ(readFile(dst), data);   // bleibt korrekt (keine Beschaedigung)
+}
+
 TEST(transfer, direction_and_verify_tree)
 {
     LocalFileSystem local;
