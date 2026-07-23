@@ -9,6 +9,8 @@
 #include "ncssh/gui/bridge.hpp"
 
 #include <functional>
+#include <QHash>
+#include <QKeySequence>
 #include <QSet>
 #include <QStringList>
 #include <QWidget>
@@ -58,6 +60,8 @@ public:
     void setHeaderTitle(const QString &title);
     void refresh();
     void navigateTo(const QString &path);
+    // Konfigurierte Kuerzel der Datei-Operationen uebernehmen (view/edit/…).
+    void applyShortcuts();
 
     // --- Verlauf (Alt+Links / Alt+Rechts) ---
     void goBack();
@@ -184,6 +188,8 @@ private:
     void markCurrent(bool select, bool toggle);  // Einfg / Leertaste
     void typeAhead(const QString &ch);
     void selectMatch(const QString &query);
+    // Fuehrt die Datei-Operation zur Kuerzel-ID aus (view/edit/copy/…).
+    void triggerOp(const QString &id);
 
     AsyncBridge *m_bridge;
     core::FileSystemProvider *m_provider = nullptr;
@@ -198,6 +204,7 @@ private:
     bool m_sudoAvailable = false;
     bool m_sudoActive = false;
 
+    QHash<QString, QKeySequence> m_opShortcuts;   // konfigurierte Datei-Op-Kuerzel
     QStringList m_history;            // besuchte Pfade
     qsizetype m_histPos = -1;         // Position im Verlauf
     QString m_typeAheadBuffer;        // getippte Zeichen (Sprungsuche)

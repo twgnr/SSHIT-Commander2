@@ -7,6 +7,7 @@
 #include "ncssh/core/natsort.hpp"
 #include "ncssh/core/netscan.hpp"
 #include "ncssh/core/openwith.hpp"
+#include "ncssh/core/shortcuts.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/file_icons.hpp"
 #include "ncssh/gui/bookmarks_dialog.hpp"
@@ -50,6 +51,7 @@
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QUrl>
@@ -207,6 +209,7 @@ void FilePanel::buildUi(const QString &title)
     pathRow->addWidget(reload);
     layout->addLayout(pathRow);
     m_bookmarks.load();
+    applyShortcuts();   // konfigurierte Datei-Op-Kuerzel laden
 
     m_table = new QTableWidget(0, 1, this);
     setTableHeaders();
@@ -1683,6 +1686,35 @@ void FilePanel::setSudoAvailable(bool available)
         setSudoActive(false);
 }
 
+void FilePanel::applyShortcuts()
+{
+    // Nur die Pane-Operationen aus dem Katalog uebernehmen; Navigations- und
+    // Markier-Tasten bleiben fest (siehe eventFilter).
+    const QHash<QString, QString> shortcuts = core::getShortcuts();
+    static const char *const ops[] = {"view",   "edit",  "copy",  "rename",
+                                      "mkdir",  "delete", "hidden"};
+    m_opShortcuts.clear();
+    for (const char *id : ops) {
+        const QString key = shortcuts.value(QString::fromLatin1(id));
+        if (!key.isEmpty())
+            m_opShortcuts.insert(QString::fromLatin1(id), QKeySequence(key));
+    }
+}
+
+void FilePanel::triggerOp(const QString &id)
+{
+    if (id == QLatin1String("view")) opView();
+    else if (id == QLatin1String("edit")) opEdit();
+    else if (id == QLatin1String("copy")) {
+        const QString p = selectedPath();
+        if (!p.isEmpty())
+            emit transferRequested(p);
+    } else if (id == QLatin1String("rename")) opRename();
+    else if (id == QLatin1String("mkdir")) opMkdir();
+    else if (id == QLatin1String("delete")) opDelete();
+    else if (id == QLatin1String("hidden")) toggleHidden();
+}
+
 void FilePanel::setSudoActive(bool active)
 {
     // Ohne Blocker wuerde das Zuruecksetzen ein erneutes Umschalten ausloesen.
@@ -1868,13 +1900,18 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
     }
     if (event->type() == QEvent::KeyPress) {
         auto *ke = static_cast<QKeyEvent *>(event);
+        // Konfigurierbare Datei-Operationen zuerst: das in den Einstellungen
+        // hinterlegte Kuerzel gewinnt gegen die feste F3..F8-Vorgabe.
+        if (obj != m_filterEdit) {
+            const QKeySequence pressed(ke->keyCombination());
+            for (auto it = m_opShortcuts.constBegin(); it != m_opShortcuts.constEnd(); ++it) {
+                if (!it.value().isEmpty() && pressed == it.value()) {
+                    triggerOp(it.key());
+                    return true;
+                }
+            }
+        }
         switch (ke->key()) {
-        case Qt::Key_F3: opView(); return true;
-        case Qt::Key_F4: opEdit(); return true;
-        case Qt::Key_F5: { const QString p = selectedPath(); if (!p.isEmpty()) emit transferRequested(p); return true; }
-        case Qt::Key_F6: opRename(); return true;
-        case Qt::Key_F7: opMkdir(); return true;
-        case Qt::Key_F8: opDelete(); return true;
         case Qt::Key_Backspace: goUp(); return true;
         case Qt::Key_Left:
             if (ke->modifiers() & Qt::AltModifier) { goBack(); return true; }

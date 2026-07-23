@@ -897,6 +897,13 @@ void MainWindow::openSettings()
         // Neustart.
         applyTheme(qApp, core::getSettingString(QStringLiteral("theme"), defaultTheme()));
         applyShortcuts();
+        // Auch die Pane-Kuerzel (view/edit/…) neu belegen.
+        for (int i = 0; i < m_tabs->count(); ++i) {
+            if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i))) {
+                ws->leftPanel()->applyShortcuts();
+                ws->rightPanel()->applyShortcuts();
+            }
+        }
         statusBar()->showMessage(
             _t("Einstellungen gespeichert (Pane-Schrift sofort; Terminal/Editor ab nächstem "
                "Öffnen)."),
