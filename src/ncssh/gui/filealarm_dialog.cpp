@@ -1,5 +1,7 @@
 #include "ncssh/gui/filealarm_dialog.hpp"
 
+#include "ncssh/core/settings.hpp"
+
 #include "ncssh/core/i18n.hpp"
 
 #include <QCheckBox>
@@ -32,7 +34,10 @@ FileAlarmManager::FileAlarmManager(AsyncBridge *bridge, QObject *parent)
     : QObject(parent), m_bridge(bridge), m_timer(new QTimer(this))
 {
     connect(m_timer, &QTimer::timeout, this, &FileAlarmManager::poll);
-    m_timer->setInterval(10000);  // 10 s Polling-Intervall
+    // Poll-Intervall aus den Einstellungen (verstecktes file_alarm_interval,
+    // Sekunden; Standard 5, min. 2) — wie im Original.
+    m_timer->setInterval(qMax(2, core::getSettingInt(QStringLiteral("file_alarm_interval"), 5))
+                         * 1000);
     reload();
 }
 

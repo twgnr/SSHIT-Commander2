@@ -1,5 +1,7 @@
 #include "ncssh/gui/githubalarm_dialog.hpp"
 
+#include "ncssh/core/settings.hpp"
+
 #include "ncssh/core/i18n.hpp"
 
 #include <QFormLayout>
@@ -26,7 +28,10 @@ GithubAlarmManager::GithubAlarmManager(AsyncBridge *bridge, QObject *parent)
     : QObject(parent), m_bridge(bridge), m_timer(new QTimer(this))
 {
     connect(m_timer, &QTimer::timeout, this, &GithubAlarmManager::checkNow);
-    m_timer->setInterval(5 * 60 * 1000);  // alle 5 Minuten
+    // Pruef-Intervall aus den Einstellungen (verstecktes github_alarm_interval,
+    // Sekunden; Standard 900 = 15 min, min. 30) — wie im Original.
+    m_timer->setInterval(
+        qMax(30, core::getSettingInt(QStringLiteral("github_alarm_interval"), 900)) * 1000);
     reload();
 }
 
