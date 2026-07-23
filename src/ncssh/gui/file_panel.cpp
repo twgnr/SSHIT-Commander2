@@ -1953,15 +1953,26 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
             }
         }
         switch (ke->key()) {
-        case Qt::Key_Backspace: goUp(); return true;
+        case Qt::Key_Backspace:
+            // Waehrend der Tippsuche loescht Backspace das letzte Suchzeichen
+            // (statt hochzunavigieren) — erst bei leerem Puffer geht es hoch.
+            if (obj == m_table && !m_typeAheadBuffer.isEmpty()) {
+                m_typeAheadBuffer.chop(1);
+                m_typeAheadTimer->start();
+                if (!m_typeAheadBuffer.isEmpty())
+                    selectMatch(m_typeAheadBuffer);
+                return true;
+            }
+            goUp();
+            return true;
         case Qt::Key_Left:
             if (ke->modifiers() & Qt::AltModifier) { goBack(); return true; }
             break;
         case Qt::Key_Right:
             if (ke->modifiers() & Qt::AltModifier) { goForward(); return true; }
             break;
-        case Qt::Key_Insert:
-            if (obj != m_filterEdit) { markCurrent(false, /*toggle=*/true); return true; }
+        case Qt::Key_Insert:              // Einfg : markieren (wie im Original)
+            if (obj != m_filterEdit) { markCurrent(true, /*toggle=*/false); return true; }
             break;
         case Qt::Key_Delete:              // Entf : aktuellen Eintrag entmarkieren
             if (obj != m_filterEdit) { markCurrent(false, /*toggle=*/false); return true; }

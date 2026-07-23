@@ -409,6 +409,9 @@ bool ConsolePanel::eventFilter(QObject *obj, QEvent *event)
     if (obj == m_input && event->type() == QEvent::KeyPress) {
         auto *ke = static_cast<QKeyEvent *>(event);
         if (ke->key() == Qt::Key_Up) {
+            // Beim ersten Hochblättern die aktuell getippte Zeile merken.
+            if (m_historyPos >= m_history.size())
+                m_historyDraft = m_input->text();
             if (m_historyPos > 0) {
                 --m_historyPos;
                 m_input->setText(m_history.value(m_historyPos));
@@ -420,8 +423,9 @@ bool ConsolePanel::eventFilter(QObject *obj, QEvent *event)
                 ++m_historyPos;
                 m_input->setText(m_history.value(m_historyPos));
             } else {
+                // Unten angekommen -> die gemerkte Entwurfszeile wiederherstellen.
                 m_historyPos = m_history.size();
-                m_input->clear();
+                m_input->setText(m_historyDraft);
             }
             return true;
         }
@@ -429,9 +433,16 @@ bool ConsolePanel::eventFilter(QObject *obj, QEvent *event)
             cancelRunning();
             return true;
         }
-        if (ke->key() == Qt::Key_Escape && m_running) {
-            cancelRunning();
-            return true;
+        if (ke->key() == Qt::Key_Escape) {
+            // Wie im Original: erst die Suchleiste schliessen, sonst abbrechen.
+            if (m_searchBar && m_searchBar->isVisible()) {
+                hideSearch();
+                return true;
+            }
+            if (m_running) {
+                cancelRunning();
+                return true;
+            }
         }
         if (ke->key() == Qt::Key_F && (ke->modifiers() & Qt::ControlModifier)) {
             showSearch();

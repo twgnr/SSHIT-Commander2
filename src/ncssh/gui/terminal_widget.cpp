@@ -149,6 +149,16 @@ void TerminalWidget::keyPressEvent(QKeyEvent *event)
             return;
         }
     }
+    // Alternative Kopieren/Einfuegen wie in vielen Terminals: Strg+Einfg /
+    // Shift+Einfg. Muss vor der Insert-Escape-Sequenz unten stehen.
+    if ((mods & Qt::ControlModifier) && event->key() == Qt::Key_Insert) {
+        copy();
+        return;
+    }
+    if ((mods & Qt::ShiftModifier) && event->key() == Qt::Key_Insert) {
+        sendText(QApplication::clipboard()->text());
+        return;
+    }
     // Suchleiste offen: Esc schliesst, F3 blaettert durch die Treffer.
     if (event->key() == Qt::Key_Escape && m_searchBar && m_searchBar->isVisible()) {
         hideSearchBar();
@@ -178,6 +188,7 @@ void TerminalWidget::keyPressEvent(QKeyEvent *event)
     case Qt::Key_Enter:   sendText(QStringLiteral("\r")); return;
     case Qt::Key_Backspace: sendText(QStringLiteral("\x7f")); return;
     case Qt::Key_Tab:     sendText(QStringLiteral("\t")); return;
+    case Qt::Key_Backtab: sendText(QStringLiteral("\x1b[Z")); return;  // Shift+Tab
     case Qt::Key_Escape:  sendText(QStringLiteral("\x1b")); return;
     case Qt::Key_Up:      sendText(QStringLiteral("\x1b[A")); return;
     case Qt::Key_Down:    sendText(QStringLiteral("\x1b[B")); return;
@@ -186,6 +197,7 @@ void TerminalWidget::keyPressEvent(QKeyEvent *event)
     case Qt::Key_Home:    sendText(QStringLiteral("\x1b[H")); return;
     case Qt::Key_End:     sendText(QStringLiteral("\x1b[F")); return;
     case Qt::Key_Delete:  sendText(QStringLiteral("\x1b[3~")); return;
+    case Qt::Key_Insert:  sendText(QStringLiteral("\x1b[2~")); return;
     case Qt::Key_PageUp:  sendText(QStringLiteral("\x1b[5~")); return;
     case Qt::Key_PageDown: sendText(QStringLiteral("\x1b[6~")); return;
     default: break;

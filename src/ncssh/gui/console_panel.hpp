@@ -101,6 +101,7 @@ private:
     core::HistoryStore m_historyStore;
     QStringList m_history;
     int m_historyPos = -1;
+    QString m_historyDraft;   // halb getippte Zeile beim Blättern in der Historie
     BridgeTask *m_running = nullptr;
 };
 
