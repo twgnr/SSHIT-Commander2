@@ -1,6 +1,7 @@
 #include "ncssh/gui/terminal_widget.hpp"
 
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/core/settings.hpp"
 #include "ncssh/gui/ansi.hpp"
 #include "ncssh/gui/shell_backends.hpp"
 #include "ncssh/gui/style.hpp"
@@ -41,7 +42,7 @@ TerminalWidget::TerminalWidget(AsyncBridge *bridge, QWidget *parent)
     setCursorWidth(8);
     QFont mono(QStringLiteral("Consolas"));
     mono.setStyleHint(QFont::Monospace);
-    mono.setPointSize(10);
+    mono.setPointSize(core::getSettingInt(QStringLiteral("terminal_font_size"), 10));
     setFont(mono);
     applyThemeColors();
     m_renderer = std::make_unique<AnsiRenderer>(this);

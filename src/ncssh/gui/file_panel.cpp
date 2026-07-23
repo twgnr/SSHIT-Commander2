@@ -106,6 +106,8 @@ void FilePanel::buildUi(const QString &title)
     // Attribut — sonst bleibt der (aktive) #Pane[active="true"]-Rahmen unsichtbar.
     setAttribute(Qt::WA_StyledBackground, true);
     setProperty("active", false);
+    // Startzustand der versteckten Dateien aus der Einstellung (hide_hidden).
+    m_showHidden = !core::getSettingBool(QStringLiteral("hide_hidden"), false);
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(6);
@@ -476,11 +478,11 @@ QString FilePanel::columnValue(const QString &id, const FileEntry &e) const
     if (id == QLatin1String("size"))
         return e.isDir() ? QStringLiteral("<DIR>") : humanSize(e.size);
     if (id == QLatin1String("modified"))
-        return e.modified.isValid() ? core::formatDt(e.modified, QString()) : QString();
+        return e.modified.isValid() ? core::formatDt(e.modified, m_dateFormat) : QString();
     if (id == QLatin1String("created"))
-        return e.created.isValid() ? core::formatDt(e.created, QString()) : QString();
+        return e.created.isValid() ? core::formatDt(e.created, m_dateFormat) : QString();
     if (id == QLatin1String("accessed"))
-        return e.accessed.isValid() ? core::formatDt(e.accessed, QString()) : QString();
+        return e.accessed.isValid() ? core::formatDt(e.accessed, m_dateFormat) : QString();
     if (id == QLatin1String("type")) {
         if (e.type == EntryType::Symlink)
             return _t("Symlink");
@@ -557,6 +559,37 @@ QAbstractItemView *FilePanel::activeView() const
 {
     return m_gridMode ? static_cast<QAbstractItemView *>(m_grid)
                       : static_cast<QAbstractItemView *>(m_table);
+}
+
+void FilePanel::applyPaneStyle()
+{
+    const int size = core::getSettingInt(QStringLiteral("pane_font_size"), 11);
+    const bool compact = core::getSettingBool(QStringLiteral("compact_rows"), false);
+    const bool thumbs = core::getSettingBool(QStringLiteral("pane_thumbnails"), false);
+
+    m_table->setStyleSheet(QStringLiteral("font-size:%1pt;").arg(size));
+    int iconPx, rowH;
+    if (compact) {
+        iconPx = size + 2;
+        rowH = qMax(size + 4, iconPx + 2);
+    } else {
+        iconPx = thumbs ? 32 : size + 6;
+        rowH = iconPx + 6;
+    }
+    m_table->setIconSize(QSize(iconPx, iconPx));
+    m_table->horizontalHeader()->setFixedHeight(int(size * 1.5) + 9);
+    QHeaderView *vh = m_table->verticalHeader();
+    vh->setSectionResizeMode(QHeaderView::Fixed);
+    vh->setMinimumSectionSize(rowH);   // sonst klemmt Qt kleine Hoehen hoch
+    vh->setDefaultSectionSize(rowH);
+    for (int r = 0; r < m_table->rowCount(); ++r)
+        m_table->setRowHeight(r, rowH);
+
+    // Kachelansicht: groessere Icons + Kachelgroesse (Platz fuer Beschriftung).
+    const int gi = compact ? (thumbs ? 64 : 44) : (thumbs ? 96 : 64);
+    m_grid->setStyleSheet(QStringLiteral("font-size:%1pt;").arg(size));
+    m_grid->setIconSize(QSize(gi, gi));
+    m_grid->setGridSize(QSize(gi + 28, gi + int(size * 2.6)));
 }
 
 void FilePanel::showStatus(const QString &html)
@@ -863,6 +896,9 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
             QRegularExpression::CaseInsensitiveOption);
     }
 
+    // Datumsformat der Pane (Einstellung) — leer -> Standard im formatDt.
+    m_dateFormat = core::getSettingString(QStringLiteral("date_format"),
+                                          QStringLiteral("DD.MM.YYYY HH24:MI"));
     const bool showIcons = core::getSettingBool(QStringLiteral("show_file_icons"), true);
     const bool execHighlight = core::getSettingBool(QStringLiteral("exec_highlight"), true);
     const QColor execColor(core::getSettingString(QStringLiteral("exec_color"),
@@ -920,6 +956,7 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
     updateSelectionStatus();
     // Erst hier, sonst verstellt der folgende Layout-Schritt die Breiten wieder.
     applyColumnWidths();
+    applyPaneStyle();   // Schriftgroesse + schlanke Ansicht auf die neuen Zeilen
 }
 
 void FilePanel::onDoubleClick(int row, int)

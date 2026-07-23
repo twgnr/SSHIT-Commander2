@@ -1186,7 +1186,8 @@ QString statusErrorHtml(const QString &title, const QString &msg)
 QString statusHtml(const QString &title, const QString &path,
                    const core::DirStats &d, bool recursive)
 {
-    const QString fmt = core::getSettingString(QStringLiteral("pane_date_format"), QString());
+    const QString fmt = core::getSettingString(QStringLiteral("date_format"),
+                                               QStringLiteral("DD.MM.YYYY HH24:MI"));
     QStringList rows;
     const auto row = [&](const QString &k, const QString &v) {
         rows << QStringLiteral("<tr><td style='padding:2px 12px 2px 0;color:gray'>%1</td>"

@@ -2,6 +2,7 @@
 
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/profiles.hpp"
+#include "ncssh/core/settings.hpp"
 #include "ncssh/gui/confirm_dialog.hpp"
 #include "ncssh/gui/console_panel.hpp"
 #include "ncssh/gui/dir_chooser.hpp"
@@ -586,7 +587,14 @@ void Workspace::restoreFrom(const QJsonObject &state)
             m_rightPanel->navigateTo(rightPath);
         return;
     }
-    // Verbindung aus dem gespeicherten Profil wiederherstellen.
+    // Verbindung aus dem gespeicherten Profil wiederherstellen — nur wenn der
+    // Nutzer das automatische Verbinden zum letzten Server erlaubt hat.
+    if (!core::getSettingBool(QStringLiteral("auto_connect_last"), true)) {
+        const QString rightPath = state.value(QStringLiteral("right_path")).toString();
+        if (!rightPath.isEmpty())
+            m_rightPanel->navigateTo(rightPath);
+        return;
+    }
     core::ProfileStore store;
     store.load();
     if (const auto profile = store.get(profileName)) {

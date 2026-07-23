@@ -177,6 +177,9 @@ private:
 
     // --- Ansicht: Detail (Tabelle) oder Kachel ---
     QAbstractItemView *activeView() const;
+    // Schriftgroesse + schlanke Ansicht (pane_font_size / compact_rows) auf
+    // Tabelle und Kacheln anwenden.
+    void applyPaneStyle();
 
     // --- Miniaturansichten (nur lokal, abschaltbar) ---
     bool thumbsEnabled() const;
@@ -212,6 +215,7 @@ private:
     std::vector<core::FileEntry> m_entries;      // Rohdaten des Verzeichnisses
     std::vector<core::FileEntry> m_rows;         // sichtbare Zeilen (Index == Tabellenzeile)
     bool m_showHidden = true;
+    QString m_dateFormat;             // Datumsformat der Pane (Einstellung date_format)
     QString m_filter;                 // Wildcard-Filter (Strg+F)
     QStringList m_fileCols;           // angezeigte Spalten; [0] ist immer "name"
     QString m_sortKey = QStringLiteral("name");   // Spalten-Kennung, nach der sortiert wird
