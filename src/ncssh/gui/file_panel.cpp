@@ -1963,6 +1963,12 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
         case Qt::Key_Insert:
             if (obj != m_filterEdit) { markCurrent(false, /*toggle=*/true); return true; }
             break;
+        case Qt::Key_Delete:              // Entf : aktuellen Eintrag entmarkieren
+            if (obj != m_filterEdit) { markCurrent(false, /*toggle=*/false); return true; }
+            break;
+        case Qt::Key_F2:                  // F2 : umbenennen
+            if (obj != m_filterEdit) { triggerOp(QStringLiteral("rename")); return true; }
+            break;
         case Qt::Key_Plus:                // Num + : nach Muster markieren
             if (obj != m_filterEdit) { markByPattern(true); return true; }
             break;
