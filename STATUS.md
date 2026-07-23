@@ -6,7 +6,7 @@ Stand des Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 > Originals hat ein C++-Gegenstück, der Kern (`core/`, `net/`) ist inhaltlich
 > nachgezogen und durch **142 Tests** abgesichert — alle 15 Testdateien des
 > Originals sind abgedeckt, plus eigene für ansi, keytools und shortcuts. Von
-> der Oberfläche sind noch **135 Bedienelemente offen** (erste Erhebung: 620).
+> der Oberfläche sind noch **123 Bedienelemente offen** (erste Erhebung: 620).
 > `file_panel`, `server_manager`, `console_panel` und `editor_dialog` liegen beim
 > Zeilenverhältnis bei 1,0 oder darüber; der größte Rückstand bleibt
 > `main_window` (0,41) und `macro_manager_dialog` (0,58). Der `help_dialog` wirkt

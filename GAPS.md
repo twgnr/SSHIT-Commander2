@@ -9,9 +9,9 @@ sind dieselbe Funktion und zaehlen nicht als Luecke.
 | | Anzahl |
 |---|---|
 | UI-Texte im Python-Original | 1352 |
-| UI-Texte im C++-Port | 1595 |
-| **echt offen** | **135** |
-| nur andere Platzhalter-Schreibweise | 80 |
+| UI-Texte im C++-Port | 1613 |
+| **echt offen** | **123** |
+| nur andere Platzhalter-Schreibweise | 81 |
 
 Erste Erhebung: 620 offene Punkte.
 
@@ -62,11 +62,10 @@ ungepruefte Bereich.
 
 | Modul | Anzahl |
 |---|---|
-| `gui/main_window.py` | 20 |
-| `gui/file_panel.py` | 11 |
+| `gui/main_window.py` | 18 |
+| `gui/file_panel.py` | 8 |
 | `gui/help_dialog.py` | 7 |
-| `gui/editor_dialog.py` | 6 |
-| `gui/properties_dialog.py` | 6 |
+| `gui/editor_dialog.py` | 4 |
 | `gui/tab_favorites_dialog.py` | 4 |
 | `gui/ai_chat_panel.py` | 3 |
 | `gui/clipboard_dialog.py` | 3 |
@@ -89,12 +88,13 @@ ungepruefte Bereich.
 | `gui/console_widget.py` | 1 |
 | `gui/filediff_dialog.py` | 1 |
 | `gui/known_hosts_dialog.py` | 1 |
+| `gui/properties_dialog.py` | 1 |
 | `gui/settings_dialog.py` | 1 |
 | `gui/tunnel_dialog.py` | 1 |
 
 ### Vollstaendige Listen
 
-<details><summary><code>gui/main_window.py</code> — 20</summary>
+<details><summary><code>gui/main_window.py</code> — 18</summary>
 
 * Aktiver Eintrag gesetzt — Strg+V fügt ihn in die aktive Pane ein.
 * Fehlgeschlagen: {error}
@@ -104,8 +104,6 @@ ungepruefte Bereich.
 * Nichts ausgewählt.
 * Quelle nicht mehr vorhanden — Eintrag entfernt.
 * SSHIT-Commander
-* Server-Profil gespeichert: {name}
-* Speichern unter (Remote-Pfad)
 * Text in der Zwischenablage — mit Strg+V einfügen.
 * Tunnel
 * Umgebung aktiviert: {path}
@@ -114,23 +112,20 @@ ungepruefte Bereich.
 * {done} übertragen, {error} fehlgeschlagen
 * {n} geändert
 * {n} neu
-* Übertragung fertig
+* Übertragung abgeschlossen
 * Übertragungen anzeigen
 
 </details>
 
-<details><summary><code>gui/file_panel.py</code> — 11</summary>
+<details><summary><code>gui/file_panel.py</code> — 8</summary>
 
 *  · Ordner: {pre}{size}
-* Als Server-Profil speichern
 * Git-Status: {code}
 * Netzwerkscanner-Modus schließen
 * Offene Ports: {ports}
-* Verbindung dieser Seite trennen
 * [Netzwerk] · Scan
 * remote
 * {n} markiert · {size}  ·  {base}
-* ⏏ Trennen
 * ✕ Netzwerkscanner
 
 </details>
@@ -147,25 +142,12 @@ ungepruefte Bereich.
 
 </details>
 
-<details><summary><code>gui/editor_dialog.py</code> — 6</summary>
+<details><summary><code>gui/editor_dialog.py</code> — 4</summary>
 
-* Datei wurde extern aktualisiert (neu geladen).
 * Encoding
-* Umbruch
 * Weiter
 * Z {line}, Sp {col}   ·   {bytes} Bytes   ·   {enc}   ·   {eol}   ·   {lang}
 * Zeilenende
-
-</details>
-
-<details><summary><code>gui/properties_dialog.py</code> — 6</summary>
-
-* Eigentümer
-* Lesen
-* Oktal: {value}
-* Rechte anwenden
-* Rechte ändern fehlgeschlagen
-* Schreiben
 
 </details>
 
@@ -327,6 +309,12 @@ ungepruefte Bereich.
 <details><summary><code>gui/known_hosts_dialog.py</code> — 1</summary>
 
 * Host:Port
+
+</details>
+
+<details><summary><code>gui/properties_dialog.py</code> — 1</summary>
+
+* Oktal: {value}
 
 </details>
 
