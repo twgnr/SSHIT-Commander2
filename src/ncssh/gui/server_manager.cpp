@@ -45,8 +45,13 @@ ServerManagerDialog::ServerManagerDialog(AsyncBridge *bridge, QWidget *parent)
     connect(m_filter, &QLineEdit::textChanged, this, [this] { reload(); });
     m_list = new QListWidget(this);
     connect(m_list, &QListWidget::currentTextChanged, this, [this](const QString &name) {
-        if (const auto p = m_store.get(name))
+        if (auto p = m_store.get(name)) {
+            // Gespeichertes Passwort/Passphrase aus dem Keyring ins Formular
+            // holen — sonst wuerde ein erneutes Speichern mit leerem Feld das
+            // gespeicherte Passwort loeschen.
+            m_store.hydrate(*p);
             loadIntoForm(*p);
+        }
     });
     connect(m_list, &QListWidget::itemDoubleClicked, this, &ServerManagerDialog::onConnect);
     left->addWidget(new QLabel(_t("Verbindungen"), this));
@@ -256,7 +261,9 @@ void ServerManagerDialog::loadIntoForm(const ServerProfile &p)
     updateColorButton();
     m_lastConnected->setText(p.lastConnected.isEmpty() ? QStringLiteral("—") : p.lastConnected);
     m_reachability->clear();
-    m_password->clear();
+    // Gespeichertes Passwort (maskiert) anzeigen, damit erkennbar ist, dass es
+    // hinterlegt ist, und ein erneutes Speichern es nicht verwirft.
+    m_password->setText(p.password);
 }
 
 ServerProfile ServerManagerDialog::formToProfile() const
@@ -276,8 +283,14 @@ ServerProfile ServerManagerDialog::formToProfile() const
     p.startPath = m_startPath->text().trimmed().isEmpty() ? QStringLiteral(".")
                                                           : m_startPath->text().trimmed();
     // Bestehenden Zeitstempel erhalten — das Formular zeigt ihn nur an.
-    if (const auto existing = m_store.get(p.name))
+    if (const auto existing = m_store.get(p.name)) {
         p.lastConnected = existing->lastConnected;
+        // Die Passphrase hat kein Formularfeld — gespeicherten Wert erhalten,
+        // damit ein erneutes Speichern sie nicht aus dem Keyring wirft.
+        if (p.savePassword)
+            p.passphrase =
+                core::getSecret(p.name, QStringLiteral("passphrase")).value_or(QString());
+    }
     return p;
 }
 
