@@ -318,8 +318,19 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
     libssh2_session_set_timeout(sess, 20000);
     libssh2_keepalive_config(sess, 1, 30);
 
-    if (libssh2_session_handshake(sess, session->m_socket) != 0)
-        throw HostKeyError(QStringLiteral("SSH-Handshake fehlgeschlagen: %1").arg(lastSshError(sess)));
+    if (const int rc = libssh2_session_handshake(sess, session->m_socket); rc != 0) {
+        QString message = QStringLiteral("SSH-Handshake fehlgeschlagen: %1").arg(lastSshError(sess));
+        // Bei einem Fehler in der Algorithmus-Einigung liegt es meist an den vom
+        // Crypto-Backend nicht unterstuetzten Verfahren (WinCNG kann kein
+        // ed25519-Hostkey und kein curve25519). Dann ist der Hinweis konkret.
+        if (rc == LIBSSH2_ERROR_KEX_FAILURE)
+            message += QStringLiteral(
+                "\n\nDer Server bietet nur Verfahren an, die diese Version nicht "
+                "beherrscht (z. B. ausschließlich ed25519-Host-Key oder "
+                "curve25519). Prüfe, ob der Server zusätzlich ecdsa/rsa als "
+                "Host-Key bzw. ecdh/diffie-hellman als Schlüsseltausch erlaubt.");
+        throw HostKeyError(message);
+    }
 
     // --- Host-Key-Pruefung VOR jeder Authentifizierung ---
     QString algo;

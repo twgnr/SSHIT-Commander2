@@ -24,6 +24,12 @@ set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(CRYPTO_BACKEND "WinCNG" CACHE STRING "" FORCE)
 set(ENABLE_ZLIB_COMPRESSION OFF CACHE BOOL "" FORCE)
+# WinCNG kann ECDSA/ECDH — standardmaessig aber aus. Ohne das bietet der Client
+# NUR Diffie-Hellman-Gruppen (KEX) und RSA/DSS-Hostkeys an; moderne Server, die
+# ecdh-sha2-nistp*/ecdsa erwarten, scheitern dann mit "Unable to exchange
+# encryption keys". Aktiviert ecdh-sha2-nistp256/384/521 + ecdsa-Hostkeys
+# (benoetigt Windows 10 oder neuer).
+set(ENABLE_ECDSA_WINCNG ON CACHE BOOL "" FORCE)
 FetchContent_Declare(libssh2
     GIT_REPOSITORY https://github.com/libssh2/libssh2.git
     GIT_TAG        libssh2-1.11.1
