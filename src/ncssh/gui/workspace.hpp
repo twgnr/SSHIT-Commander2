@@ -103,6 +103,8 @@ protected:
 private:
     // Aktive Pane + Konsole blau umranden (Property "active" je Seite setzen).
     void highlightActive();
+    // Hoehenaufteilung (Pane/Vorschau/Konsole) je Spalte merken.
+    void saveConsoleSplits();
     // moveSource: Quelle nach erfolgreicher Uebertragung entfernen (Verschieben).
     void startTransfer(core::FileSystemProvider *src, const QString &srcPath,
                        core::FileSystemProvider *dst, const QString &dstDir,

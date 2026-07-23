@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <QDir>
 #include <QEvent>
+#include <QJsonArray>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -76,6 +77,29 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
         == QLatin1String("vertical"))
         columns->setOrientation(Qt::Vertical);
     layout->addWidget(columns);
+
+    // Gemerkte Hoehenaufteilung (Pane/Vorschau/Konsole) je Spalte wieder-
+    // herstellen und kuenftige Aenderungen speichern.
+    const QVariantList savedSplits = core::getSetting(QStringLiteral("console_splits")).toList();
+    const auto restoreColumn = [](QSplitter *col, const QVariantList &saved, int idx) {
+        if (idx >= saved.size())
+            return;
+        const QVariantList entry = saved.at(idx).toList();
+        if (entry.size() != col->count())   // Struktur (Anzahl Sektionen) muss passen
+            return;
+        QList<int> sizes;
+        int sum = 0;
+        for (const QVariant &v : entry) {
+            sizes << v.toInt();
+            sum += v.toInt();
+        }
+        if (sum > 0)
+            col->setSizes(sizes);
+    };
+    restoreColumn(leftCol, savedSplits, 0);
+    restoreColumn(rightCol, savedSplits, 1);
+    for (QSplitter *col : {leftCol, rightCol})
+        connect(col, &QSplitter::splitterMoved, this, [this] { saveConsoleSplits(); });
 
     // Lokale Provider zuweisen
     m_leftPanel->setProvider(m_localFs.get());
@@ -419,6 +443,18 @@ FilePanel *Workspace::activePanel() const
     return m_rightActive ? m_rightPanel : m_leftPanel;
 }
 
+void Workspace::saveConsoleSplits()
+{
+    QJsonArray cols;
+    for (QSplitter *col : {m_leftColumn, m_rightColumn}) {
+        QJsonArray sizes;
+        for (int s : col->sizes())
+            sizes.append(s);
+        cols.append(sizes);
+    }
+    core::setSetting(QStringLiteral("console_splits"), cols);
+}
+
 void Workspace::highlightActive()
 {
     // Aktive Seite (Pane + Konsole) markieren, andere zuruecksetzen.
@@ -576,6 +612,8 @@ QJsonObject Workspace::toJson() const
         {QStringLiteral("profile"), m_session ? m_session->profile.name : QString()},
         {QStringLiteral("left_path"), m_leftPanel->currentPath()},
         {QStringLiteral("right_path"), m_rightPanel->currentPath()},
+        {QStringLiteral("left_console_detached"), m_floatingConsoles.contains(m_leftConsole)},
+        {QStringLiteral("right_console_detached"), m_floatingConsoles.contains(m_rightConsole)},
     };
 }
 
@@ -584,6 +622,12 @@ void Workspace::restoreFrom(const QJsonObject &state)
     const QString leftPath = state.value(QStringLiteral("left_path")).toString();
     if (!leftPath.isEmpty())
         m_leftPanel->navigateTo(leftPath);
+
+    // Zuvor abgedockte Konsolen wieder abdocken (nach dem Aufbau der Spalten).
+    if (state.value(QStringLiteral("left_console_detached")).toBool())
+        QTimer::singleShot(0, this, [this] { undockConsole(m_leftConsole); });
+    if (state.value(QStringLiteral("right_console_detached")).toBool())
+        QTimer::singleShot(0, this, [this] { undockConsole(m_rightConsole); });
 
     const QString profileName = state.value(QStringLiteral("profile")).toString();
     if (profileName.isEmpty()) {
