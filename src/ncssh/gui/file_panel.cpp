@@ -42,6 +42,7 @@
 #include <QStorageInfo>
 #include <QSize>
 #include <QStackedWidget>
+#include <QTextBrowser>
 #include <QToolButton>
 #include <QVariantMap>
 #include <QSet>
@@ -289,6 +290,10 @@ void FilePanel::buildUi(const QString &title)
     m_viewStack = new QStackedWidget(this);
     m_viewStack->addWidget(m_table);   // 0 = Detail
     m_viewStack->addWidget(m_grid);    // 1 = Kachel
+    // 2 = Status-Seite (Verzeichnis-Statistik statt Dateiliste, via Strg+F9).
+    m_statusView = new QTextBrowser(this);
+    m_statusView->setOpenLinks(false);
+    m_viewStack->addWidget(m_statusView);
     m_viewStack->setCurrentIndex(m_gridMode ? 1 : 0);
     layout->addWidget(m_viewStack, 1);
 
@@ -554,9 +559,27 @@ QAbstractItemView *FilePanel::activeView() const
                       : static_cast<QAbstractItemView *>(m_table);
 }
 
+void FilePanel::showStatus(const QString &html)
+{
+    m_statusView->setHtml(html);
+    m_viewStack->setCurrentWidget(m_statusView);
+    m_statusShown = true;
+}
+
+void FilePanel::hideStatus()
+{
+    if (!m_statusShown)
+        return;
+    m_statusShown = false;
+    m_viewStack->setCurrentIndex(m_gridMode ? 1 : 0);
+}
+
 void FilePanel::setViewMode(bool grid)
 {
     m_gridMode = grid;
+    if (m_statusShown) {   // Statusseite verlassen, wenn die Ansicht wechselt
+        m_statusShown = false;
+    }
     m_viewStack->setCurrentIndex(grid ? 1 : 0);
     core::setSetting(QStringLiteral("pane_grid"), grid);
     const int row = m_table->currentRow();
@@ -722,6 +745,7 @@ void FilePanel::navigateTo(const QString &path)
 {
     if (!m_provider || path.isEmpty())
         return;
+    hideStatus();   // Navigieren schliesst die Status-Anzeige (wie im Original)
     loadDir(path);
 }
 

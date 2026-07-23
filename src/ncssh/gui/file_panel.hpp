@@ -28,6 +28,7 @@ class QScrollArea;
 class QHBoxLayout;
 class QStackedWidget;
 class QListView;
+class QTextBrowser;
 class QAbstractItemView;
 
 namespace ncssh::gui {
@@ -71,6 +72,13 @@ public:
     void toggleHidden();
     void setViewMode(bool grid);
     bool gridMode() const { return m_gridMode; }
+
+    // Verzeichnis-Status statt Dateiliste zeigen (Strg+F9 im Hauptfenster).
+    void showStatus(const QString &html);
+    void hideStatus();
+    bool statusShown() const { return m_statusShown; }
+    // Lesezeichen dieser Pane (fuer den Strg+F9-Auswahlzyklus).
+    QStringList bookmarkList() const { return m_bookmarks.list(m_bookmarkKey); }
 
     // --- Verlauf (Alt+Links / Alt+Rechts) ---
     void goBack();
@@ -235,6 +243,8 @@ private:
     QTableWidget *m_table = nullptr;
     QStackedWidget *m_viewStack = nullptr;
     QListView *m_grid = nullptr;      // teilt Model UND Auswahl mit m_table
+    QTextBrowser *m_statusView = nullptr;  // Verzeichnis-Status (Strg+F9)
+    bool m_statusShown = false;
     bool m_gridMode = false;
     QTimer *m_thumbTimer = nullptr;   // Nachladen beim Scrollen entprellen
     quint64 m_thumbToken = 0;         // verwirft Ergebnisse alter Verzeichnisse

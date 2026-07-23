@@ -15,10 +15,13 @@ class QAction;
 class QLabel;
 class QToolButton;
 class QMenu;
+class QFrame;
+class QListWidget;
 
 namespace ncssh::gui {
 
 class Workspace;
+class FilePanel;
 class TransferManager;
 class ClipboardManager;
 class FileAlarmManager;
@@ -72,6 +75,15 @@ private:
     void buildStatusBar();
     // "+"-Knopf direkt rechts neben den letzten Tab setzen.
     void moveTabPlus();
+    // Strg+F9: Auswahl-Zyklus (Verzeichnis-Status / Lesezeichen) ueber der
+    // aktiven Pane. Wiederholtes Druecken schaltet weiter, nach 2 s ausgefuehrt.
+    void paneStatusCycle();
+    void cycleStart();
+    void cycleShow();
+    void cycleAdvance();
+    void cycleCommit();
+    void showPaneStatus();       // Verzeichnis-Status in der Nachbar-Pane zeigen
+    FilePanel *otherPanel() const;   // die nicht-aktive Pane des aktuellen Tabs
     // Konfigurierte Tastenkuerzel auf die registrierten Menue-Aktionen legen.
     void applyShortcuts();
     void openKeyTools();   // SSH-Schluessel erzeugen/konvertieren
@@ -113,6 +125,14 @@ private:
     QTabWidget *m_tabs = nullptr;
     QToolButton *m_tabPlus = nullptr;  // "+" direkt neben dem letzten Tab
     QMenu *m_pluginsMenu = nullptr;    // dynamisch (aboutToShow) befuellt
+    // Strg+F9-Auswahlzyklus (Status / Lesezeichen).
+    QFrame *m_cyclePopup = nullptr;
+    QListWidget *m_cycleList = nullptr;
+    QTimer *m_cycleTimer = nullptr;
+    QStringList m_cycleLabels;   // Anzeigetext je Eintrag
+    QStringList m_cycleKinds;    // "status" | "bookmark"
+    QStringList m_cycleValues;   // Zielpfad bei Lesezeichen
+    int m_cycleIndex = 0;
     MacroManagerDialog *m_macroDialog = nullptr;  // einmalig; present()/andockbar
 };
 

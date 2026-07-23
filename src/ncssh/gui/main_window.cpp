@@ -4,6 +4,9 @@
 #include "ncssh/core/assets.hpp"
 #include "ncssh/core/bookmarks.hpp"
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/core/dateformat.hpp"
+#include "ncssh/core/fileops.hpp"
+#include "ncssh/core/filesystem.hpp"
 #include "ncssh/core/keytools.hpp"
 #include "ncssh/core/macros.hpp"
 #include "ncssh/core/plugins.hpp"
@@ -49,7 +52,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFrame>
+#include <QHash>
 #include <QInputDialog>
+#include <QListWidget>
 #include <QJsonArray>
 #include <QIcon>
 #include <QJsonObject>
@@ -68,6 +74,7 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <QUrl>
+#include <QVBoxLayout>
 #include <algorithm>
 #include <utility>
 
@@ -379,6 +386,9 @@ void MainWindow::buildMenus()
             if (Workspace *ws = currentWorkspace())
                 ws->syncPanes();
         }));
+    // Strg+F9: Verzeichnis-Status der aktiven Pane / Lesezeichen (Auswahlzyklus).
+    reg(QStringLiteral("pane_status"),
+        panes->addAction(_t("Status anzeigen"), this, &MainWindow::paneStatusCycle));
     panes->addSeparator();
     QAction *broadcastAct = panes->addAction(_t("Befehl an beide Konsolen …"), this,
                                              &MainWindow::broadcastCommand);
@@ -1133,6 +1143,274 @@ void MainWindow::populatePluginsMenu()
     m_pluginsMenu->addAction(_t("Plugin-Ordner öffnen"), this, [] {
         QDesktopServices::openUrl(QUrl::fromLocalFile(core::plugins::pluginsDir()));
     });
+}
+
+// --- Strg+F9: Status-/Lesezeichen-Zyklus -----------------------------------
+
+namespace {
+
+QString humanBytes(qint64 bytes)
+{
+    double f = double(bytes);
+    static const char *units[] = {"B", "K", "M", "G", "T"};
+    for (int i = 0; i < 5; ++i) {
+        if (f < 1024.0 || i == 4) {
+            if (i == 0)
+                return QStringLiteral("%1 B").arg(qint64(f));
+            return QStringLiteral("%1 %2").arg(f, 0, 'f', 1).arg(QLatin1String(units[i]));
+        }
+        f /= 1024.0;
+    }
+    return {};
+}
+
+QString whenPair(const std::optional<std::pair<QString, QDateTime>> &p, const QString &fmt)
+{
+    if (!p)
+        return QStringLiteral("—");
+    return p->first.toHtmlEscaped() + QStringLiteral(" — ") + core::formatDt(p->second, fmt);
+}
+
+QString statusLoadingHtml(const QString &title)
+{
+    return QStringLiteral("<h2>%1</h2><p style='color:gray'>%2</p>")
+        .arg(title.toHtmlEscaped(), core::_t("Wird berechnet …"));
+}
+
+QString statusErrorHtml(const QString &title, const QString &msg)
+{
+    return QStringLiteral("<h2>%1</h2><p style='color:#c33'>%2 %3</p>")
+        .arg(title.toHtmlEscaped(), core::_t("Fehler:"), msg.toHtmlEscaped());
+}
+
+QString statusHtml(const QString &title, const QString &path,
+                   const core::DirStats &d, bool recursive)
+{
+    const QString fmt = core::getSettingString(QStringLiteral("pane_date_format"), QString());
+    QStringList rows;
+    const auto row = [&](const QString &k, const QString &v) {
+        rows << QStringLiteral("<tr><td style='padding:2px 12px 2px 0;color:gray'>%1</td>"
+                               "<td style='padding:2px 0'>%2</td></tr>")
+                    .arg(k, v);
+    };
+    row(core::_t("Pfad"), path.toHtmlEscaped());
+    row(core::_t("Gesamtgröße"),
+        humanBytes(d.size) + (d.truncated ? QStringLiteral(" +") : QString()));
+    row(core::_t("Dateien"), QString::number(d.files));
+    row(core::_t("Verzeichnisse"), QString::number(d.dirs));
+    row(core::_t("Versteckte Dateien"), QString::number(d.hidden));
+    row(core::_t("Zuletzt erstellt"), whenPair(d.newestCreated, fmt));
+    row(core::_t("Zuletzt geändert"), whenPair(d.newestModified, fmt));
+    row(core::_t("Älteste (geändert)"), whenPair(d.oldestModified, fmt));
+    row(core::_t("Größte Datei"),
+        d.largest ? d.largest->first.toHtmlEscaped() + QStringLiteral(" — ")
+                        + humanBytes(d.largest->second)
+                  : QStringLiteral("—"));
+    if (!d.topExt.empty()) {
+        QStringList tops;
+        for (const auto &e : d.topExt)
+            tops << QStringLiteral("%1 (%2)").arg(e.first.toHtmlEscaped()).arg(e.second);
+        row(core::_t("Häufigste Endungen"), tops.join(QStringLiteral(", ")));
+    }
+    const QString scope = recursive ? core::_t("rekursiv") : core::_t("nur direkte Ebene");
+    return QStringLiteral("<h2>%1</h2><p style='color:gray'>%2 (%3)</p><table>%4</table>"
+                          "<p style='color:gray'>%5</p>")
+        .arg(title.toHtmlEscaped(), core::_t("Verzeichnis-Status"), scope,
+             rows.join(QString()),
+             core::_t("Strg+F9 oder Navigieren schließt die Anzeige."));
+}
+
+// Flache Statistik aus einer Verzeichnisliste (nur direkte Ebene, fuer Remote).
+core::DirStats shallowStats(const std::vector<core::FileEntry> &entries)
+{
+    core::DirStats d;
+    QHash<QString, int> ext;
+    for (const core::FileEntry &e : entries) {
+        if (e.type == core::EntryType::Parent)
+            continue;
+        if (e.hidden)
+            ++d.hidden;
+        if (e.type == core::EntryType::Dir) {
+            ++d.dirs;
+        } else {
+            ++d.files;
+            d.size += e.size;
+            const int dot = e.name.lastIndexOf(QLatin1Char('.'));
+            const QString en = (dot > 0) ? e.name.mid(dot).toLower() : core::_t("(ohne)");
+            ext[en] += 1;
+            if (!d.largest || e.size > d.largest->second)
+                d.largest = std::make_pair(e.name, e.size);
+        }
+        if (e.modified.isValid()) {
+            if (!d.newestModified || e.modified > d.newestModified->second)
+                d.newestModified = std::make_pair(e.name, e.modified);
+            if (!d.oldestModified || e.modified < d.oldestModified->second)
+                d.oldestModified = std::make_pair(e.name, e.modified);
+        }
+        if (e.created.isValid()
+            && (!d.newestCreated || e.created > d.newestCreated->second))
+            d.newestCreated = std::make_pair(e.name, e.created);
+    }
+    // Top-5-Endungen nach Haeufigkeit, dann alphabetisch.
+    std::vector<std::pair<QString, int>> all(ext.constKeyValueBegin(), ext.constKeyValueEnd());
+    std::sort(all.begin(), all.end(), [](const auto &a, const auto &b) {
+        return a.second != b.second ? a.second > b.second : a.first < b.first;
+    });
+    if (all.size() > 5)
+        all.resize(5);
+    d.topExt = all;
+    return d;
+}
+
+} // namespace
+
+FilePanel *MainWindow::otherPanel() const
+{
+    Workspace *ws = currentWorkspace();
+    if (!ws)
+        return nullptr;
+    FilePanel *active = ws->activePanel();
+    return (active == ws->leftPanel()) ? ws->rightPanel() : ws->leftPanel();
+}
+
+void MainWindow::paneStatusCycle()
+{
+    if (!m_cycleTimer) {
+        m_cycleTimer = new QTimer(this);
+        m_cycleTimer->setSingleShot(true);
+        connect(m_cycleTimer, &QTimer::timeout, this, &MainWindow::cycleCommit);
+    }
+    if (m_cyclePopup && m_cyclePopup->isVisible())
+        cycleAdvance();
+    else
+        cycleStart();
+    m_cycleTimer->start(2000);
+}
+
+void MainWindow::cycleStart()
+{
+    Workspace *ws = currentWorkspace();
+    FilePanel *active = ws ? ws->activePanel() : nullptr;
+    if (!active)
+        return;
+    m_cycleLabels.clear();
+    m_cycleKinds.clear();
+    m_cycleValues.clear();
+    m_cycleLabels << _t("Status anzeigen");
+    m_cycleKinds << QStringLiteral("status");
+    m_cycleValues << QString();
+    for (const QString &p : active->bookmarkList()) {
+        m_cycleLabels << p;
+        m_cycleKinds << QStringLiteral("bookmark");
+        m_cycleValues << p;
+    }
+    m_cycleIndex = 0;
+    cycleShow();
+}
+
+void MainWindow::cycleShow()
+{
+    if (!m_cyclePopup) {
+        m_cyclePopup = new QFrame(this);
+        m_cyclePopup->setObjectName(QStringLiteral("CyclePopup"));
+        m_cyclePopup->setFrameShape(QFrame::StyledPanel);
+        m_cyclePopup->setStyleSheet(QStringLiteral(
+            "#CyclePopup{background:palette(window);border:1px solid palette(mid);}"));
+        auto *lay = new QVBoxLayout(m_cyclePopup);
+        lay->setContentsMargins(6, 6, 6, 6);
+        m_cycleList = new QListWidget(m_cyclePopup);
+        m_cycleList->setFocusPolicy(Qt::NoFocus);
+        connect(m_cycleList, &QListWidget::itemClicked, this,
+                [this](QListWidgetItem *) { cycleCommit(); });
+        lay->addWidget(m_cycleList);
+    }
+    m_cycleList->clear();
+    for (int i = 0; i < m_cycleLabels.size(); ++i)
+        m_cycleList->addItem((m_cycleKinds.at(i) == QLatin1String("bookmark")
+                                  ? QStringLiteral("★ ")
+                                  : QString())
+                             + m_cycleLabels.at(i));
+    m_cycleList->setCurrentRow(m_cycleIndex);
+    m_cyclePopup->adjustSize();
+    const int w = qMax(260, m_cyclePopup->sizeHint().width());
+    const int h = qMin(320, 40 + 22 * m_cycleLabels.size());
+    m_cyclePopup->resize(w, h);
+    Workspace *ws = currentWorkspace();
+    QWidget *ref = (ws && ws->activePanel()) ? static_cast<QWidget *>(ws->activePanel())
+                                             : static_cast<QWidget *>(this);
+    const QPoint center = ref->mapTo(this, ref->rect().center());
+    m_cyclePopup->move(qMax(0, center.x() - w / 2), qMax(0, center.y() - h / 2));
+    m_cyclePopup->show();
+    m_cyclePopup->raise();
+}
+
+void MainWindow::cycleAdvance()
+{
+    if (m_cycleLabels.isEmpty())
+        return;
+    m_cycleIndex = (m_cycleIndex + 1) % m_cycleLabels.size();
+    m_cycleList->setCurrentRow(m_cycleIndex);
+}
+
+void MainWindow::cycleCommit()
+{
+    if (m_cycleTimer)
+        m_cycleTimer->stop();
+    if (m_cyclePopup)
+        m_cyclePopup->hide();
+    if (m_cycleIndex < 0 || m_cycleIndex >= m_cycleLabels.size())
+        return;
+    const QString kind = m_cycleKinds.at(m_cycleIndex);
+    if (kind == QLatin1String("status")) {
+        showPaneStatus();
+    } else if (kind == QLatin1String("bookmark")) {
+        if (Workspace *ws = currentWorkspace())
+            if (FilePanel *active = ws->activePanel())
+                active->navigateTo(m_cycleValues.at(m_cycleIndex));
+    }
+}
+
+void MainWindow::showPaneStatus()
+{
+    Workspace *ws = currentWorkspace();
+    if (!ws)
+        return;
+    FilePanel *active = ws->activePanel();
+    FilePanel *other = otherPanel();
+    if (!active || !other)
+        return;
+    core::FileSystemProvider *prov = active->provider();
+    if (!prov)
+        return;
+    const core::FileEntry *sel = active->selectedEntry();
+    QString target, title;
+    if (sel && sel->type == core::EntryType::Dir) {
+        target = prov->join(active->currentPath(), sel->name);
+        title = sel->name;
+    } else {
+        target = active->currentPath();
+        title = prov->basename(target);
+        if (title.isEmpty())
+            title = target;
+    }
+    other->showStatus(statusLoadingHtml(title));
+
+    if (prov->isRemote) {
+        // Remote/Netzwerk: nur die direkte Ebene auswerten.
+        m_bridge->run<std::vector<core::FileEntry>>(
+            [prov, target] { return prov->listDir(target); },
+            [other, title, target](const std::vector<core::FileEntry> &entries) {
+                other->showStatus(statusHtml(title, target, shallowStats(entries), false));
+            },
+            [other, title](const QString &m) { other->showStatus(statusErrorHtml(title, m)); });
+        return;
+    }
+    m_bridge->run<core::DirStats>(
+        [target] { return core::dirStats(target); },
+        [other, title, target](const core::DirStats &d) {
+            other->showStatus(statusHtml(title, target, d, true));
+        },
+        [other, title](const QString &m) { other->showStatus(statusErrorHtml(title, m)); });
 }
 
 void MainWindow::openThemeEditor()
