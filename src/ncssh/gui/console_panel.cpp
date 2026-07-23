@@ -17,6 +17,7 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QStackedWidget>
+#include <QTextDocument>
 #include <QVBoxLayout>
 
 namespace ncssh::gui {
@@ -68,9 +69,9 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
 
     // Seite 1: Befehle (Ausgabe + Eingabezeile)
     m_commandPage = new QWidget(m_stack);
-    auto *cmdLayout = new QVBoxLayout(m_commandPage);
-    cmdLayout->setContentsMargins(0, 0, 0, 0);
-    cmdLayout->setSpacing(6);
+    m_commandLayout = new QVBoxLayout(m_commandPage);
+    m_commandLayout->setContentsMargins(0, 0, 0, 0);
+    m_commandLayout->setSpacing(6);
 
     m_output = new QPlainTextEdit(m_commandPage);
     m_output->setObjectName(QStringLiteral("ConsoleOutput"));
@@ -80,7 +81,7 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     mono.setPointSize(10);
     m_output->setFont(mono);
     m_output->setMaximumBlockCount(20000);
-    cmdLayout->addWidget(m_output, 1);
+    m_commandLayout->addWidget(m_output, 1);
 
     auto *inputRow = new QHBoxLayout();
     m_prompt = new QLabel(QStringLiteral("$"), m_commandPage);
@@ -103,7 +104,7 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     inputRow->addWidget(m_input, 1);
     inputRow->addWidget(m_status);
     inputRow->addWidget(m_stopButton);
-    cmdLayout->addLayout(inputRow);
+    m_commandLayout->addLayout(inputRow);
     m_stack->addWidget(m_commandPage);
 
     // Seite 2: interaktives Terminal (echtes PTY)
@@ -318,10 +319,81 @@ bool ConsolePanel::eventFilter(QObject *obj, QEvent *event)
             cancelRunning();
             return true;
         }
+        if (ke->key() == Qt::Key_F && (ke->modifiers() & Qt::ControlModifier)) {
+            showSearch();
+            return true;
+        }
+    }
+    // Suchleiste: Enter blaettert weiter, Shift+Enter zurueck, Esc schliesst.
+    if (obj == m_searchEdit && event->type() == QEvent::KeyPress) {
+        auto *ke = static_cast<QKeyEvent *>(event);
+        if (ke->key() == Qt::Key_Escape) {
+            hideSearch();
+            return true;
+        }
+        if (ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter) {
+            searchStep(!(ke->modifiers() & Qt::ShiftModifier));
+            return true;
+        }
     }
     if (event->type() == QEvent::FocusIn)
         emit activated();
     return QWidget::eventFilter(obj, event);
+}
+
+void ConsolePanel::showSearch()
+{
+    if (!m_searchBar) {
+        m_searchBar = new QWidget(m_commandPage);
+        auto *row = new QHBoxLayout(m_searchBar);
+        row->setContentsMargins(4, 2, 4, 2);
+        m_searchEdit = new QLineEdit(m_searchBar);
+        m_searchEdit->setPlaceholderText(
+            _t("In Ausgabe suchen…   (Enter = weiter, Shift+Enter = zurück, Esc = schließen)"));
+        m_searchEdit->installEventFilter(this);
+        connect(m_searchEdit, &QLineEdit::textChanged, this,
+                [this] { searchStep(true); });
+        auto *close = new QPushButton(QStringLiteral("✕"), m_searchBar);
+        close->setFixedWidth(28);
+        connect(close, &QPushButton::clicked, this, [this] { hideSearch(); });
+        row->addWidget(m_searchEdit, 1);
+        row->addWidget(close);
+        // Direkt ueber der Eingabezeile einhaengen.
+        m_commandLayout->insertWidget(m_commandLayout->count() - 1, m_searchBar);
+    }
+    m_searchBar->setVisible(true);
+    m_searchEdit->setFocus();
+    m_searchEdit->selectAll();
+}
+
+void ConsolePanel::hideSearch()
+{
+    if (m_searchBar)
+        m_searchBar->setVisible(false);
+    // Hervorhebung entfernen.
+    m_output->setExtraSelections({});
+    m_input->setFocus();
+}
+
+void ConsolePanel::searchStep(bool forward)
+{
+    if (!m_searchEdit)
+        return;
+    const QString needle = m_searchEdit->text();
+    if (needle.isEmpty()) {
+        m_output->setExtraSelections({});
+        return;
+    }
+    QTextDocument::FindFlags flags;
+    if (!forward)
+        flags |= QTextDocument::FindBackward;
+    // Vom aktuellen Cursor aus suchen; am Ende zum Anfang umbrechen.
+    if (!m_output->find(needle, flags)) {
+        QTextCursor cursor = m_output->textCursor();
+        cursor.movePosition(forward ? QTextCursor::Start : QTextCursor::End);
+        m_output->setTextCursor(cursor);
+        m_output->find(needle, flags);
+    }
 }
 
 } // namespace ncssh::gui

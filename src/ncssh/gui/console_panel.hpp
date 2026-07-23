@@ -19,6 +19,8 @@ class QLabel;
 class QStackedWidget;
 class QPushButton;
 
+class QVBoxLayout;
+
 namespace ncssh::gui {
 
 class FilePanel;
@@ -61,6 +63,9 @@ private:
     void switchToTerminal();
     void switchToCommands();
     void setBusy(bool busy);      // Statuszeile + Stop-Knopf nachfuehren
+    void showSearch();            // Strg+F: Ausgabe durchsuchen
+    void hideSearch();
+    void searchStep(bool forward);
     void cancelRunning();         // laufenden Befehl abbrechen (Strg+C / Esc)
 
     AsyncBridge *m_bridge;
@@ -77,6 +82,9 @@ private:
     QPushButton *m_modeButton = nullptr;
     QPlainTextEdit *m_output = nullptr;
     QLineEdit *m_input = nullptr;
+    QVBoxLayout *m_commandLayout = nullptr;
+    QWidget *m_searchBar = nullptr;
+    QLineEdit *m_searchEdit = nullptr;
     QLabel *m_prompt = nullptr;
     QLabel *m_status = nullptr;
     QPushButton *m_stopButton = nullptr;

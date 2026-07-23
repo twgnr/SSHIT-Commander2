@@ -530,6 +530,7 @@
   "Import fehlgeschlagen": "Import failed",
   "Import fehlgeschlagen: %1": "Import failed: %1",
   "Importieren …": "Import …",
+  "In Ausgabe suchen…   (Enter = weiter, Shift+Enter = zurück, Esc = schließen)": "Search output…   (Enter = next, Shift+Enter = previous, Esc = close)",
   "In Datei (-i)": "In file (-i)",
   "In Konsole einfügen": "Insert into console",
   "In die Zwischenablage kopiert.": "Copied to clipboard.",
