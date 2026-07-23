@@ -10,6 +10,10 @@
 
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QTimer>
+#include <QFileSystemWatcher>
+#include <QFileInfo>
+#include <QComboBox>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -151,6 +155,23 @@ EditorDialog::EditorDialog(AsyncBridge *bridge, core::FileSystemProvider *provid
     QAction *convert = toolbar->addAction(_t("Encoding konvertieren …"), this,
                                           &EditorDialog::openEncodingConverter);
     convert->setToolTip(_t("Datei in einen anderen Zeichensatz umwandeln (inkl. EBCDIC)"));
+    toolbar->addSeparator();
+    // Zeilenumbruch umschalten (nur Anzeige, aendert die Datei nicht).
+    m_wrapAction = toolbar->addAction(_t("Umbruch"));
+    m_wrapAction->setCheckable(true);
+    m_wrapAction->setToolTip(_t("Lange Zeilen umbrechen (nur Anzeige)"));
+    connect(m_wrapAction, &QAction::toggled, this, [this](bool on) {
+        m_editor->setLineWrapMode(on ? QPlainTextEdit::WidgetWidth
+                                     : QPlainTextEdit::NoWrap);
+    });
+    // Zeilenende beim Speichern: LF oder CRLF.
+    m_eolBox = new QComboBox(toolbar);
+    m_eolBox->addItem(_t("Zeilenende: LF"), QStringLiteral("lf"));
+    m_eolBox->addItem(_t("Zeilenende: CRLF"), QStringLiteral("crlf"));
+    m_eolBox->setToolTip(_t("Zeilenende, das beim Speichern geschrieben wird"));
+    connect(m_eolBox, &QComboBox::currentIndexChanged, this,
+            &EditorDialog::updateCursorInfo);
+    toolbar->addWidget(m_eolBox);
     layout->addWidget(toolbar);
 
     m_editor = new CodeEditor(this);
@@ -231,8 +252,46 @@ EditorDialog::EditorDialog(AsyncBridge *bridge, core::FileSystemProvider *provid
     if (!language.isEmpty())
         m_highlighter = new SyntaxHighlighter(m_editor->document(), language);
 
+    // Externe Aenderungen erkennen (nur lokal). Kurze Verzoegerung, damit ein
+    // Editor, der die Datei erst leert und dann schreibt, nicht doppelt meldet.
+    if (!m_provider->isRemote) {
+        m_watcher = new QFileSystemWatcher(this);
+        connect(m_watcher, &QFileSystemWatcher::fileChanged, this, [this] {
+            QTimer::singleShot(200, this, &EditorDialog::onFileChangedExternally);
+        });
+    }
+
     updateTitle();
     load();
+}
+
+void EditorDialog::watchFile()
+{
+    // Nur lokale Dateien lassen sich per QFileSystemWatcher ueberwachen.
+    if (!m_watcher || m_provider->isRemote)
+        return;
+    if (!m_watcher->files().isEmpty())
+        m_watcher->removePaths(m_watcher->files());
+    if (QFileInfo::exists(m_path))
+        m_watcher->addPath(m_path);
+}
+
+void EditorDialog::onFileChangedExternally()
+{
+    // Bei ungespeicherten Aenderungen nicht ungefragt ueberschreiben.
+    if (m_dirty) {
+        const auto answer = QMessageBox::question(
+            this, _t("Extern geändert"),
+            _t("Die Datei wurde außerhalb des Editors geändert, hat aber auch hier "
+               "ungespeicherte Änderungen. Von der Platte neu laden und die eigenen "
+               "Änderungen verwerfen?"));
+        if (answer != QMessageBox::Yes) {
+            watchFile();   // Ueberwachung nach dem Signal wieder aktivieren
+            return;
+        }
+    }
+    load();
+    m_status->setText(_t("Datei wurde extern aktualisiert (neu geladen)."));
 }
 
 void EditorDialog::updateCursorInfo()
@@ -241,8 +300,8 @@ void EditorDialog::updateCursorInfo()
     const int line = cursor.blockNumber() + 1;
     const int col = cursor.positionInBlock() + 1;
     const int bytes = m_editor->toPlainText().toUtf8().size();
-    // EOL-Konvention grob aus dem Rohtext ablesen (Anzeige, nicht bindend).
-    const QString eol = m_editor->toPlainText().contains(QStringLiteral("\r\n"))
+    // EOL aus der Auswahl (das wird beim Speichern geschrieben).
+    const QString eol = m_eolBox && m_eolBox->currentData().toString() == QLatin1String("crlf")
                             ? QStringLiteral("CRLF")
                             : QStringLiteral("LF");
     m_cursorInfo->setText(_t("Z %1, Sp %2   ·   %3 Bytes   ·   %4")
@@ -280,10 +339,17 @@ void EditorDialog::load()
                                       .arg(text.size())
                                       .arg(text.count(QLatin1Char('\n')) + 1));
             }
-            m_editor->setPlainText(text);
+            // Vorhandene CRLF erkennen und die Auswahl entsprechend setzen;
+            // intern wird auf LF normalisiert.
+            if (text.contains(QStringLiteral("\r\n")))
+                m_eolBox->setCurrentIndex(m_eolBox->findData(QStringLiteral("crlf")));
+            QString normalized = text;
+            normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+            m_editor->setPlainText(normalized);
             m_dirty = false;
             updateTitle();
             updateCursorInfo();
+            watchFile();
         },
         [this](const QString &err) {
             m_status->setText(err);
@@ -300,16 +366,22 @@ void EditorDialog::save(bool saveAs)
     }
     QString target = m_path;
     if (saveAs) {
+        // Bei Remote-Providern den Zielpfad, sonst nur den Namen erfragen.
+        const QString title = m_provider->isRemote ? _t("Speichern unter (Remote-Pfad)")
+                                                    : _t("Speichern unter");
         bool ok = false;
         const QString name = QInputDialog::getText(
-            this, _t("Speichern unter"), _t("Neuer Dateiname:"), QLineEdit::Normal,
+            this, title, _t("Neuer Dateiname:"), QLineEdit::Normal,
             m_provider->basename(m_path), &ok);
         if (!ok || name.isEmpty())
             return;
         target = m_provider->join(m_provider->parent(m_path), name);
     }
     core::FileSystemProvider *provider = m_provider;
-    const QString content = m_editor->toPlainText();
+    // Zeilenende gemaess Auswahl schreiben; intern haelt Qt immer LF.
+    QString content = m_editor->toPlainText();
+    if (m_eolBox->currentData().toString() == QLatin1String("crlf"))
+        content.replace(QLatin1Char('\n'), QStringLiteral("\r\n"));
     m_bridge->run(
         [provider, target, content] { provider->writeText(target, content); },
         [this, target] {
@@ -317,6 +389,7 @@ void EditorDialog::save(bool saveAs)
             m_dirty = false;
             updateTitle();
             m_status->setText(_t("Gespeichert."));
+            watchFile();   // eigenes Speichern nicht als externe Aenderung melden
         },
         [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
 }

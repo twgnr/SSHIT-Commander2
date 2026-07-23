@@ -11,6 +11,9 @@
 
 class QLineEdit;
 class QLabel;
+class QComboBox;
+class QAction;
+class QFileSystemWatcher;
 class QCheckBox;
 
 namespace ncssh::gui {
@@ -59,6 +62,8 @@ private:
     void openEncodingConverter();  // Zeichensatz der Datei umwandeln
     void updateTitle();
     void updateCursorInfo();   // Zeile/Spalte/Bytes/EOL rechts
+    void watchFile();          // lokale Datei auf externe Aenderung ueberwachen
+    void onFileChangedExternally();
 
     AsyncBridge *m_bridge;
     core::FileSystemProvider *m_provider;
@@ -74,6 +79,9 @@ private:
     QCheckBox *m_caseSensitive = nullptr;
     QLabel *m_status = nullptr;
     QLabel *m_cursorInfo = nullptr;
+    QComboBox *m_eolBox = nullptr;
+    QAction *m_wrapAction = nullptr;
+    QFileSystemWatcher *m_watcher = nullptr;
 };
 
 } // namespace ncssh::gui

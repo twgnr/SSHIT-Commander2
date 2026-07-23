@@ -7,6 +7,7 @@
 #include "ncssh/core/natsort.hpp"
 #include "ncssh/core/netscan.hpp"
 #include "ncssh/core/openwith.hpp"
+#include "ncssh/core/profiles.hpp"
 #include "ncssh/core/shortcuts.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/file_icons.hpp"
@@ -1003,6 +1004,22 @@ void FilePanel::openHostMenu(const QPoint &pos)
         });
 
         menu.addSeparator();
+        QAction *saveProfile = menu.addAction(_t("Als Server-Profil speichern"));
+        saveProfile->setEnabled(!ip.isEmpty());
+        connect(saveProfile, &QAction::triggered, this, [this, entry, ip] {
+            core::ProfileStore store;
+            store.load();
+            core::ServerProfile profile;
+            const QString name = entry->name.isEmpty() ? ip : entry->name;
+            profile.name = store.get(name) ? name + QStringLiteral(" (") + ip
+                                                 + QStringLiteral(")")
+                                           : name;
+            profile.host = ip;
+            profile.authMethod = QStringLiteral("password");
+            store.upsert(profile);
+            store.save();
+            emit statusMessage(_t("Server-Profil gespeichert: %1").arg(profile.name));
+        });
         QAction *copyIp = menu.addAction(_t("IP kopieren"));
         copyIp->setEnabled(!ip.isEmpty());
         connect(copyIp, &QAction::triggered, this,
