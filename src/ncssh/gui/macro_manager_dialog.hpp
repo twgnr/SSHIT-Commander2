@@ -41,10 +41,12 @@ public:
 signals:
     void clickedTile(int index);
     void heldTile(int index);
+    void contextRequested(int index, const QPoint &globalPos);  // Rechtsklick
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
 
 private:
@@ -95,6 +97,7 @@ private:
     void importLayers();
     void toggleMode(bool runMode);
     void onDimsChanged();   // Reihen/Spalten des aktuellen Layers uebernehmen
+    void onTileContextMenu(int index, const QPoint &globalPos);  // Bearbeiten/Ausführen/Leeren
     void pollForeground();
     core::macros::Layer *currentLayer();
 

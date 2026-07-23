@@ -20,6 +20,8 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMainWindow>
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
@@ -95,6 +97,13 @@ void KeyTile::mouseReleaseEvent(QMouseEvent *event)
     QPushButton::mouseReleaseEvent(event);
     if (left && !m_held && rect().contains(event->position().toPoint()))
         emit clickedTile(m_index);
+}
+
+void KeyTile::contextMenuEvent(QContextMenuEvent *event)
+{
+    // Rechtsklick auf eine Kachel: Bearbeiten/Ausfuehren/Leeren (siehe Dialog).
+    m_holdTimer->stop();
+    emit contextRequested(m_index, event->globalPos());
 }
 
 void KeyTile::paintEvent(QPaintEvent *event)
@@ -483,6 +492,7 @@ void MacroManagerDialog::drawGrid()
         tile->setConfig(key.value_or(QJsonObject()), size);
         connect(tile, &KeyTile::clickedTile, this, &MacroManagerDialog::onTileClicked);
         connect(tile, &KeyTile::heldTile, this, &MacroManagerDialog::onTileHeld);
+        connect(tile, &KeyTile::contextRequested, this, &MacroManagerDialog::onTileContextMenu);
         m_grid->addWidget(tile, index / layer->cols, index % layer->cols);
         m_tiles.push_back(tile);
     }
@@ -525,6 +535,39 @@ void MacroManagerDialog::onTileHeld(int index)
     layer->setKey(index, editor.cleared() ? QJsonObject() : editor.config());
     mc::save(m_config);
     drawGrid();
+}
+
+void MacroManagerDialog::onTileContextMenu(int index, const QPoint &globalPos)
+{
+    mc::Layer *layer = currentLayer();
+    if (!layer)
+        return;
+    const bool has = layer->key(index).has_value();
+    QMenu menu(this);
+    QAction *edit = menu.addAction(_t("Bearbeiten …"));
+    QAction *run = menu.addAction(_t("Ausführen"));
+    run->setEnabled(has);
+    menu.addSeparator();
+    QAction *clear = menu.addAction(_t("Leeren"));
+    clear->setEnabled(has);
+
+    QAction *chosen = menu.exec(globalPos);
+    if (chosen == edit) {
+        MacroKeyEditor editor(layer->key(index).value_or(mc::newKey()),
+                              m_config.layerNames(), this);
+        if (editor.exec() != QDialog::Accepted)
+            return;
+        layer->setKey(index, editor.cleared() ? QJsonObject() : editor.config());
+        mc::save(m_config);
+        drawGrid();
+    } else if (chosen == run) {
+        if (const auto key = layer->key(index))
+            runKey(*key, index);
+    } else if (chosen == clear) {
+        layer->setKey(index, QJsonObject());   // leeres Objekt entfernt die Taste
+        mc::save(m_config);
+        drawGrid();
+    }
 }
 
 void MacroManagerDialog::runKey(const QJsonObject &config, int index)
