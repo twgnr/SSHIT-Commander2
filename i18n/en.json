@@ -1572,7 +1572,7 @@
   "Übernommen: %1\n\nDie Anwendung sollte neu gestartet werden.": "Applied: %1\n\nThe application should be restarted.",
   "Überschreiben?": "Overwrite?",
   "Übertragen": "Transfer",
-  "Übertragung abgeschlossen": "Transfer finished",
+  "Übertragung fertig": "Transfer complete",
   "Übertragungen": "Transfers",
   "Übertragungen (Transfer-Queue)": "Transfers (Transfer Queue)",
   "Überträgt Commits zum Remote.": "Pushes commits to the remote.",

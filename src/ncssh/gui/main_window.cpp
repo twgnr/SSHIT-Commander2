@@ -88,7 +88,7 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
         if (running > 0 || (done == 0 && failed == 0))
             return;
         if (failed == 0) {
-            statusBar()->showMessage(_t("Übertragung abgeschlossen") + QStringLiteral(" — ")
+            statusBar()->showMessage(_t("Übertragung fertig") + QStringLiteral(" — ")
                                          + _t("%1 Datei(en) übertragen").arg(done),
                                      10000);
         } else {
