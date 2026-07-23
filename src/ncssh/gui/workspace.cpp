@@ -70,6 +70,11 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     columns->addWidget(rightCol);
     columns->setSizes({500, 500});
     m_columns = columns;
+    // Gemerkte Pane-Ausrichtung uebernehmen (gilt auch fuer neue Tabs).
+    if (core::getSettingString(QStringLiteral("pane_orientation"),
+                               QStringLiteral("horizontal"))
+        == QLatin1String("vertical"))
+        columns->setOrientation(Qt::Vertical);
     layout->addWidget(columns);
 
     // Lokale Provider zuweisen

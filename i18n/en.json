@@ -197,6 +197,7 @@
   "Befehlsvorschau": "Command preview",
   "Befund": "Finding",
   "Bei Fehlern": "On errors",
+  "Bei fertiger Übertragung benachrichtigen": "Notify when transfer completes",
   "Beide": "Both",
   "Beim Start automatisch zum letzten Server verbinden": "Reconnect to the last server on startup",
   "Beim ersten Mal vertrauen (accept-new)": "Trust on first use (accept-new)",

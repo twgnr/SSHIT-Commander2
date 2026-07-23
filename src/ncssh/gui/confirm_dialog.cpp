@@ -2,6 +2,8 @@
 
 #include "ncssh/core/i18n.hpp"
 
+#include "ncssh/core/settings.hpp"
+#include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -145,6 +147,15 @@ TransferConfirmDialog::TransferConfirmDialog(const QString &title, const QString
     m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     layout->addWidget(m_table, 1);
+
+    // Abschluss-Benachrichtigung (persistente Einstellung) — hier waehlbar,
+    // bevor der Transfer startet.
+    auto *notify = new QCheckBox(_t("Bei fertiger Übertragung benachrichtigen"), this);
+    notify->setChecked(core::getSettingBool(QStringLiteral("notify_transfer_done"), true));
+    connect(notify, &QCheckBox::toggled, this, [](bool on) {
+        core::setSetting(QStringLiteral("notify_transfer_done"), on);
+    });
+    layout->addWidget(notify);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                          this);

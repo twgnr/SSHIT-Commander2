@@ -102,6 +102,9 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
         }
         if (running > 0 || (done == 0 && failed == 0))
             return;
+        // Abschluss-Meldung kann in den Einstellungen abgeschaltet werden.
+        if (!core::getSettingBool(QStringLiteral("notify_transfer_done"), true))
+            return;
         if (failed == 0) {
             statusBar()->showMessage(_t("Übertragung fertig") + QStringLiteral(" — ")
                                          + _t("%1 Datei(en) übertragen").arg(done),
@@ -373,8 +376,13 @@ void MainWindow::buildMenus()
     m_vertPanesAction = panes->addAction(_t("Panes untereinander anzeigen"));
     m_vertPanesAction->setCheckable(true);
     connect(m_vertPanesAction, &QAction::toggled, this, [this](bool on) {
-        if (Workspace *ws = currentWorkspace())
-            ws->setPanesVertical(on);
+        // Wahl merken und auf ALLE Tabs anwenden — auch neue uebernehmen sie.
+        core::setSetting(QStringLiteral("pane_orientation"),
+                         on ? QStringLiteral("vertical") : QStringLiteral("horizontal"));
+        for (int i = 0; i < m_tabs->count(); ++i) {
+            if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i)))
+                ws->setPanesVertical(on);
+        }
     });
     panes->addSeparator();
     reg(QStringLiteral("swap_panes"), panes->addAction(_t("Panes tauschen"), this, [this] {
