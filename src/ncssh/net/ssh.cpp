@@ -8,6 +8,8 @@
 #include <QFile>
 #include <QUrl>
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <libssh2.h>
 #include <libssh2_sftp.h>
 #include <mutex>
@@ -301,6 +303,31 @@ static QString detectOs(SSHSession &session)
     return QStringLiteral("windows");
 }
 
+// Keyboard-interactive-Callback: beantwortet jede Aufforderung mit dem
+// hinterlegten Passwort (Adresse liegt im Session-Abstract). Viele Server
+// (PAM) bieten statt "password" nur "keyboard-interactive" an.
+static void kbdInteractiveResponse(const char * /*name*/, int /*name_len*/,
+                                   const char * /*instruction*/, int /*instruction_len*/,
+                                   int num_prompts,
+                                   const LIBSSH2_USERAUTH_KBDINT_PROMPT * /*prompts*/,
+                                   LIBSSH2_USERAUTH_KBDINT_RESPONSE *responses,
+                                   void **abstract)
+{
+    const auto *pw = abstract ? static_cast<const QByteArray *>(*abstract) : nullptr;
+    for (int i = 0; i < num_prompts; ++i) {
+        if (pw && !pw->isEmpty()) {
+            responses[i].text = static_cast<char *>(malloc(pw->size()));
+            if (responses[i].text) {
+                memcpy(responses[i].text, pw->constData(), pw->size());
+                responses[i].length = static_cast<unsigned int>(pw->size());
+            }
+        } else {
+            responses[i].text = nullptr;
+            responses[i].length = 0;
+        }
+    }
+}
+
 SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkeys)
 {
     ensureInit();
@@ -392,6 +419,16 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
     } else if (profile.authMethod == QLatin1String("password")) {
         const QByteArray pw = profile.password.toUtf8();
         authed = libssh2_userauth_password(sess, user.constData(), pw.constData()) == 0;
+        if (!authed) {
+            // Fallback: Server, die kein "password" anbieten (PAM), akzeptieren
+            // oft "keyboard-interactive". Das Passwort geht ueber das Abstract
+            // an den Callback.
+            QByteArray kbdPw = pw;
+            *libssh2_session_abstract(sess) = &kbdPw;
+            authed = libssh2_userauth_keyboard_interactive(
+                         sess, user.constData(), &kbdInteractiveResponse) == 0;
+            *libssh2_session_abstract(sess) = nullptr;
+        }
         if (!authed)
             fail(QStringLiteral("Passwort-Authentifizierung fehlgeschlagen: %1")
                      .arg(lastSshError(sess)));
