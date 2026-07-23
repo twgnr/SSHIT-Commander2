@@ -4,12 +4,14 @@ Stand des Umbaus von Python/PySide6 nach C++/Qt6 + libssh2.
 
 > **Wichtige Einordnung.** Die Architektur steht vollständig: jedes Modul des
 > Originals hat ein C++-Gegenstück, der Kern (`core/`, `net/`) ist inhaltlich
-> nachgezogen und durch **138 Tests** abgesichert — alle 15 Testdateien des
-> Originals sind abgedeckt. Von der Oberfläche sind noch **139 Bedienelemente
-> offen** (erste Erhebung: 620). `file_panel` und `server_manager` liegen beim
-> Zeilenverhältnis inzwischen bei 1,0 bzw. darüber; der größte Rückstand bleibt
-> `main_window` (0,40), gefolgt von den Handbuchtexten im `help_dialog` (0,50)
-> und `macro_manager_dialog` (0,58). Vollständige Liste: [GAPS.md](GAPS.md).
+> nachgezogen und durch **142 Tests** abgesichert — alle 15 Testdateien des
+> Originals sind abgedeckt, plus eigene für ansi, keytools und shortcuts. Von
+> der Oberfläche sind noch **135 Bedienelemente offen** (erste Erhebung: 620).
+> `file_panel`, `server_manager`, `console_panel` und `editor_dialog` liegen beim
+> Zeilenverhältnis bei 1,0 oder darüber; der größte Rückstand bleibt
+> `main_window` (0,41) und `macro_manager_dialog` (0,58). Der `help_dialog` wirkt
+> mit 0,50 unvollständig, hat aber alle 32 Themen — nur kompakter als das
+> HTML-Original. Vollständige Liste und behobene Funktionsfehler: [GAPS.md](GAPS.md).
 
 ## Portiert
 
@@ -121,7 +123,7 @@ die einzige Oberfläche.
 
 | Original | Port |
 |---|---|
-| `tests/` (15 Dateien, 120 Tests) | `tests/` — eigenes Harness + CTest, **138 Tests**; alle 15 Testdateien abgedeckt |
+| `tests/` (15 Dateien, 120 Tests) | `tests/` — eigenes Harness + CTest, **142 Tests**; alle 15 Testdateien abgedeckt |
 | `smoke_gui.py` | `tests/test_smoke_gui.cpp` — Offscreen-Test der Oberfläche (Kernlogik deckt der Rest ab) |
 | `tools/i18n_extract.py` | portiert — sucht `_t("…")` in den C++-Quellen |
 | `i18n/en.json` | **1106 Schlüssel, 100 % übersetzt**, keine verwaisten Einträge |
@@ -131,7 +133,7 @@ Tests laufen mit `.\test.ps1` (oder `ctest --test-dir build`).
 
 ## Bekannte Einschränkungen
 
-- **Die GUI ist noch nicht ganz auf dem Funktionsumfang des Originals** — 139
+- **Die GUI ist noch nicht ganz auf dem Funktionsumfang des Originals** — 135
   Bedienelemente fehlen (Start: 620). Vollständige Aufstellung in
   [GAPS.md](GAPS.md); Schwerpunkt `main_window` und die Handbuchtexte.
 - Systemweite Makro-Hotkeys (außerhalb des Fensters) sind nicht umgesetzt.

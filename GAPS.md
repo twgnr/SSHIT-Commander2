@@ -9,9 +9,9 @@ sind dieselbe Funktion und zaehlen nicht als Luecke.
 | | Anzahl |
 |---|---|
 | UI-Texte im Python-Original | 1352 |
-| UI-Texte im C++-Port | 1590 |
-| **echt offen** | **139** |
-| nur andere Platzhalter-Schreibweise | 79 |
+| UI-Texte im C++-Port | 1595 |
+| **echt offen** | **135** |
+| nur andere Platzhalter-Schreibweise | 80 |
 
 Erste Erhebung: 620 offene Punkte.
 
@@ -22,38 +22,51 @@ als Python — ein Verhaeltnis deutlich unter 1,0 ist ein Warnsignal:
 
 | Modul | Python | C++ | Verhaeltnis |
 |---|---|---|---|
-| `gui/main_window` | 2434 | 966 | 0,40 |
+| `gui/main_window` | 2434 | 998 | 0,41 |
 | `gui/user_guide_dialog` -> `help_dialog` | 940 | 474 | 0,50 |
 | `gui/macro_manager_dialog` | 1062 | 613 | 0,58 |
 | `gui/terminal_widget` | 527 | 448 | 0,85 |
 | `gui/server_manager` | 427 | 426 | 1,00 |
+| `gui/console_widget` -> `console_panel` | 338 | 394 | 1,17 |
+| `gui/editor_dialog` | 320 | 465 | 1,45 |
 | `gui/file_panel` | 1689 | 1834 | 1,09 |
 
-Beim `help_dialog` besteht der Rueckstand fast nur aus Handbuchtexten, nicht
-aus Mechanik. Bei `main_window` fehlen vor allem Randfaelle des
-Verbindungsablaufs.
+Das niedrige Verhaeltnis bei `help_dialog` taeuscht: **alle 32 Themen sind
+inhaltlich vorhanden** (Original: 31), der Unterschied ist nur Format — HTML im
+Original, kompaktes Markdown im Port. Bei `main_window` verteilt der Port viel
+Logik auf `workspace`/`file_panel`; das Zeilenverhaeltnis unterschaetzt die
+Abdeckung entsprechend.
+
+## Behobene Funktionsfehler (nicht ueber die Textmetrik sichtbar)
+
+Der Methodenvergleich hat mehrere echte Fehler zutage gefoerdert, die keine
+fehlende Zeichenkette waren:
+
+* **Tastenkuerzel-Einstellung war wirkungslos** — `main_window` und `file_panel`
+  verdrahteten alle Kuerzel fest und lasen `getShortcuts()` nie. Jetzt
+  konfigurierbar, mit 4 Tests abgesichert.
+* **Makro-Sequenzen liefen nie** — der Editor konnte sie anlegen, `runKey` hat
+  sie ignoriert.
+* **Exit-Code der Konsole** wurde erfasst, aber nicht angezeigt.
+* **Konsolen-Suche (Strg+F)** war im Platzhalter versprochen, aber nur im
+  Terminal vorhanden.
 
 ## Nicht abgedeckt von dieser Metrik
 
-Der `macro_manager_dialog` arbeitet im Original ohne `tr()` — dort war die
-Luecke nur ueber einen Methodenvergleich sichtbar (Sequenz-Ausfuehrung und
-Layer-Import fehlten, beides inzwischen ergaenzt).
-
 **Die libssh2-Schicht ist gegen keinen echten SSH-Server getestet.** Auth,
 SFTP, PTY und Tunnel sind gegen die Semantik des Originals gebaut; keiner der
-138 Tests wuerde einen Fehler dort bemerken. Das bleibt der groesste
-ungeprueft Bereich.
+142 Tests wuerde einen Fehler dort bemerken. Das bleibt der groesste
+ungepruefte Bereich.
 
 ## Noch offene UI-Texte je Modul
 
 | Modul | Anzahl |
 |---|---|
-| `gui/main_window.py` | 21 |
+| `gui/main_window.py` | 20 |
 | `gui/file_panel.py` | 11 |
 | `gui/help_dialog.py` | 7 |
 | `gui/editor_dialog.py` | 6 |
 | `gui/properties_dialog.py` | 6 |
-| `gui/console_widget.py` | 4 |
 | `gui/tab_favorites_dialog.py` | 4 |
 | `gui/ai_chat_panel.py` | 3 |
 | `gui/clipboard_dialog.py` | 3 |
@@ -73,6 +86,7 @@ ungeprueft Bereich.
 | `gui/user_guide_dialog.py` | 2 |
 | `gui/command_builder.py` | 1 |
 | `gui/console_panel.py` | 1 |
+| `gui/console_widget.py` | 1 |
 | `gui/filediff_dialog.py` | 1 |
 | `gui/known_hosts_dialog.py` | 1 |
 | `gui/settings_dialog.py` | 1 |
@@ -80,10 +94,9 @@ ungeprueft Bereich.
 
 ### Vollstaendige Listen
 
-<details><summary><code>gui/main_window.py</code> — 21</summary>
+<details><summary><code>gui/main_window.py</code> — 20</summary>
 
 * Aktiver Eintrag gesetzt — Strg+V fügt ihn in die aktive Pane ein.
-* Einstellungen gespeichert (Pane-Schrift sofort; Terminal/Editor ab nächstem Öffnen).
 * Fehlgeschlagen: {error}
 * Gespeichert: {path}
 * Keine Ausgabe zum Analysieren vorhanden.
@@ -153,15 +166,6 @@ ungeprueft Bereich.
 * Rechte anwenden
 * Rechte ändern fehlgeschlagen
 * Schreiben
-
-</details>
-
-<details><summary><code>gui/console_widget.py</code> — 4</summary>
-
-* In Ausgabe suchen…   (Enter = weiter, Shift+Enter = zurück, Esc = schließen)
-* lokal
-* ✓ fertig (Exit 0)
-* ✗ Exit {code}
 
 </details>
 
@@ -305,6 +309,12 @@ ungeprueft Bereich.
 <details><summary><code>gui/console_panel.py</code> — 1</summary>
 
 * ★ Verlauf
+
+</details>
+
+<details><summary><code>gui/console_widget.py</code> — 1</summary>
+
+* lokal
 
 </details>
 
