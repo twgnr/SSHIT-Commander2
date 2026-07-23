@@ -5,6 +5,7 @@
 #include "ncssh/core/bookmarks.hpp"
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/keytools.hpp"
+#include "ncssh/core/macros.hpp"
 #include "ncssh/core/profiles.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/core/shortcuts.hpp"
@@ -57,9 +58,11 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QSignalBlocker>
+#include <QSize>
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTimer>
 #include <QToolBar>
 #include <utility>
 
@@ -190,6 +193,9 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
     restoreSession();
     if (m_tabs->count() == 0)
         addTab();
+    // Zuletzt geoeffnete (evtl. angedockte) Makroleiste zurueckholen — erst nach
+    // dem Aufbau, damit das Andocken ein fertiges Hauptfenster vorfindet.
+    QTimer::singleShot(0, this, &MainWindow::restoreMacroManager);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -388,22 +394,63 @@ void MainWindow::buildMenus()
     applyShortcuts();   // konfigurierte Kuerzel auf die registrierten Aktionen legen
 
     // --- Toolbar (gezeichnete Icons in der Textfarbe des Themes) ---
-    auto *toolbar = addToolBar(_t("Haupt"));
+    // Wie im Original nur Icons (Text als Tooltip), 18px und kompakt — so passen
+    // alle Aktionen in eine niedrige Leiste.
+    auto *toolbar = addToolBar(_t("Aktionen"));
     toolbar->setMovable(false);
-    toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    toolbar->addAction(themedIcon(QStringLiteral("connect")), _t("Verbinden"), this,
+    toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    toolbar->setIconSize(QSize(18, 18));
+    toolbar->setStyleSheet(QStringLiteral(
+        "QToolButton{padding:2px;} QToolBar{padding:1px; spacing:2px;}"));
+
+    // Datei-Operationen wirken auf die aktive Pane des aktuellen Tabs.
+    auto fileOp = [this](const QString &id) {
+        if (Workspace *ws = currentWorkspace())
+            if (FilePanel *panel = ws->activePanel())
+                panel->triggerOp(id);
+    };
+    auto reloadPanel = [this] {
+        if (Workspace *ws = currentWorkspace())
+            if (FilePanel *panel = ws->activePanel())
+                panel->refresh();
+    };
+
+    toolbar->addAction(themedIcon(QStringLiteral("connect")), _t("SSH verbinden"), this,
                        &MainWindow::openServerManager);
     toolbar->addAction(themedIcon(QStringLiteral("tab")), _t("Neuer Tab"), this,
                        [this] { addTab(); });
     toolbar->addSeparator();
-    toolbar->addAction(themedIcon(QStringLiteral("transfers")), _t("Übertragungen"), this,
-                       &MainWindow::openTransfers);
     toolbar->addAction(themedIcon(QStringLiteral("palette")), _t("Befehle"), this,
                        &MainWindow::openCommandPalette);
     toolbar->addAction(themedIcon(QStringLiteral("history")), _t("Verlauf"), this,
                        &MainWindow::openHistory);
+    toolbar->addAction(themedIcon(QStringLiteral("transfers")), _t("Übertragungen"), this,
+                       &MainWindow::openTransfers);
+    toolbar->addAction(themedIcon(QStringLiteral("tunnels")), _t("Tunnel"), this,
+                       &MainWindow::openTunnels);
     toolbar->addAction(themedIcon(QStringLiteral("search")), _t("Suchen"), this,
                        [this] { openSearch(QStringLiteral("content")); });
+    toolbar->addSeparator();
+    // Datei-Aktionen (wie im Original: wirken auf die aktive Pane).
+    toolbar->addAction(themedIcon(QStringLiteral("view")), _t("Ansehen"), this,
+                       [fileOp] { fileOp(QStringLiteral("view")); });
+    toolbar->addAction(themedIcon(QStringLiteral("edit")), _t("Bearbeiten"), this,
+                       [fileOp] { fileOp(QStringLiteral("edit")); });
+    toolbar->addAction(themedIcon(QStringLiteral("copy")), _t("Kopieren"), this,
+                       [fileOp] { fileOp(QStringLiteral("copy")); });
+    toolbar->addAction(themedIcon(QStringLiteral("rename")), _t("Umbenennen"), this,
+                       [fileOp] { fileOp(QStringLiteral("rename")); });
+    toolbar->addAction(themedIcon(QStringLiteral("mkdir")), _t("Ordner"), this,
+                       [fileOp] { fileOp(QStringLiteral("mkdir")); });
+    toolbar->addAction(themedIcon(QStringLiteral("delete")), _t("Löschen"), this,
+                       [fileOp] { fileOp(QStringLiteral("delete")); });
+    toolbar->addAction(themedIcon(QStringLiteral("reload")), _t("Neu laden"), this,
+                       [reloadPanel] { reloadPanel(); });
+    toolbar->addSeparator();
+    toolbar->addAction(themedIcon(QStringLiteral("clipboard")), _t("Clipboard"), this,
+                       &MainWindow::openClipboard);
+    toolbar->addAction(themedIcon(QStringLiteral("macro")), _t("Makro-Manager"), this,
+                       &MainWindow::openMacroManager);
     toolbar->addSeparator();
     toolbar->addAction(themedIcon(QStringLiteral("settings")), _t("Einstellungen"), this,
                        &MainWindow::openSettings);
@@ -1034,20 +1081,31 @@ void MainWindow::openGithubAlarms()
 
 void MainWindow::openMacroManager()
 {
-    // Makros koennen Befehle an die aktive bzw. alle Konsolen schicken.
-    auto sshSend = [this](const QString &command, bool run) {
-        if (Workspace *ws = currentWorkspace())
-            ws->sendToActiveConsole(command, run);
-    };
-    auto sshBroadcast = [this](const QString &command, bool run) {
-        for (int i = 0; i < m_tabs->count(); ++i) {
-            if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i)))
+    // Einmalig anlegen und danach nur noch hervorholen — so bleibt der Zustand
+    // (angedockt/schwebend, Modus) erhalten und die Leiste kann sich andocken.
+    if (!m_macroDialog) {
+        // Makros koennen Befehle an die aktive bzw. alle Konsolen schicken.
+        auto sshSend = [this](const QString &command, bool run) {
+            if (Workspace *ws = currentWorkspace())
                 ws->sendToActiveConsole(command, run);
-        }
-    };
-    auto *dlg = new MacroManagerDialog(m_bridge, sshSend, sshBroadcast, this);
-    dlg->setAttribute(Qt::WA_DeleteOnClose);
-    dlg->show();
+        };
+        auto sshBroadcast = [this](const QString &command, bool run) {
+            for (int i = 0; i < m_tabs->count(); ++i) {
+                if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i)))
+                    ws->sendToActiveConsole(command, run);
+            }
+        };
+        m_macroDialog = new MacroManagerDialog(m_bridge, sshSend, sshBroadcast, this);
+    }
+    m_macroDialog->present();
+}
+
+void MainWindow::restoreMacroManager()
+{
+    // Beim Start: War die Makroleiste zuletzt geoeffnet, holen wir sie zurueck
+    // (angedockte Leiste erscheint dann gleich am gemerkten Rand).
+    if (core::macros::load().open)
+        openMacroManager();
 }
 
 void MainWindow::openTabFavorites()

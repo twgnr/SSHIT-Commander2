@@ -9,6 +9,7 @@
 #include <QPen>
 #include <QPixmap>
 #include <QPointF>
+#include <QPolygonF>
 #include <QRectF>
 #include <functional>
 
@@ -250,6 +251,35 @@ void drawTab(QPainter &p, qreal s, const QColor &c)
     p.drawLine(QPointF(s * 0.35, s * 0.51), QPointF(s * 0.65, s * 0.51));
 }
 
+void drawPlay(QPainter &p, qreal s, const QColor &c)
+{
+    // Gefuelltes Dreieck (Wiedergabe/Ausfuehren).
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    QPolygonF tri;
+    tri << QPointF(s * 0.30, s * 0.22) << QPointF(s * 0.30, s * 0.78)
+        << QPointF(s * 0.80, s * 0.50);
+    p.drawPolygon(tri);
+}
+
+void drawBookmark(QPainter &p, qreal s, const QColor &c)
+{
+    // Gefuelltes Lesezeichen mit Kerbe unten (wie im Original).
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    const qreal w = s * 0.6;
+    const qreal x = (s - w) / 2.0;
+    const qreal top = s * 0.12, bot = s * 0.9, notch = s * 0.28;
+    QPainterPath path;
+    path.moveTo(x, top);
+    path.lineTo(x + w, top);
+    path.lineTo(x + w, bot);
+    path.lineTo(x + w / 2.0, bot - notch);
+    path.lineTo(x, bot);
+    path.closeSubpath();
+    p.drawPath(path);
+}
+
 const QHash<QString, DrawFn> &registry()
 {
     static const QHash<QString, DrawFn> map = {
@@ -271,6 +301,8 @@ const QHash<QString, DrawFn> &registry()
         {QStringLiteral("clipboard"), drawClipboard},
         {QStringLiteral("macro"), drawMacro},
         {QStringLiteral("tab"), drawTab},
+        {QStringLiteral("play"), drawPlay},
+        {QStringLiteral("bookmark"), drawBookmark},
     };
     return map;
 }

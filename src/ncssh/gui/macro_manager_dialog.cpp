@@ -5,8 +5,11 @@
 #include "ncssh/gui/macro_key_editor.hpp"
 
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDockWidget>
+#include <QHash>
 #include <QJsonArray>
 #include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
@@ -16,6 +19,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMainWindow>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
@@ -157,6 +161,12 @@ MacroManagerDialog::MacroManagerDialog(AsyncBridge *bridge,
     refreshLayers();
     drawGrid();
 
+    // Zuletzt gemerkte Andock-Seite anwenden: nur im Ausfuehren-Modus und nur,
+    // wenn der Dialog ein QMainWindow als Eltern hat (Bearbeiten bleibt schwebend).
+    if (m_runMode && m_config.dock != QLatin1String("float")
+        && qobject_cast<QMainWindow *>(parentWidget()))
+        setDock(m_config.dock, /*persist=*/false);
+
     // Kontextabhaengiger Layerwechsel: Vordergrund-Programm beobachten.
     m_foregroundTimer = new QTimer(this);
     m_foregroundTimer->setInterval(1200);
@@ -168,6 +178,11 @@ MacroManagerDialog::MacroManagerDialog(AsyncBridge *bridge,
 MacroManagerDialog::~MacroManagerDialog()
 {
     // Zustand sichern (Modus, Kontext-Schalter, Tastengroesse).
+    saveConfig();
+}
+
+void MacroManagerDialog::saveConfig()
+{
     m_config.mode = m_runMode ? QStringLiteral("run") : QStringLiteral("edit");
     try {
         mc::save(m_config);
@@ -178,10 +193,18 @@ MacroManagerDialog::~MacroManagerDialog()
 void MacroManagerDialog::buildUi()
 {
     resize(980, 640);
-    auto *root = new QHBoxLayout(this);
+    // Gesamte Oberflaeche in ein eigenes Widget legen, damit sie zwischen dem
+    // schwebenden Dialog und einem angedockten QDockWidget umziehen kann.
+    m_dialogLayout = new QVBoxLayout(this);
+    m_dialogLayout->setContentsMargins(0, 0, 0, 0);
+    m_content = new QWidget(this);
+    m_dialogLayout->addWidget(m_content);
+    auto *root = new QHBoxLayout(m_content);
 
-    // --- Linke Spalte: Layer ---
-    auto *left = new QVBoxLayout();
+    // --- Linke Spalte: Layer (nur im Bearbeiten-Modus sichtbar) ---
+    m_leftPanel = new QWidget(m_content);
+    auto *left = new QVBoxLayout(m_leftPanel);
+    left->setContentsMargins(0, 0, 0, 0);
     left->addWidget(new QLabel(_t("Layer"), this));
     m_layerList = new QListWidget(this);
     connect(m_layerList, &QListWidget::currentRowChanged, this,
@@ -222,7 +245,37 @@ void MacroManagerDialog::buildUi()
     });
     sizeRow->addWidget(m_keySize);
     left->addLayout(sizeRow);
-    root->addLayout(left, 1);
+
+    // Import/Export gehoeren zur Editier-Oberflaeche (nur Bearbeiten-Modus).
+    auto *ieRow = new QHBoxLayout();
+    auto *exportBtn = new QPushButton(_t("Exportieren …"), this);
+    auto *importBtn = new QPushButton(_t("Importieren …"), this);
+    connect(exportBtn, &QPushButton::clicked, this, &MacroManagerDialog::exportLayers);
+    // Import mit Auswahl — vorher wurde alles aus der Datei uebernommen.
+    connect(importBtn, &QPushButton::clicked, this, &MacroManagerDialog::importLayers);
+    ieRow->addWidget(exportBtn);
+    ieRow->addWidget(importBtn);
+    left->addLayout(ieRow);
+
+    // Andocken: den Makro-Manager an einen Rand des Hauptfensters heften.
+    // Die Auswahl gilt im Ausfuehren-Modus; im Bearbeiten-Modus bleibt das
+    // Fenster schwebend (wie im Original).
+    m_dockRow = new QWidget(m_content);
+    auto *dockLayout = new QHBoxLayout(m_dockRow);
+    dockLayout->setContentsMargins(0, 0, 0, 0);
+    dockLayout->addWidget(new QLabel(_t("Andocken:"), this));
+    m_dockCombo = new QComboBox(m_dockRow);
+    m_dockCombo->addItem(_t("Freischwebend"), QStringLiteral("float"));
+    m_dockCombo->addItem(_t("Links"), QStringLiteral("left"));
+    m_dockCombo->addItem(_t("Rechts"), QStringLiteral("right"));
+    m_dockCombo->addItem(_t("Oben"), QStringLiteral("top"));
+    m_dockCombo->addItem(_t("Unten"), QStringLiteral("bottom"));
+    connect(m_dockCombo, &QComboBox::currentIndexChanged, this,
+            [this](int) { onDockCombo(); });
+    dockLayout->addWidget(m_dockCombo, 1);
+    left->addWidget(m_dockRow);
+    left->addStretch(0);
+    root->addWidget(m_leftPanel, 1);
 
     // --- Rechte Spalte: Raster ---
     auto *right = new QVBoxLayout();
@@ -233,13 +286,6 @@ void MacroManagerDialog::buildUi()
     connect(m_modeButton, &QPushButton::toggled, this, &MacroManagerDialog::toggleMode);
     topRow->addWidget(m_modeButton);
     topRow->addStretch(1);
-    auto *exportBtn = new QPushButton(_t("Exportieren …"), this);
-    auto *importBtn = new QPushButton(_t("Importieren …"), this);
-    connect(exportBtn, &QPushButton::clicked, this, &MacroManagerDialog::exportLayers);
-    // Import mit Auswahl — vorher wurde alles aus der Datei uebernommen.
-    connect(importBtn, &QPushButton::clicked, this, &MacroManagerDialog::importLayers);
-    topRow->addWidget(exportBtn);
-    topRow->addWidget(importBtn);
     right->addLayout(topRow);
 
     m_gridHost = new QWidget(this);
@@ -251,12 +297,14 @@ void MacroManagerDialog::buildUi()
     m_status->setObjectName(QStringLiteral("Muted"));
     right->addWidget(m_status);
 
-    auto *closeBtn = new QPushButton(_t("Schließen"), this);
-    connect(closeBtn, &QPushButton::clicked, this, &QDialog::accept);
-    right->addWidget(closeBtn);
+    m_closeButton = new QPushButton(_t("Schließen"), this);
+    connect(m_closeButton, &QPushButton::clicked, this, &QDialog::accept);
+    right->addWidget(m_closeButton);
     root->addLayout(right, 3);
 
-    toggleMode(m_runMode);
+    updateModeLabel();
+    applyModeVisibility();
+    syncDockCombo();
 }
 
 void MacroManagerDialog::refreshLayers()
@@ -607,14 +655,160 @@ void MacroManagerDialog::importLayers()
                                  .arg(added.size()).arg(added.join(QStringLiteral(", "))));
 }
 
+void MacroManagerDialog::updateModeLabel()
+{
+    m_modeButton->setText(m_runMode ? _t("▶ Ausführen (Klick löst aus)")
+                                    : _t("✎ Bearbeiten (Klick öffnet Editor)"));
+    m_status->setText(m_runMode
+                          ? _t("Ausführen-Modus — langes Halten öffnet den Editor.")
+                          : _t("Bearbeiten-Modus — Klick auf eine Taste öffnet den Editor."));
+}
+
+void MacroManagerDialog::applyModeVisibility()
+{
+    // Layer-Editor, Andock-Auswahl und Schliessen-Knopf nur im Bearbeiten-Modus.
+    const bool edit = !m_runMode;
+    if (m_leftPanel)
+        m_leftPanel->setVisible(edit);
+    if (m_dockRow)
+        m_dockRow->setVisible(edit);
+    if (m_closeButton)
+        m_closeButton->setVisible(edit && m_dockSide == QLatin1String("float"));
+}
+
 void MacroManagerDialog::toggleMode(bool runMode)
 {
     m_runMode = runMode;
-    m_modeButton->setText(runMode ? _t("▶ Ausführen (Klick löst aus)")
-                                  : _t("✎ Bearbeiten (Klick öffnet Editor)"));
-    m_status->setText(runMode
-                          ? _t("Ausführen-Modus — langes Halten öffnet den Editor.")
-                          : _t("Bearbeiten-Modus — Klick auf eine Taste öffnet den Editor."));
+    m_config.mode = runMode ? QStringLiteral("run") : QStringLiteral("edit");
+    updateModeLabel();
+    applyModeVisibility();
+    if (!m_runMode) {
+        // Bearbeiten-Modus ist immer abgedockt (schwebend).
+        if (m_dockSide != QLatin1String("float")) {
+            setDock(QStringLiteral("float"), /*persist=*/false);
+            return;
+        }
+    } else {
+        // Ausfuehren-Modus: gemerkte Andock-Seite anwenden.
+        if (m_config.dock != QLatin1String("float") && m_dockSide != m_config.dock
+            && qobject_cast<QMainWindow *>(parentWidget())) {
+            setDock(m_config.dock, /*persist=*/false);
+            return;
+        }
+    }
+    saveConfig();
+}
+
+// --- Andocken ---------------------------------------------------------------
+
+void MacroManagerDialog::present()
+{
+    // Als "geoeffnet" merken, damit die Leiste beim naechsten Start zurueckkommt.
+    if (!m_config.open) {
+        m_config.open = true;
+        saveConfig();
+    }
+    if (m_dockSide == QLatin1String("float") || !m_dock) {
+        show();
+        raise();
+        activateWindow();
+    } else {
+        m_dock->show();
+        m_dock->raise();
+    }
+}
+
+void MacroManagerDialog::closeEvent(QCloseEvent *event)
+{
+    // Nur ein echtes, vom Nutzer ausgeloestes Schliessen (Fenster-X) merkt sich
+    // "geschlossen". Programmatisches Schliessen (App-Beenden) laesst den
+    // geoeffnet-Zustand bestehen, damit die Leiste beim Start zurueckkehrt.
+    if (event->spontaneous()) {
+        m_config.open = false;
+        saveConfig();
+    }
+    QDialog::closeEvent(event);
+}
+
+void MacroManagerDialog::onDockCombo()
+{
+    const QString side = m_dockCombo->currentData().toString();
+    m_config.dock = side;
+    saveConfig();
+    // Im Bearbeiten-Modus nur merken (Fenster bleibt schwebend); im Ausfuehren-
+    // Modus sofort anwenden.
+    if (m_runMode)
+        setDock(side, /*persist=*/false);
+}
+
+void MacroManagerDialog::syncDockCombo()
+{
+    // Zeigt die gemerkte Andock-Seite (config.dock), nicht den momentanen
+    // Zustand — im Bearbeiten-Modus ist das Fenster trotz Auswahl schwebend.
+    const int i = m_dockCombo->findData(m_config.dock);
+    if (i >= 0 && i != m_dockCombo->currentIndex()) {
+        QSignalBlocker blocker(m_dockCombo);
+        m_dockCombo->setCurrentIndex(i);
+    }
+}
+
+void MacroManagerDialog::setDock(const QString &side, bool persist)
+{
+    if (side == m_dockSide)
+        return;
+    auto *main = qobject_cast<QMainWindow *>(parentWidget());
+    if (side != QLatin1String("float") && !main) {
+        QMessageBox::information(this, _t("Makro-Manager"),
+                                 _t("Andocken ist nur im Hauptfenster möglich."));
+        syncDockCombo();
+        return;
+    }
+
+    static const QHash<QString, Qt::DockWidgetArea> areas = {
+        {QStringLiteral("left"), Qt::LeftDockWidgetArea},
+        {QStringLiteral("right"), Qt::RightDockWidgetArea},
+        {QStringLiteral("top"), Qt::TopDockWidgetArea},
+        {QStringLiteral("bottom"), Qt::BottomDockWidgetArea},
+    };
+
+    if (side == QLatin1String("float")) {
+        // Inhalt zurueck in den schwebenden Dialog holen.
+        if (m_dock) {
+            m_dock->setWidget(nullptr);
+            if (main)
+                main->removeDockWidget(m_dock);
+            m_dock->deleteLater();
+            m_dock = nullptr;
+        }
+        m_content->setParent(nullptr);
+        m_dialogLayout->addWidget(m_content);
+        m_content->show();
+        m_dockSide = QStringLiteral("float");
+        show();
+        raise();
+        activateWindow();
+    } else {
+        // QDockWidget (ohne Titelleiste) erzeugen bzw. verschieben.
+        if (!m_dock) {
+            m_dock = new QDockWidget(_t("Makro-Manager"), main);
+            m_dock->setObjectName(QStringLiteral("MacroManagerDock"));
+            m_dock->setTitleBarWidget(new QWidget(m_dock));   // keine Titelleiste
+            m_dock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+            m_dock->setWidget(m_content);
+        }
+        main->addDockWidget(areas.value(side), m_dock);
+        m_dock->show();
+        m_dockSide = side;
+        hide();  // schwebende Huelle ausblenden
+    }
+
+    if (persist) {
+        m_config.dock = m_dockSide;
+    }
+    saveConfig();
+    syncDockCombo();
+    applyModeVisibility();  // Schliessen-Knopf nur schwebend zeigen
+    drawGrid();             // Anordnung an neuen Zustand anpassen
 }
 
 void MacroManagerDialog::pollForeground()

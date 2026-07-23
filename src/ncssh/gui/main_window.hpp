@@ -21,6 +21,7 @@ class TransferManager;
 class ClipboardManager;
 class FileAlarmManager;
 class GithubAlarmManager;
+class MacroManagerDialog;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -60,6 +61,7 @@ private:
     void openFileAlarms();
     void openGithubAlarms();
     void openMacroManager();
+    void restoreMacroManager();   // beim Start: angedockte Makroleiste zurueckholen
     void saveSession();      // offene Tabs fuer die Wiederherstellung sichern
     void restoreSession();
     void applyThemeByName(const QString &name);
@@ -103,6 +105,7 @@ private:
     FileAlarmManager *m_fileAlarms = nullptr;
     GithubAlarmManager *m_githubAlarms = nullptr;
     QTabWidget *m_tabs = nullptr;
+    MacroManagerDialog *m_macroDialog = nullptr;  // einmalig; present()/andockbar
 };
 
 } // namespace ncssh::gui

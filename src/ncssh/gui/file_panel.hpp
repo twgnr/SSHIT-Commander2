@@ -64,6 +64,9 @@ public:
     void navigateTo(const QString &path);
     // Konfigurierte Kuerzel der Datei-Operationen uebernehmen (view/edit/…).
     void applyShortcuts();
+    // Fuehrt die Datei-Operation zur Kuerzel-ID aus (view/edit/copy/…).
+    // Public, damit die Haupt-Toolbar auf die aktive Pane wirken kann.
+    void triggerOp(const QString &id);
 
     // --- Verlauf (Alt+Links / Alt+Rechts) ---
     void goBack();
@@ -192,8 +195,6 @@ private:
     void markCurrent(bool select, bool toggle);  // Einfg / Leertaste
     void typeAhead(const QString &ch);
     void selectMatch(const QString &query);
-    // Fuehrt die Datei-Operation zur Kuerzel-ID aus (view/edit/copy/…).
-    void triggerOp(const QString &id);
 
     AsyncBridge *m_bridge;
     core::FileSystemProvider *m_provider = nullptr;

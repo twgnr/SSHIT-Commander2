@@ -21,6 +21,9 @@ class QComboBox;
 class QCheckBox;
 class QTimer;
 class QSpinBox;
+class QVBoxLayout;
+class QDockWidget;
+class QCloseEvent;
 
 namespace ncssh::gui {
 
@@ -64,6 +67,13 @@ public:
                        QWidget *parent = nullptr);
     ~MacroManagerDialog() override;
 
+    // Vom Hauptfenster gerufen: passende Ansicht (schwebend oder angedockt)
+    // zeigen und hervorheben; merkt sich "geoeffnet" fuer den naechsten Start.
+    void present();
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
+
 private:
     void buildUi();
     void refreshLayers();
@@ -83,6 +93,14 @@ private:
     void pollForeground();
     core::macros::Layer *currentLayer();
 
+    // --- Andocken (Makroleiste am Rand des Hauptfensters) ---
+    void setDock(const QString &side, bool persist);  // float|left|right|top|bottom
+    void onDockCombo();
+    void syncDockCombo();
+    void applyModeVisibility();  // Editier-Chrome nur im Bearbeiten-Modus zeigen
+    void updateModeLabel();
+    void saveConfig();
+
     AsyncBridge *m_bridge;
     core::macros::MacroConfig m_config;
     core::macroactions::ExecContext m_context;
@@ -100,6 +118,17 @@ private:
     QCheckBox *m_contextAware = nullptr;
     QSpinBox *m_keySize = nullptr;
     QLabel *m_status = nullptr;
+
+    // Andocken: die gesamte Oberflaeche liegt in m_content, das zwischen dem
+    // schwebenden Dialog (m_dialogLayout) und einem QDockWidget umziehen kann.
+    QVBoxLayout *m_dialogLayout = nullptr;
+    QWidget *m_content = nullptr;
+    QWidget *m_leftPanel = nullptr;   // Layer-Editor (nur Bearbeiten-Modus)
+    QWidget *m_dockRow = nullptr;     // "Andocken:"-Zeile (nur Bearbeiten-Modus)
+    QComboBox *m_dockCombo = nullptr;
+    QPushButton *m_closeButton = nullptr;
+    QString m_dockSide = QStringLiteral("float");
+    QDockWidget *m_dock = nullptr;
 };
 
 } // namespace ncssh::gui

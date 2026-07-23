@@ -11,6 +11,7 @@
 #include "ncssh/core/shortcuts.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/file_icons.hpp"
+#include "ncssh/gui/icons.hpp"
 #include "ncssh/gui/bookmarks_dialog.hpp"
 #include "ncssh/gui/confirm_dialog.hpp"
 #include "ncssh/gui/dir_chooser.hpp"
@@ -145,15 +146,15 @@ void FilePanel::buildUi(const QString &title)
         if (!root.isEmpty() && root != m_path)
             navigateTo(root);
     });
-    auto *back = new QPushButton(QStringLiteral("←"), this);
+    auto *back = new QPushButton(QStringLiteral("◀"), this);
     back->setFixedWidth(30);
     back->setToolTip(_t("Zurück (Alt+←)"));
     connect(back, &QPushButton::clicked, this, &FilePanel::goBack);
-    auto *forward = new QPushButton(QStringLiteral("→"), this);
+    auto *forward = new QPushButton(QStringLiteral("▶"), this);
     forward->setFixedWidth(30);
     forward->setToolTip(_t("Vor (Alt+→)"));
     connect(forward, &QPushButton::clicked, this, &FilePanel::goForward);
-    auto *up = new QPushButton(QStringLiteral("↑"), this);
+    auto *up = new QPushButton(QStringLiteral("⬆"), this);
     up->setFixedWidth(34);
     up->setToolTip(_t("Übergeordneter Ordner"));
     connect(up, &QPushButton::clicked, this, &FilePanel::goUp);
@@ -189,7 +190,8 @@ void FilePanel::buildUi(const QString &title)
     m_starButton->setFixedWidth(34);
     m_starButton->setToolTip(_t("Aktuellen Pfad als Lesezeichen (pro Server)"));
     connect(m_starButton, &QPushButton::clicked, this, &FilePanel::toggleBookmark);
-    auto *bookmarksBtn = new QPushButton(QStringLiteral("▾"), this);
+    auto *bookmarksBtn = new QPushButton(this);
+    bookmarksBtn->setIcon(themedIcon(QStringLiteral("bookmark"), 16));  // gezeichnetes Symbol statt Text
     bookmarksBtn->setFixedWidth(28);
     bookmarksBtn->setToolTip(_t("Lesezeichen dieses Servers"));
     // Aufklappmenue mit den gemerkten Pfaden — schneller als der Dialog.
