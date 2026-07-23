@@ -39,4 +39,10 @@ private:
 // Oeffnet die Weiterleitung gemaess Spezifikation.
 std::unique_ptr<Tunnel> openTunnel(SSHSessionPtr session, const core::TunnelSpec &spec);
 
+// Parst den Adressteil einer SOCKS5-CONNECT-Anfrage (ab dem ATYP-Byte):
+//   ATYP(1) | ADDR (IPv4=4 | Domain=1+n | IPv6=16) | PORT(2, big-endian)
+// Liefert Host und Port; false bei zu kurzem Puffer oder unbekanntem Adresstyp.
+// Rein (kein Socket) — deshalb testbar, waehrend der Rest einen Server braucht.
+bool parseSocks5Target(const QByteArray &data, QString &host, int &port);
+
 } // namespace ncssh::net

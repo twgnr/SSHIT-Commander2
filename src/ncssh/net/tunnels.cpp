@@ -142,6 +142,46 @@ static void pump(int sock, LIBSSH2_CHANNEL *channel, SSHSession *session,
     closeSock(sock);
 }
 
+// Reine Adress-Extraktion (ab ATYP) — die fehleranfaellige Byte-Logik, damit
+// sie ohne Server getestet werden kann.
+bool parseSocks5Target(const QByteArray &data, QString &host, int &port)
+{
+    if (data.isEmpty())
+        return false;
+    const auto *b = reinterpret_cast<const unsigned char *>(data.constData());
+    const int len = data.size();
+    const int atyp = b[0];
+    int pos = 1;
+    if (atyp == 0x01) {  // IPv4
+        if (len < pos + 4 + 2)
+            return false;
+        host = QStringLiteral("%1.%2.%3.%4")
+                   .arg(b[pos]).arg(b[pos + 1]).arg(b[pos + 2]).arg(b[pos + 3]);
+        pos += 4;
+    } else if (atyp == 0x03) {  // Domain (1 Byte Laenge + n Bytes)
+        if (len < pos + 1)
+            return false;
+        const int dlen = b[pos++];
+        if (len < pos + dlen + 2)
+            return false;
+        host = QString::fromLatin1(data.constData() + pos, dlen);
+        pos += dlen;
+    } else if (atyp == 0x04) {  // IPv6
+        if (len < pos + 16 + 2)
+            return false;
+        QStringList groups;
+        for (int i = 0; i < 16; i += 2)
+            groups << QString::number((b[pos + i] << 8) | b[pos + i + 1], 16);
+        host = groups.join(QLatin1Char(':'));
+        pos += 16;
+    } else {
+        return false;
+    }
+    // Port big-endian.
+    port = (b[pos] << 8) | b[pos + 1];
+    return true;
+}
+
 // SOCKS5-Handshake auf einem eingehenden Socket -> (destHost, destPort).
 static bool socks5Handshake(int sock, QString &destHost, int &destPort)
 {
@@ -158,20 +198,31 @@ static bool socks5Handshake(int sock, QString &destHost, int &destPort)
     if (n < 4 || buf[1] != 0x01)  // nur CONNECT
         return false;
     const int atyp = buf[3];
+
+    // Adressteil (ab ATYP) in einen Puffer sammeln und rein parsen.
+    QByteArray tail(1, char(atyp));
     if (atyp == 0x01) {  // IPv4
-        ::recv(sock, reinterpret_cast<char *>(buf), 4, 0);
-        destHost = QStringLiteral("%1.%2.%3.%4").arg(buf[0]).arg(buf[1]).arg(buf[2]).arg(buf[3]);
+        if (::recv(sock, reinterpret_cast<char *>(buf), 4, 0) < 4)
+            return false;
+        tail.append(reinterpret_cast<char *>(buf), 4);
     } else if (atyp == 0x03) {  // Domain
-        unsigned char len = 0;
-        ::recv(sock, reinterpret_cast<char *>(&len), 1, 0);
-        ::recv(sock, reinterpret_cast<char *>(buf), len, 0);
-        destHost = QString::fromLatin1(reinterpret_cast<char *>(buf), len);
+        unsigned char dlen = 0;
+        if (::recv(sock, reinterpret_cast<char *>(&dlen), 1, 0) < 1)
+            return false;
+        if (::recv(sock, reinterpret_cast<char *>(buf), dlen, 0) < dlen)
+            return false;
+        tail.append(char(dlen));
+        tail.append(reinterpret_cast<char *>(buf), dlen);
     } else {
         return false;
     }
     unsigned char portb[2];
-    ::recv(sock, reinterpret_cast<char *>(portb), 2, 0);
-    destPort = (portb[0] << 8) | portb[1];
+    if (::recv(sock, reinterpret_cast<char *>(portb), 2, 0) < 2)
+        return false;
+    tail.append(reinterpret_cast<char *>(portb), 2);
+
+    if (!parseSocks5Target(tail, destHost, destPort))
+        return false;
     unsigned char reply[10] = {0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0};
     ::send(sock, reinterpret_cast<const char *>(reply), 10, 0);
     return true;
