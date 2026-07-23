@@ -13,6 +13,7 @@
 class QTabWidget;
 class QAction;
 class QLabel;
+class QToolButton;
 
 namespace ncssh::gui {
 
@@ -66,6 +67,8 @@ private:
     void restoreSession();
     void applyThemeByName(const QString &name);
     void buildStatusBar();
+    // "+"-Knopf direkt rechts neben den letzten Tab setzen.
+    void moveTabPlus();
     // Konfigurierte Tastenkuerzel auf die registrierten Menue-Aktionen legen.
     void applyShortcuts();
     void openKeyTools();   // SSH-Schluessel erzeugen/konvertieren
@@ -105,6 +108,7 @@ private:
     FileAlarmManager *m_fileAlarms = nullptr;
     GithubAlarmManager *m_githubAlarms = nullptr;
     QTabWidget *m_tabs = nullptr;
+    QToolButton *m_tabPlus = nullptr;  // "+" direkt neben dem letzten Tab
     MacroManagerDialog *m_macroDialog = nullptr;  // einmalig; present()/andockbar
 };
 

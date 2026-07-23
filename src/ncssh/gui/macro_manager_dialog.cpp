@@ -234,17 +234,29 @@ void MacroManagerDialog::buildUi()
     });
     left->addWidget(m_contextAware);
 
-    auto *sizeRow = new QHBoxLayout();
-    sizeRow->addWidget(new QLabel(_t("Tastengröße"), this));
+    // Raster-/Groessenfelder: Reihen und Spalten des aktuellen Layers sowie die
+    // globale Tastengroesse — direkt anpassbar (wie im Original).
+    auto *dims = new QFormLayout();
+    dims->setContentsMargins(0, 8, 0, 0);
+    m_rowsSpin = new QSpinBox(this);
+    m_rowsSpin->setRange(1, 12);
+    connect(m_rowsSpin, &QSpinBox::valueChanged, this, [this](int) { onDimsChanged(); });
+    dims->addRow(_t("Reihen:"), m_rowsSpin);
+    m_colsSpin = new QSpinBox(this);
+    m_colsSpin->setRange(1, 16);
+    connect(m_colsSpin, &QSpinBox::valueChanged, this, [this](int) { onDimsChanged(); });
+    dims->addRow(_t("Spalten:"), m_colsSpin);
     m_keySize = new QSpinBox(this);
-    m_keySize->setRange(48, 200);
+    m_keySize->setRange(56, 200);
+    m_keySize->setSingleStep(8);
     m_keySize->setValue(m_config.keySize);
     connect(m_keySize, &QSpinBox::valueChanged, this, [this](int value) {
         m_config.keySize = value;
+        saveConfig();
         drawGrid();
     });
-    sizeRow->addWidget(m_keySize);
-    left->addLayout(sizeRow);
+    dims->addRow(_t("Größe:"), m_keySize);
+    left->addLayout(dims);
 
     // Import/Export gehoeren zur Editier-Oberflaeche (nur Bearbeiten-Modus).
     auto *ieRow = new QHBoxLayout();
@@ -429,6 +441,17 @@ void MacroManagerDialog::deleteLayer()
     drawGrid();
 }
 
+void MacroManagerDialog::onDimsChanged()
+{
+    mc::Layer *layer = currentLayer();
+    if (!layer)
+        return;
+    layer->rows = m_rowsSpin->value();
+    layer->cols = m_colsSpin->value();
+    saveConfig();
+    drawGrid();
+}
+
 void MacroManagerDialog::drawGrid()
 {
     // Altes Raster abbauen.
@@ -441,6 +464,15 @@ void MacroManagerDialog::drawGrid()
     mc::Layer *layer = currentLayer();
     if (!layer)
         return;
+
+    // Reihen/Spalten-Felder ohne Rueckkopplung auf den aktuellen Layer setzen.
+    {
+        QSignalBlocker rb(m_rowsSpin);
+        QSignalBlocker cb(m_colsSpin);
+        m_rowsSpin->setValue(layer->rows);
+        m_colsSpin->setValue(layer->cols);
+    }
+
     const int size = m_config.keySize;
     for (int index = 0; index < layer->capacity(); ++index) {
         auto *tile = new KeyTile(index, m_gridHost);

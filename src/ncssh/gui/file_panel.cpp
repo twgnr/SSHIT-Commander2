@@ -146,15 +146,19 @@ void FilePanel::buildUi(const QString &title)
         if (!root.isEmpty() && root != m_path)
             navigateTo(root);
     });
-    auto *back = new QPushButton(QStringLiteral("◀"), this);
+    // Gezeichnete, einfarbige Pfeile (kein Unicode -> keine Emoji/Kaestchen).
+    auto *back = new QPushButton(this);
+    back->setIcon(themedIcon(QStringLiteral("nav-back"), 16));
     back->setFixedWidth(30);
     back->setToolTip(_t("Zurück (Alt+←)"));
     connect(back, &QPushButton::clicked, this, &FilePanel::goBack);
-    auto *forward = new QPushButton(QStringLiteral("▶"), this);
+    auto *forward = new QPushButton(this);
+    forward->setIcon(themedIcon(QStringLiteral("nav-forward"), 16));
     forward->setFixedWidth(30);
     forward->setToolTip(_t("Vor (Alt+→)"));
     connect(forward, &QPushButton::clicked, this, &FilePanel::goForward);
-    auto *up = new QPushButton(QStringLiteral("⬆"), this);
+    auto *up = new QPushButton(this);
+    up->setIcon(themedIcon(QStringLiteral("nav-up"), 16));
     up->setFixedWidth(34);
     up->setToolTip(_t("Übergeordneter Ordner"));
     connect(up, &QPushButton::clicked, this, &FilePanel::goUp);

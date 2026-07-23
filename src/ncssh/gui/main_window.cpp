@@ -64,6 +64,8 @@
 #include <QTabWidget>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
+#include <algorithm>
 #include <utility>
 
 namespace ncssh::gui {
@@ -159,8 +161,18 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
         }
         m_tabs->removeTab(index);
         w->deleteLater();
+        QTimer::singleShot(0, this, &MainWindow::moveTabPlus);
     });
     setCentralWidget(m_tabs);
+    // "+"-Knopf zum Anlegen eines Tabs — sitzt direkt rechts neben dem letzten
+    // Tab (nicht in der Ecke), wird bei Layout-Aenderungen neu positioniert.
+    m_tabPlus = new QToolButton(m_tabs);
+    m_tabPlus->setObjectName(QStringLiteral("TabPlus"));
+    m_tabPlus->setText(QStringLiteral("+"));
+    m_tabPlus->setAutoRaise(true);
+    m_tabPlus->setToolTip(_t("Neuer Tab"));
+    connect(m_tabPlus, &QToolButton::clicked, this, [this] { addTab(); });
+    m_tabs->tabBar()->installEventFilter(this);
     // Tab-Leiste: Doppelklick benennt um, Rechtsklick zeigt das Tab-Menue.
     m_tabs->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_tabs->tabBar(), &QTabBar::tabBarDoubleClicked, this,
@@ -417,8 +429,6 @@ void MainWindow::buildMenus()
 
     toolbar->addAction(themedIcon(QStringLiteral("connect")), _t("SSH verbinden"), this,
                        &MainWindow::openServerManager);
-    toolbar->addAction(themedIcon(QStringLiteral("tab")), _t("Neuer Tab"), this,
-                       [this] { addTab(); });
     toolbar->addSeparator();
     toolbar->addAction(themedIcon(QStringLiteral("palette")), _t("Befehle"), this,
                        &MainWindow::openCommandPalette);
@@ -666,6 +676,7 @@ Workspace *MainWindow::addTab()
         }
     });
     m_tabs->setCurrentIndex(index);
+    QTimer::singleShot(0, this, &MainWindow::moveTabPlus);  // nach dem Layout platzieren
     return ws;
 }
 
@@ -699,8 +710,34 @@ void MainWindow::buildStatusBar()
     updateConnectionStatus();
 }
 
+void MainWindow::moveTabPlus()
+{
+    if (!m_tabPlus)
+        return;
+    QTabBar *bar = m_tabs->tabBar();
+    if (bar->count() == 0) {
+        m_tabPlus->hide();
+        return;
+    }
+    const QRect r = bar->tabRect(bar->count() - 1);
+    // Rechte obere Ecke des letzten Tabs aus Tableisten- in QTabWidget-Koords.
+    const QPoint topRight = bar->mapTo(m_tabs, r.topRight());
+    const int side = std::max(20, r.height() - 6);
+    m_tabPlus->setFixedSize(side, side);
+    m_tabPlus->move(topRight.x() + 4, topRight.y() + (r.height() - side) / 2);
+    m_tabPlus->show();
+    m_tabPlus->raise();
+}
+
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    // "+"-Knopf mit der Tab-Leiste mitfuehren.
+    if (watched == m_tabs->tabBar()
+        && (event->type() == QEvent::Resize || event->type() == QEvent::Move
+            || event->type() == QEvent::LayoutRequest)) {
+        moveTabPlus();
+        return QMainWindow::eventFilter(watched, event);
+    }
     if (event->type() == QEvent::MouseButtonRelease) {
         if (watched == m_alarmNotice) {
             m_pendingAlarms = 0;

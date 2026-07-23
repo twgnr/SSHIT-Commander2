@@ -90,6 +90,7 @@ private:
     void exportLayers();
     void importLayers();
     void toggleMode(bool runMode);
+    void onDimsChanged();   // Reihen/Spalten des aktuellen Layers uebernehmen
     void pollForeground();
     core::macros::Layer *currentLayer();
 
@@ -116,7 +117,9 @@ private:
     std::vector<KeyTile *> m_tiles;
     QPushButton *m_modeButton = nullptr;
     QCheckBox *m_contextAware = nullptr;
-    QSpinBox *m_keySize = nullptr;
+    QSpinBox *m_rowsSpin = nullptr;   // Reihen des aktuellen Layers
+    QSpinBox *m_colsSpin = nullptr;   // Spalten des aktuellen Layers
+    QSpinBox *m_keySize = nullptr;    // Tastengroesse (global)
     QLabel *m_status = nullptr;
 
     // Andocken: die gesamte Oberflaeche liegt in m_content, das zwischen dem

@@ -262,6 +262,32 @@ void drawPlay(QPainter &p, qreal s, const QColor &c)
     p.drawPolygon(tri);
 }
 
+// Einfarbige Navigationspfeile (Schaft + Spitze) — bewusst als Vektor, damit
+// nichts als farbiges Emoji oder leeres Kaestchen erscheint.
+void drawArrowLeft(QPainter &p, qreal s, const QColor &c)
+{
+    p.setPen(strokePen(c, s * 0.11));
+    p.drawLine(QPointF(s * 0.74, s * 0.50), QPointF(s * 0.30, s * 0.50));
+    p.drawLine(QPointF(s * 0.30, s * 0.50), QPointF(s * 0.46, s * 0.34));
+    p.drawLine(QPointF(s * 0.30, s * 0.50), QPointF(s * 0.46, s * 0.66));
+}
+
+void drawArrowRight(QPainter &p, qreal s, const QColor &c)
+{
+    p.setPen(strokePen(c, s * 0.11));
+    p.drawLine(QPointF(s * 0.26, s * 0.50), QPointF(s * 0.70, s * 0.50));
+    p.drawLine(QPointF(s * 0.70, s * 0.50), QPointF(s * 0.54, s * 0.34));
+    p.drawLine(QPointF(s * 0.70, s * 0.50), QPointF(s * 0.54, s * 0.66));
+}
+
+void drawArrowUp(QPainter &p, qreal s, const QColor &c)
+{
+    p.setPen(strokePen(c, s * 0.11));
+    p.drawLine(QPointF(s * 0.50, s * 0.74), QPointF(s * 0.50, s * 0.30));
+    p.drawLine(QPointF(s * 0.50, s * 0.30), QPointF(s * 0.34, s * 0.46));
+    p.drawLine(QPointF(s * 0.50, s * 0.30), QPointF(s * 0.66, s * 0.46));
+}
+
 void drawBookmark(QPainter &p, qreal s, const QColor &c)
 {
     // Gefuelltes Lesezeichen mit Kerbe unten (wie im Original).
@@ -303,6 +329,9 @@ const QHash<QString, DrawFn> &registry()
         {QStringLiteral("tab"), drawTab},
         {QStringLiteral("play"), drawPlay},
         {QStringLiteral("bookmark"), drawBookmark},
+        {QStringLiteral("nav-back"), drawArrowLeft},
+        {QStringLiteral("nav-forward"), drawArrowRight},
+        {QStringLiteral("nav-up"), drawArrowUp},
     };
     return map;
 }
