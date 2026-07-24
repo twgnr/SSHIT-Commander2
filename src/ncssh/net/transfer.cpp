@@ -262,7 +262,15 @@ static void collectTree(FileSystemProvider *src, const QString &sp,
             if (e.name == QLatin1String("..") || e.name.contains(QLatin1Char('/'))
                 || e.name.contains(QLatin1Char('\\')))
                 continue;
-            collectTree(src, src->join(sp, e.name), dst, dst->join(dp, e.name), out);
+            const QString csp = src->join(sp, e.name);
+            const QString cdp = dst->join(dp, e.name);
+            // NUR echte Verzeichnisse rekursiv verfolgen. Symlinks werden wie im
+            // Original als Blatt behandelt (nicht hineinlaufen) — sonst wuerde
+            // ein Server-Symlink auf z. B. "/" den ganzen Zielbaum aufziehen.
+            if (e.type == EntryType::Dir)
+                collectTree(src, csp, dst, cdp, out);
+            else
+                out.emplace_back(csp, cdp, pathSize(src, csp));
         }
     } else {
         out.emplace_back(sp, dp, pathSize(src, sp));

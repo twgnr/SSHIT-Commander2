@@ -269,6 +269,49 @@ TEST(transfer, rejects_path_traversal_names)
         CHECK(it.key().startsWith(QLatin1String("/d/")));
 }
 
+TEST(transfer, does_not_follow_symlinked_directory)
+{
+    // Server bietet einen Symlink an, der (aufgeloest) ein Verzeichnis mit
+    // Inhalt waere. Der Transfer darf NICHT hineinlaufen.
+    class SymFS : public FakeFS
+    {
+    public:
+        std::vector<FileEntry> listDir(const QString &p) override
+        {
+            std::vector<FileEntry> out;
+            if (p == QLatin1String("/s")) {
+                FileEntry link;
+                link.name = QStringLiteral("link");
+                link.type = EntryType::Symlink;   // Symlink, kein Verzeichnis
+                out.push_back(link);
+            } else if (p == QLatin1String("/s/link")) {
+                // Wuerde hier hineingelaufen, kaeme "geheim" mit.
+                FileEntry secret;
+                secret.name = QStringLiteral("geheim");
+                secret.type = EntryType::File;
+                secret.size = 6;
+                out.push_back(secret);
+            }
+            return out;
+        }
+        // Symlink loest auf ein Verzeichnis auf (stat folgt) — genau die Falle.
+        bool isDir(const QString &p) override
+        {
+            return p == QLatin1String("/s") || p == QLatin1String("/s/link");
+        }
+    };
+
+    SymFS src;
+    FakeFS dst;
+    dst.dirs.insert(QStringLiteral("/d"));
+    transferWithProgress(&src, QStringLiteral("/s"), &dst, QStringLiteral("/d/s"),
+                         [](qint64, qint64) {});
+
+    // Der Symlink-Inhalt darf NICHT mitkopiert worden sein.
+    for (auto it = dst.files.begin(); it != dst.files.end(); ++it)
+        CHECK(!it.key().endsWith(QLatin1String("geheim")));
+}
+
 TEST(transfer, resume_continues_partial_file)
 {
     QTemporaryDir tmp;

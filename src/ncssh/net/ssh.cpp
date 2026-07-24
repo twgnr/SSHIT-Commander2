@@ -328,6 +328,17 @@ static void kbdInteractiveResponse(const char * /*name*/, int /*name_len*/,
     }
 }
 
+// Sensiblen Puffer (Passwort/Passphrase/Schluessel) nach Gebrauch sicher
+// ueberschreiben. volatile verhindert, dass der Compiler das Nullen wegoptimiert.
+static void secureZero(QByteArray &b)
+{
+    if (b.isEmpty())
+        return;
+    volatile char *p = b.data();   // data() loest Copy-on-Write -> eigener Puffer
+    for (qsizetype i = 0; i < b.size(); ++i)
+        p[i] = 0;
+}
+
 SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkeys)
 {
     ensureInit();
@@ -407,28 +418,33 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
         if (core::isPpk(keyData)) {
             keyData = core::ppkToOpenssh(keyData, profile.passphrase);  // PPK -> OpenSSH
         }
-        const QByteArray pass = profile.passphrase.toUtf8();
+        QByteArray pass = profile.passphrase.toUtf8();
         const int rc = libssh2_userauth_publickey_frommemory(
             sess, user.constData(), user.size(), nullptr, 0,
             keyData.constData(), keyData.size(),
             profile.passphrase.isEmpty() ? nullptr : pass.constData());
         authed = (rc == 0);
+        // Schluessel-Klartext und Passphrase sofort aus dem Speicher wischen.
+        secureZero(keyData);
+        secureZero(pass);
         if (!authed)
             fail(QStringLiteral("Schlüssel-Authentifizierung fehlgeschlagen: %1")
                      .arg(lastSshError(sess)));
     } else if (profile.authMethod == QLatin1String("password")) {
-        const QByteArray pw = profile.password.toUtf8();
+        QByteArray pw = profile.password.toUtf8();
         authed = libssh2_userauth_password(sess, user.constData(), pw.constData()) == 0;
         if (!authed) {
             // Fallback: Server, die kein "password" anbieten (PAM), akzeptieren
             // oft "keyboard-interactive". Das Passwort geht ueber das Abstract
-            // an den Callback.
-            QByteArray kbdPw = pw;
+            // an den Callback. Eigener Puffer (kein Copy-on-Write-Teilen mit pw).
+            QByteArray kbdPw(pw.constData(), pw.size());
             *libssh2_session_abstract(sess) = &kbdPw;
             authed = libssh2_userauth_keyboard_interactive(
                          sess, user.constData(), &kbdInteractiveResponse) == 0;
             *libssh2_session_abstract(sess) = nullptr;
+            secureZero(kbdPw);
         }
+        secureZero(pw);
         if (!authed)
             fail(QStringLiteral("Passwort-Authentifizierung fehlgeschlagen: %1")
                      .arg(lastSshError(sess)));

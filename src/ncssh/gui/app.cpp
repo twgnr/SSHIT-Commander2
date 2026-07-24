@@ -10,6 +10,7 @@
 #include "ncssh/gui/style.hpp"
 
 #include <QApplication>
+#include <QDir>
 #include <QIcon>
 #include <QPixmap>
 
@@ -53,6 +54,10 @@ int appMain(int argc, char *argv[])
 
     const int exitCode = app.exec();
     bridge.stop();
+    // Beim Beenden die zum Ansehen/Bearbeiten heruntergeladenen Remote-Dateien
+    // aus dem Temp-Ordner entfernen — sie sollen nicht im Klartext liegen
+    // bleiben (waehrend der Sitzung braucht der Editor sie noch).
+    QDir(QDir::tempPath() + QStringLiteral("/sshit-open")).removeRecursively();
     return exitCode;
 }
 
