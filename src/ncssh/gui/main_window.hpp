@@ -53,6 +53,7 @@ private:
     void openSettings();
     void openKnownHosts();
     void openTunnels();
+    void openSftpBatch();
     void openDirDiff();
     void openNetscan();
     void openVenv();

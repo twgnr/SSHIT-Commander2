@@ -42,6 +42,7 @@
 #include "ncssh/gui/style.hpp"
 #include "ncssh/gui/transfer_dialog.hpp"
 #include "ncssh/gui/transfer_manager.hpp"
+#include "ncssh/gui/sftp_batch_dialog.hpp"
 #include "ncssh/gui/tunnel_dialog.hpp"
 #include "ncssh/gui/workspace.hpp"
 
@@ -283,6 +284,9 @@ void MainWindow::buildMenus()
         actions->addAction(_t("Verlauf & Favoriten"), this, &MainWindow::openHistory));
     reg(QStringLiteral("tunnels"),
         actions->addAction(_t("SSH-Tunnel"), this, &MainWindow::openTunnels));
+    reg(QStringLiteral("sftp_batch"),
+        actions->addAction(_t("SFTP-Batch / geplante Aufgaben …"), this,
+                           &MainWindow::openSftpBatch));
     reg(QStringLiteral("tab_favorites"),
         actions->addAction(_t("Tab-Favoriten — Tab-Layouts speichern/öffnen"), this,
                            &MainWindow::openTabFavorites));
@@ -1529,6 +1533,23 @@ void MainWindow::openTunnels()
     }
     TunnelDialog dlg(ws->session(), ws->tunnels(), this);
     dlg.exec();
+}
+
+void MainWindow::openSftpBatch()
+{
+    Workspace *ws = currentWorkspace();
+    if (!ws)
+        return;
+    if (!ws->session()) {
+        QMessageBox::information(this, _t("SFTP-Batch / geplante Aufgaben"),
+                                 _t("Dafür muss der Tab mit einem Server verbunden sein."));
+        return;
+    }
+    // Nicht-modal, damit geplante Wiederholungen laufen koennen, waehrend man
+    // weiterarbeitet. Der Dialog haelt die Sitzung ueber einen shared_ptr.
+    auto *dlg = new SftpBatchDialog(m_bridge, ws->session(), this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->show();
 }
 
 void MainWindow::openTransfers()

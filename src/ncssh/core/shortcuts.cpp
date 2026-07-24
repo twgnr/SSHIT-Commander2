@@ -17,6 +17,8 @@ const std::vector<ShortcutDef> &shortcutDefs()
         {QStringLiteral("history"), _t("Aktionen"), _t("Verlauf & Favoriten"), QStringLiteral("Ctrl+H")},
         {QStringLiteral("transfers"), _t("Aktionen"), _t("Übertragungen"), QStringLiteral("Ctrl+T")},
         {QStringLiteral("tunnels"), _t("Aktionen"), _t("SSH-Tunnel"), QStringLiteral("Ctrl+Shift+T")},
+        {QStringLiteral("sftp_batch"), _t("Aktionen"), _t("SFTP-Batch / geplante Aufgaben"),
+         QStringLiteral("Ctrl+Shift+B")},
         {QStringLiteral("reload"), _t("Aktionen"), _t("Neu laden"), QStringLiteral("Ctrl+R")},
 
         {QStringLiteral("view"), _t("Dateien"), _t("Ansehen"), QStringLiteral("F3")},

@@ -78,6 +78,10 @@ public:
     net::SSHSessionPtr session() const { return m_session; }
     TunnelManager *tunnels() { return &m_tunnels; }
 
+    // Dateisystem-Provider dieses Tabs — fuer SFTP-Batch/geplante Aufgaben.
+    core::FileSystemProvider *localFs() const { return m_localFs.get(); }
+    core::FileSystemProvider *remoteFs() const { return m_remoteFs.get(); }  // null wenn getrennt
+
     // Zustand des Tabs fuer Tab-Favoriten / Sitzungswiederherstellung.
     QJsonObject toJson() const;
     void restoreFrom(const QJsonObject &state);
