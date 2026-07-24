@@ -3,6 +3,7 @@
 // (Port von gui/terminal_widget.py, zusammengefasst)
 #pragma once
 
+#include "ncssh/core/terminal_emulator.hpp"
 #include "ncssh/gui/bridge.hpp"
 #include "ncssh/net/ssh.hpp"
 
@@ -67,6 +68,10 @@ protected:
 private:
     void applyThemeColors();
     void attachBackend(ShellBackend *backend);
+    // Leitet Ausgabe entweder an den Zeilen-Renderer (Primaerschirm) oder an den
+    // Zellengitter-Emulator (Alternate-Screen: vim/htop/tmux) weiter.
+    void feedOutput(const QString &data);
+    void paintEmulator();
     void recomputeMatches();
     void highlightMatches();
     void showSearchBar();
@@ -79,6 +84,14 @@ private:
     AsyncBridge *m_bridge;
     std::unique_ptr<AnsiRenderer> m_renderer;
     ShellBackend *m_backend = nullptr;  // Qt-Parent = this
+
+    // Vollwertiger Terminal-Emulator (Zellengitter) fuer den Alternate-Screen.
+    // Der Primaerschirm laeuft weiter ueber m_renderer (Farben, Rollpuffer,
+    // Suche, Mitschnitt); erst wenn eine Anwendung auf 1049/1047/47 wechselt,
+    // uebernimmt der Emulator und wird ueber den Viewport gezeichnet.
+    std::unique_ptr<core::TerminalEmulator> m_emu;
+    bool m_altScreen = false;
+    QString m_feedCarry;  // unvollstaendige Sequenz ueber Chunk-Grenzen
 
     QString m_searchPattern;
     std::vector<int> m_matchPositions;  // Zeichen-Offsets der Treffer
