@@ -702,6 +702,30 @@ void Workspace::connectTo(const core::ServerProfile &profile)
             }
             startHealthCheck();
             emit connectionChanged();
+
+            // Auto-Start: im Profil gespeicherte Tunnel-Presets automatisch
+            // oeffnen. openTunnel() richtet die Weiterleitung ein (bindet den
+            // lokalen Port bzw. fordert forward-listen an) und wirft bei Fehler
+            // (Port belegt o.ae.) — je Preset einzeln abfangen, damit ein
+            // Fehlschlag die uebrigen nicht verhindert.
+            if (!profile.tunnels.empty()) {
+                int opened = 0;
+                QStringList tunnelErrors;
+                for (const auto &spec : profile.tunnels) {
+                    try {
+                        m_tunnels.add(net::openTunnel(session, spec));
+                        ++opened;
+                    } catch (const std::exception &exc) {
+                        tunnelErrors << QStringLiteral("%1 (%2)").arg(
+                            spec.label(), QString::fromUtf8(exc.what()));
+                    }
+                }
+                if (opened > 0)
+                    emit statusMessage(_t("%1 Tunnel automatisch geöffnet").arg(opened));
+                if (!tunnelErrors.isEmpty())
+                    emit statusMessage(
+                        _t("Tunnel nicht geöffnet: %1").arg(tunnelErrors.join(QStringLiteral("; "))));
+            }
         },
         [this, profile](const QString &err) {
             // Geaenderter Host-Key: der Versuch wurde vor der Authentifizierung
