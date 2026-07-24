@@ -239,6 +239,24 @@ FileAlarmDialog::FileAlarmDialog(FileAlarmManager *manager, QWidget *parent)
     m_status->setObjectName(QStringLiteral("Muted"));
     layout->addWidget(m_status);
 
+    // Benachrichtigungsart (global, gilt fuer alle Alarme).
+    auto *notifyRow = new QHBoxLayout();
+    auto *trayNotify = new QCheckBox(_t("Desktop-Benachrichtigung"), this);
+    trayNotify->setChecked(core::getSettingBool(QStringLiteral("alarm_tray_notify"), true));
+    connect(trayNotify, &QCheckBox::toggled, this, [](bool on) {
+        core::setSetting(QStringLiteral("alarm_tray_notify"), on);
+    });
+    auto *sound = new QCheckBox(_t("Signalton"), this);
+    sound->setChecked(core::getSettingBool(QStringLiteral("alarm_sound"), false));
+    connect(sound, &QCheckBox::toggled, this, [](bool on) {
+        core::setSetting(QStringLiteral("alarm_sound"), on);
+    });
+    notifyRow->addWidget(new QLabel(_t("Bei Auslösung:"), this));
+    notifyRow->addWidget(trayNotify);
+    notifyRow->addWidget(sound);
+    notifyRow->addStretch(1);
+    layout->addLayout(notifyRow);
+
     auto *buttons = new QHBoxLayout();
     auto *addBtn = new QPushButton(_t("Neu …"), this);
     auto *editBtn = new QPushButton(_t("Bearbeiten …"), this);

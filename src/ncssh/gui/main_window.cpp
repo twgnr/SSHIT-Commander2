@@ -48,6 +48,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QSystemTrayIcon>
 #include <QCloseEvent>
 #include <QDesktopServices>
 #include <QDir>
@@ -135,6 +136,14 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
                 // Anklickbarer Hinweis, der bis zum Oeffnen stehen bleibt.
                 m_alarmNotice->setText(_t("Alarm ausgelöst — zum Anzeigen klicken"));
                 m_alarmNotice->setVisible(true);
+                // Desktop-Benachrichtigung (Tray-Ballon) + optionaler Ton, damit
+                // Alarme auch bei minimiertem Fenster bemerkt werden.
+                if (m_tray && core::getSettingBool(QStringLiteral("alarm_tray_notify"), true))
+                    m_tray->showMessage(_t("Alarm Trigger: %1").arg(name),
+                                        QStringLiteral("%1: %2").arg(label, path),
+                                        QSystemTrayIcon::Information, 8000);
+                if (core::getSettingBool(QStringLiteral("alarm_sound"), false))
+                    QApplication::beep();
             });
     m_githubAlarms = new GithubAlarmManager(bridge, this);
     connect(m_githubAlarms, &GithubAlarmManager::repoChanged, this,
@@ -157,6 +166,19 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
     if (!iconPath.isEmpty())
         setWindowIcon(QIcon(QPixmap(iconPath)));
     resize(1180, 760);
+
+    // Tray-Icon fuer Desktop-Benachrichtigungen (z.B. Alarm Trigger), sofern das
+    // System welche unterstuetzt. Klick auf den Ballon holt das Fenster nach vorn.
+    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+        m_tray = new QSystemTrayIcon(windowIcon(), this);
+        m_tray->setToolTip(QStringLiteral("SSHIT-Commander"));
+        connect(m_tray, &QSystemTrayIcon::messageClicked, this, [this] {
+            showNormal();
+            raise();
+            activateWindow();
+        });
+        m_tray->show();
+    }
 
     m_tabs = new QTabWidget(this);
     m_tabs->setTabsClosable(true);

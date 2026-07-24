@@ -13,6 +13,7 @@
 class QTabWidget;
 class QAction;
 class QLabel;
+class QSystemTrayIcon;
 class QToolButton;
 class QMenu;
 class QFrame;
@@ -122,6 +123,7 @@ private:
     TransferManager *m_transfers = nullptr;
     ClipboardManager *m_clipboard = nullptr;
     FileAlarmManager *m_fileAlarms = nullptr;
+    QSystemTrayIcon *m_tray = nullptr;  // Desktop-Benachrichtigungen (falls verfuegbar)
     GithubAlarmManager *m_githubAlarms = nullptr;
     QTabWidget *m_tabs = nullptr;
     QToolButton *m_tabPlus = nullptr;  // "+" direkt neben dem letzten Tab
