@@ -121,6 +121,11 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
     m_clipboard = new ClipboardManager(this);
     // Alarme laufen im Hintergrund und melden sich in der Statusleiste.
     m_fileAlarms = new FileAlarmManager(bridge, this);
+    // Remote-Alarme ueberwachen den Pfad auf der gerade aktiven Verbindung.
+    m_fileAlarms->setSessionProvider([this]() -> net::SSHSessionPtr {
+        Workspace *ws = currentWorkspace();
+        return ws ? ws->session() : net::SSHSessionPtr();
+    });
     connect(m_fileAlarms, &FileAlarmManager::event, this,
             [this](const QString &kind, const QString &path, const QString &name) {
                 // Art in Klartext — "created"/"modified"/"deleted" sagt im

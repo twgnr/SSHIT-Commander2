@@ -998,6 +998,7 @@
   "Rekursiv (/T)": "Recursive (/T)",
   "Remote": "Remote",
   "Remote (-R)": "Remote (-R)",
+  "Remote (aktive SSH-Verbindung)": "Remote (active SSH connection)",
   "Remote (nicht verbunden)": "Remote (not connected)",
   "Reparieren (/F)": "Repair (/F)",
   "Repariert das Windows-Komponentenabbild.": "Repairs the Windows component image.",
@@ -1107,6 +1108,7 @@
   "Startpfad": "Start path",
   "Startpfad wählen": "Choose start path",
   "Startverzeichnis": "Start directory",
+  "Statt lokal den Pfad auf der gerade aktiven Verbindung per SFTP überwachen.": "Instead of local, watch the path on the currently active connection via SFTP.",
   "Status": "Status",
   "Status / Lesezeichen (Auswahl)": "Status / bookmarks (selection)",
   "Status anzeigen": "Show status",
@@ -1687,5 +1689,6 @@
   "✗ Fehler": "✗ Error",
   "✗ Ollama nicht erreichbar. Dienst starten oder von ollama.com installieren.": "✗ Ollama unreachable. Start the service or install it from ollama.com.",
   "⤢ Abdocken": "⤢ Detach",
-  "⤵ Andocken": "⤵ Dock"
+  "⤵ Andocken": "⤵ Dock",
+  "🌐 %1 (remote)": "🌐 %1 (remote)"
 }

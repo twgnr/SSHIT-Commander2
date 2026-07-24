@@ -5,10 +5,12 @@
 
 #include "ncssh/core/filealarm.hpp"
 #include "ncssh/gui/bridge.hpp"
+#include "ncssh/net/ssh.hpp"
 
 #include <QDialog>
 #include <QHash>
 #include <QObject>
+#include <functional>
 #include <vector>
 
 class QTableWidget;
@@ -26,6 +28,11 @@ public:
 
     void reload();                 // Alarme aus den Einstellungen neu laden
     void setIntervalSeconds(int seconds);
+    // Liefert die aktuell aktive SSH-Sitzung (fuer Remote-Alarme). Wird beim
+    // Poll im GUI-Thread abgefragt; leer = nicht verbunden -> Remote-Alarme
+    // pausieren diesen Zyklus.
+    void setSessionProvider(std::function<net::SSHSessionPtr()> provider)
+    { m_sessionProvider = std::move(provider); }
 
 signals:
     // art ("created"/"modified"/"deleted"), Pfad, Name des Alarms
@@ -41,7 +48,9 @@ private:
     AsyncBridge *m_bridge;
     QTimer *m_timer;
     std::vector<core::AlarmSpec> m_alarms;
-    QHash<int, core::Snapshot> m_snapshots;   // Alarm-ID -> letzter Stand
+    QHash<int, core::Snapshot> m_snapshots;    // Alarm-ID -> letzter Stand
+    QHash<int, QString> m_snapshotOrigin;      // Alarm-ID -> Herkunft ("local"/Session-Label)
+    std::function<net::SSHSessionPtr()> m_sessionProvider;
     bool m_busy = false;
 };
 

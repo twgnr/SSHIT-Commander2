@@ -25,6 +25,7 @@ struct AlarmSpec {
     bool recursive = false;
     bool includeDirs = true;
     bool enabled = true;
+    bool remote = false;   // ueber die aktive SSH-Verbindung statt lokal ueberwachen
     // Namensfilter (jeweils ';'-getrennte Wildcard-Muster; leer = ohne Wirkung).
     QString includeGlob;   // nur passende Namen beruecksichtigen (z.B. "*.log;*.csv")
     QString excludeGlob;   // passende Namen ignorieren (z.B. "*.tmp;*~")

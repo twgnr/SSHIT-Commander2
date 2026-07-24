@@ -158,6 +158,7 @@ TEST(filealarm, alarmspec_json_roundtrip)
     a.path = QStringLiteral("/data");
     a.onModified = false;
     a.recursive = true;
+    a.remote = true;
     a.includeGlob = QStringLiteral("*.log");
     a.excludeGlob = QStringLiteral("*.tmp");
     a.actionCmd = QStringLiteral("echo {kind} {path}");
@@ -172,6 +173,7 @@ TEST(filealarm, alarmspec_json_roundtrip)
     CHECK_EQ(back.recursive, a.recursive);
     CHECK_EQ(back.includeDirs, a.includeDirs);
     CHECK_EQ(back.enabled, a.enabled);
+    CHECK_EQ(back.remote, a.remote);
     CHECK_EQ(back.includeGlob, a.includeGlob);
     CHECK_EQ(back.excludeGlob, a.excludeGlob);
     CHECK_EQ(back.actionCmd, a.actionCmd);

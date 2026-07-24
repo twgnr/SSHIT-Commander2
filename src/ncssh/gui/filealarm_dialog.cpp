@@ -50,13 +50,17 @@ void FileAlarmManager::setIntervalSeconds(int seconds)
 void FileAlarmManager::reload()
 {
     m_alarms = core::loadAlarms();
-    // Schnappschuesse verworfener Alarme freigeben.
-    QHash<int, core::Snapshot> kept;
+    // Schnappschuesse (+ Herkunft) verworfener Alarme freigeben.
+    QHash<int, core::Snapshot> keptSnap;
+    QHash<int, QString> keptOrigin;
     for (const AlarmSpec &a : m_alarms) {
         if (m_snapshots.contains(a.id))
-            kept.insert(a.id, m_snapshots.value(a.id));
+            keptSnap.insert(a.id, m_snapshots.value(a.id));
+        if (m_snapshotOrigin.contains(a.id))
+            keptOrigin.insert(a.id, m_snapshotOrigin.value(a.id));
     }
-    m_snapshots = kept;
+    m_snapshots = keptSnap;
+    m_snapshotOrigin = keptOrigin;
 
     const bool anyEnabled = std::any_of(m_alarms.begin(), m_alarms.end(),
                                         [](const AlarmSpec &a) { return a.enabled; });
@@ -66,6 +70,44 @@ void FileAlarmManager::reload()
         m_timer->stop();
 }
 
+namespace {
+// Momentaufnahme eines REMOTE-Verzeichnisses ueber SFTP (mtime/groesse/ordner).
+// Traversiert vollstaendig (Filter wirkt nur auf die Aufnahme). Kann werfen —
+// der Aufrufer faengt pro Alarm.
+core::Snapshot remoteScan(net::SFTPFileSystem &fs, const QString &path, bool recursive,
+                          bool includeDirs, const QString &inc, const QString &exc, int limit,
+                          int depth)
+{
+    core::Snapshot out;
+    for (const core::FileEntry &e : fs.listDir(path)) {
+        if (e.type == core::EntryType::Parent)
+            continue;
+        // Server-Namen mit Pfad-Trennern/".." ueberspringen (defense in depth).
+        if (e.name == QLatin1String("..") || e.name.contains(QLatin1Char('/'))
+            || e.name.contains(QLatin1Char('\\')))
+            continue;
+        const QString full = fs.join(path, e.name);
+        const bool isDir = e.isDir();
+        if ((includeDirs || !isDir) && core::matchesGlobFilter(e.name, inc, exc)) {
+            core::SnapshotEntry se;
+            se.isDir = isDir;
+            se.mtime = e.modified.isValid() ? e.modified.toSecsSinceEpoch() : 0;
+            se.size = isDir ? 0 : e.size;
+            out.insert(full, se);
+        }
+        if (out.size() >= limit)
+            break;
+        if (recursive && isDir && depth < 32) {
+            const core::Snapshot sub =
+                remoteScan(fs, full, recursive, includeDirs, inc, exc, limit, depth + 1);
+            for (auto it = sub.begin(); it != sub.end() && out.size() < limit; ++it)
+                out.insert(it.key(), it.value());
+        }
+    }
+    return out;
+}
+}  // namespace
+
 void FileAlarmManager::poll()
 {
     if (m_busy || m_alarms.empty())
@@ -73,9 +115,14 @@ void FileAlarmManager::poll()
     m_busy = true;
     const std::vector<AlarmSpec> alarms = m_alarms;
     const QHash<int, core::Snapshot> previous = m_snapshots;
+    const QHash<int, QString> previousOrigin = m_snapshotOrigin;
+    // Aktive Sitzung im GUI-Thread holen (fuer Remote-Alarme); der shared_ptr
+    // haelt sie waehrend des Scans am Leben.
+    const net::SSHSessionPtr session = m_sessionProvider ? m_sessionProvider() : nullptr;
+    const QString sessLabel = session ? session->label() : QString();
 
-    // Scannen laeuft im Worker; Ergebnis (neue Schnappschuesse + Events +
-    // Firings pro Alarm) kommt im GUI-Thread an.
+    // Scannen laeuft im Worker; Ergebnis (neue Schnappschuesse + Herkunft +
+    // Events + Firings pro Alarm) kommt im GUI-Thread an.
     struct Firing {
         QString kind;
         QString path;
@@ -83,23 +130,41 @@ void FileAlarmManager::poll()
     };
     struct Result {
         QHash<int, core::Snapshot> snapshots;
+        QHash<int, QString> origins;
         std::vector<std::tuple<QString, QString, QString>> events;
         QHash<int, Firing> firings;  // Alarm-ID -> erstes Ereignis + Anzahl
     };
     m_bridge->run<Result>(
-        [alarms, previous]() -> Result {
+        [alarms, previous, previousOrigin, session, sessLabel]() -> Result {
             Result r;
             for (const AlarmSpec &a : alarms) {
                 if (!a.enabled)
                     continue;
-                const core::Snapshot now = core::scanDir(a.path, a.recursive, a.includeDirs,
-                                                         a.includeGlob, a.excludeGlob);
+                const QString origin = a.remote ? sessLabel : QStringLiteral("local");
+                core::Snapshot now;
+                if (a.remote) {
+                    if (!session)
+                        continue;  // nicht verbunden -> diesen Alarm ueberspringen
+                    try {
+                        net::SFTPFileSystem fs(session);
+                        now = remoteScan(fs, a.path, a.recursive, a.includeDirs, a.includeGlob,
+                                         a.excludeGlob, 20'000, 0);
+                    } catch (...) {
+                        continue;  // Remote-Fehler isolieren, andere Alarme laufen weiter
+                    }
+                } else {
+                    now = core::scanDir(a.path, a.recursive, a.includeDirs, a.includeGlob,
+                                        a.excludeGlob);
+                }
                 r.snapshots.insert(a.id, now);
-                if (!previous.contains(a.id))
-                    continue;  // erster Durchlauf: nur Basis aufnehmen
+                r.origins.insert(a.id, origin);
+                // Nur vergleichen, wenn eine Basis GLEICHER Herkunft existiert —
+                // sonst (erster Lauf / Serverwechsel) nur neu einpegeln.
+                if (!previous.contains(a.id) || previousOrigin.value(a.id) != origin)
+                    continue;
                 for (const auto &[kind, path, isDir] :
-                     core::diffSnapshots(previous.value(a.id), now,
-                                         a.onCreated, a.onModified, a.onDeleted)) {
+                     core::diffSnapshots(previous.value(a.id), now, a.onCreated, a.onModified,
+                                         a.onDeleted)) {
                     r.events.emplace_back(kind, path, a.name);
                     if (r.firings.contains(a.id))
                         ++r.firings[a.id].count;
@@ -112,6 +177,8 @@ void FileAlarmManager::poll()
         [this](const Result &result) {
             for (auto it = result.snapshots.begin(); it != result.snapshots.end(); ++it)
                 m_snapshots.insert(it.key(), it.value());
+            for (auto it = result.origins.begin(); it != result.origins.end(); ++it)
+                m_snapshotOrigin.insert(it.key(), it.value());
             for (const auto &[kind, path, name] : result.events)
                 emit event(kind, path, name);
             // Aktionen EINMAL pro ausgeloestem Alarm (kein Prozess-Sturm).
@@ -196,6 +263,14 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
     eventRow->addWidget(onModified);
     eventRow->addWidget(onDeleted);
 
+    auto *remote = new QCheckBox(_t("Remote (aktive SSH-Verbindung)"), &dlg);
+    remote->setChecked(spec.remote);
+    remote->setToolTip(
+        _t("Statt lokal den Pfad auf der gerade aktiven Verbindung per SFTP überwachen."));
+    // Bei Remote den lokalen Ordner-Dialog abschalten (Pfad wird getippt).
+    QObject::connect(remote, &QCheckBox::toggled, browse, &QPushButton::setDisabled);
+    browse->setDisabled(remote->isChecked());
+
     auto *recursive = new QCheckBox(_t("Unterordner einbeziehen"), &dlg);
     recursive->setChecked(spec.recursive);
     auto *includeDirs = new QCheckBox(_t("Ordner mitüberwachen"), &dlg);
@@ -220,6 +295,7 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
     form->addRow(_t("Nur diese Muster:"), includeGlob);
     form->addRow(_t("Diese Muster ignorieren:"), excludeGlob);
     form->addRow(_t("Befehl bei Auslösung:"), actionCmd);
+    form->addRow(QString(), remote);
     form->addRow(QString(), recursive);
     form->addRow(QString(), includeDirs);
     form->addRow(QString(), enabled);
@@ -228,8 +304,10 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
     auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
     QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
         // Ein Alarm ohne Ordner oder ohne Ereignis wuerde nie ausloesen —
-        // das lieber hier sagen als still nichts tun.
-        if (path->text().trimmed().isEmpty() || !QDir(path->text().trimmed()).exists()) {
+        // das lieber hier sagen als still nichts tun. Remote-Pfade lassen sich
+        // hier nicht lokal pruefen, daher nur auf "nicht leer" bestehen.
+        const QString p = path->text().trimmed();
+        if (p.isEmpty() || (!remote->isChecked() && !QDir(p).exists())) {
             QMessageBox::warning(&dlg, _t("Alarm Trigger"),
                                  _t("Bitte einen gültigen Ordner wählen."));
             return;
@@ -251,6 +329,7 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
     spec.onCreated = onCreated->isChecked();
     spec.onModified = onModified->isChecked();
     spec.onDeleted = onDeleted->isChecked();
+    spec.remote = remote->isChecked();
     spec.recursive = recursive->isChecked();
     spec.includeDirs = includeDirs->isChecked();
     spec.enabled = enabled->isChecked();
@@ -348,7 +427,9 @@ void FileAlarmDialog::reload()
     for (const AlarmSpec &a : m_alarms) {
         m_table->insertRow(row);
         m_table->setItem(row, 0, new QTableWidgetItem(a.name));
-        m_table->setItem(row, 1, new QTableWidgetItem(a.path));
+        m_table->setItem(row, 1,
+                         new QTableWidgetItem(a.remote ? _t("🌐 %1 (remote)").arg(a.path)
+                                                       : a.path));
         m_table->setItem(row, 2, new QTableWidgetItem(a.eventsLabel()));
         m_table->setItem(row, 3, new QTableWidgetItem(a.recursive ? QStringLiteral("✓")
                                                                   : QString()));
