@@ -17,19 +17,39 @@ endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Concurrent Svg)
 
-# --- libssh2 (statisch, WinCNG-Crypto: kein OpenSSL noetig) ----------------
+# --- libssh2 (statisch) ----------------------------------------------------
+# Krypto-Backend: standardmaessig WinCNG (kein OpenSSL noetig, aber ohne
+# ed25519/curve25519). Mit -DUSE_OPENSSL_BACKEND=ON wird stattdessen OpenSSL
+# genutzt (ed25519-Host-/Client-Keys + curve25519-KEX). WinCNG bleibt die
+# getestete Rueckfallebene.
+option(USE_OPENSSL_BACKEND
+    "libssh2 gegen OpenSSL statt WinCNG bauen (ed25519/curve25519)" OFF)
+
 include(FetchContent)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(CRYPTO_BACKEND "WinCNG" CACHE STRING "" FORCE)
 set(ENABLE_ZLIB_COMPRESSION OFF CACHE BOOL "" FORCE)
-# WinCNG kann ECDSA/ECDH — standardmaessig aber aus. Ohne das bietet der Client
-# NUR Diffie-Hellman-Gruppen (KEX) und RSA/DSS-Hostkeys an; moderne Server, die
-# ecdh-sha2-nistp*/ecdsa erwarten, scheitern dann mit "Unable to exchange
-# encryption keys". Aktiviert ecdh-sha2-nistp256/384/521 + ecdsa-Hostkeys
-# (benoetigt Windows 10 oder neuer).
-set(ENABLE_ECDSA_WINCNG ON CACHE BOOL "" FORCE)
+
+if(USE_OPENSSL_BACKEND)
+    include(${CMAKE_SOURCE_DIR}/cmake/OpenSSLBackend.cmake)
+    provide_openssl()  # setzt OPENSSL_ROOT_DIR (vorgebaut oder aus Quellcode)
+    set(OPENSSL_USE_STATIC_LIBS ON)
+    set(CRYPTO_BACKEND "OpenSSL" CACHE STRING "" FORCE)
+    # OpenSSL::Crypto im Top-Scope verfuegbar machen, damit die App die
+    # statischen OpenSSL-Objekte sicher mitlinkt (nicht nur transitiv ueber
+    # libssh2). REQUIRED: fehlt OpenSSL, bricht die Konfiguration klar ab.
+    find_package(OpenSSL REQUIRED)
+else()
+    set(CRYPTO_BACKEND "WinCNG" CACHE STRING "" FORCE)
+    # WinCNG kann ECDSA/ECDH — standardmaessig aber aus. Ohne das bietet der
+    # Client NUR Diffie-Hellman-Gruppen (KEX) und RSA/DSS-Hostkeys an; moderne
+    # Server, die ecdh-sha2-nistp*/ecdsa erwarten, scheitern dann mit "Unable to
+    # exchange encryption keys". Aktiviert ecdh-sha2-nistp256/384/521 +
+    # ecdsa-Hostkeys (benoetigt Windows 10 oder neuer).
+    set(ENABLE_ECDSA_WINCNG ON CACHE BOOL "" FORCE)
+endif()
+
 FetchContent_Declare(libssh2
     GIT_REPOSITORY https://github.com/libssh2/libssh2.git
     GIT_TAG        libssh2-1.11.1
@@ -49,6 +69,10 @@ target_link_libraries(ncssh PUBLIC
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg
     libssh2::libssh2_static
     ws2_32 crypt32 bcrypt advapi32 iphlpapi ole32 shell32 user32)
+# Statisches OpenSSL braucht zusaetzlich diese System-Libs.
+if(USE_OPENSSL_BACKEND)
+    target_link_libraries(ncssh PUBLIC OpenSSL::Crypto)
+endif()
 
 qt_add_executable(sshit-commander WIN32
     src/main.cpp

@@ -85,6 +85,28 @@ Python nutzt `async def` + asyncio-Loop im Thread. C++-Ersatz:
 - Ressourcen: `:/i18n/en.json`, `:/assets/sshit.png` (qrc). Neue Assets in
   `resources/resources.qrc` ergänzen.
 
+### Krypto-Backend (WinCNG vs. OpenSSL)
+
+- **Standard: WinCNG** (`-DUSE_OPENSSL_BACKEND=OFF`). Kein OpenSSL nötig, aber
+  **ohne ed25519/curve25519**. Mit `ENABLE_ECDSA_WINCNG` sind ecdsa-Hostkeys und
+  ecdh-sha2-nistp*-KEX aktiv, sodass Standard-OpenSSH-Server (die mehrere
+  Verfahren anbieten) funktionieren. Es scheitert nur bei Servern, die
+  ausschließlich ed25519/curve25519 anbieten, oder bei ed25519-**Login-Keys**.
+- **Opt-in: OpenSSL** (`-DUSE_OPENSSL_BACKEND=ON`) → ed25519/curve25519 + ecdsa.
+  `cmake/OpenSSLBackend.cmake` stellt OpenSSL bereit:
+  1. `-DOPENSSL_ROOT_DIR=<pfad>` auf ein vorgebautes statisches OpenSSL, **oder**
+  2. aus Quellcode bauen (OpenSSL 3.3.2, `Configure VC-WIN64A no-asm no-shared`,
+     `nmake` — **kein nasm nötig**). Ergebnis wird im Build-Verzeichnis gecacht.
+- **Voraussetzung Weg 2:** ein vollständiges perl (Strawberry/ActiveState/Oracle)
+  mit `Locale::Maketext::Simple` — Git-Bash-perl reicht NICHT. Notfalls
+  `-DOPENSSL_PERL=<pfad/perl.exe>` erzwingen. Aufruf aus einer MSVC-Umgebung
+  (vcvars), damit `nmake`/`cl` verfügbar sind.
+- libssh2 nutzt dann seinen OpenSSL-Pfad (`openssl.c`), in dem
+  `LIBSSH2_ED25519=1` für OpenSSL ≥ 1.1.1 gilt und X25519-KEV fest einkompiliert
+  ist. Statisch gelinkt (keine libcrypto-DLL). Verifiziert: App + 184 Tests bauen
+  gegen beide Backends; ein Live-ed25519-Handshake ist mangels Testserver hier
+  offen. OpenSSL bei Nutzung auf einem gepflegten Zweig aktuell halten (CVEs).
+
 ## Was NICHT portiert wird
 
 - `src/ncssh/ui/` (Textual-TUI) — entfällt; die Qt-GUI ist die einzige Oberfläche.
