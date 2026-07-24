@@ -14,6 +14,9 @@
 #include <QDesktopServices>
 #include <QFile>
 #include <QFontMetrics>
+#include <QPainter>
+#include <QTextCursor>
+#include <QTimer>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -39,13 +42,22 @@ TerminalWidget::TerminalWidget(AsyncBridge *bridge, QWidget *parent)
     setUndoRedoEnabled(false);
     setMaximumBlockCount(10000);    // Scrollback
     setLineWrapMode(QPlainTextEdit::NoWrap);
-    setCursorWidth(8);
+    setCursorWidth(0);              // Standard-Cursor aus — wir zeichnen selbst
     QFont mono(QStringLiteral("Consolas"));
     mono.setStyleHint(QFont::Monospace);
     mono.setPointSize(core::getSettingInt(QStringLiteral("terminal_font_size"), 10));
     setFont(mono);
     applyThemeColors();
     m_renderer = std::make_unique<AnsiRenderer>(this);
+
+    // Cursor-Blinken (~530 ms, wie ein Terminal).
+    m_blinkTimer = new QTimer(this);
+    m_blinkTimer->setInterval(530);
+    connect(m_blinkTimer, &QTimer::timeout, this, [this] {
+        m_cursorOn = !m_cursorOn;
+        viewport()->update();
+    });
+    m_blinkTimer->start();
 }
 
 TerminalWidget::~TerminalWidget()
@@ -56,9 +68,70 @@ TerminalWidget::~TerminalWidget()
 void TerminalWidget::applyThemeColors()
 {
     const auto [bg, fg] = terminalColors();
+    m_termBg = QColor(bg);
+    m_termFg = QColor(fg);
     setStyleSheet(QStringLiteral("QPlainTextEdit { background: %1; color: %2; "
                                  "border: 1px solid #2e3340; border-radius: 8px; padding: 4px; }")
                       .arg(bg, fg));
+}
+
+void TerminalWidget::restartCursorBlink()
+{
+    // Nach Ausgabe oder Fokus soll der Cursor sofort sichtbar sein und der
+    // Blink-Rhythmus neu beginnen.
+    m_cursorOn = true;
+    if (m_blinkTimer)
+        m_blinkTimer->start();
+    viewport()->update();
+}
+
+void TerminalWidget::focusInEvent(QFocusEvent *event)
+{
+    QPlainTextEdit::focusInEvent(event);
+    restartCursorBlink();
+}
+
+void TerminalWidget::focusOutEvent(QFocusEvent *event)
+{
+    QPlainTextEdit::focusOutEvent(event);
+    if (m_blinkTimer)
+        m_blinkTimer->stop();   // unfokussiert: nicht blinken (Rahmen statt Block)
+    viewport()->update();
+}
+
+void TerminalWidget::paintEvent(QPaintEvent *event)
+{
+    QPlainTextEdit::paintEvent(event);
+
+    // Block-Cursor an der aktuellen Position zeichnen. cursorRect() liefert die
+    // Stelle in Viewport-Koordinaten, an die der ANSI-Renderer den Textcursor
+    // gesetzt hat (Shell-Prompt bzw. nach \r/\b).
+    const QRect cr = cursorRect();
+    const QFontMetrics fm(font());
+    const int cw = qMax(1, fm.horizontalAdvance(QLatin1Char('M')));
+    const QRect block(cr.left(), cr.top(), cw, cr.height());
+
+    QPainter p(viewport());
+    if (!hasFocus()) {
+        // Unfokussiert: nur ein Rahmen, damit die Position erkennbar bleibt.
+        p.setPen(m_termFg);
+        p.drawRect(block.adjusted(0, 0, -1, -1));
+        return;
+    }
+    if (!m_cursorOn)
+        return;   // Blink-Aus-Phase
+
+    // Gefuellter Block; das Zeichen darunter invertiert (Hintergrundfarbe)
+    // nachzeichnen, damit es lesbar bleibt.
+    p.fillRect(block, m_termFg);
+    QTextCursor c = textCursor();
+    c.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+    const QString sel = c.selectedText();
+    if (!sel.isEmpty() && sel.at(0) != QChar(0x2029) /* Absatztrenner */) {
+        p.setPen(m_termBg);
+        p.setFont(font());
+        p.drawText(cr.left(), cr.top() + fm.ascent(), sel.left(1));
+    }
 }
 
 int TerminalWidget::columns() const
@@ -82,6 +155,7 @@ void TerminalWidget::attachBackend(ShellBackend *backend)
     connect(backend, &ShellBackend::dataReceived, this, [this](const QString &data) {
         m_renderer->feed(data);
         verticalScrollBar()->setValue(verticalScrollBar()->maximum());
+        restartCursorBlink();   // nach Ausgabe Cursor sofort an neuer Stelle zeigen
         if (m_logFile) {
             // Mitschnitt ohne Steuerzeichen — sonst ist die Datei unlesbar.
             m_logFile->write(AnsiRenderer::stripAnsi(data).toUtf8());

@@ -6,6 +6,7 @@
 #include "ncssh/gui/bridge.hpp"
 #include "ncssh/net/ssh.hpp"
 
+#include <QColor>
 #include <QPlainTextEdit>
 #include <memory>
 #include <vector>
@@ -13,6 +14,7 @@
 class QLineEdit;
 class QLabel;
 class QFile;
+class QTimer;
 
 namespace ncssh::gui {
 
@@ -57,6 +59,10 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    // Read-only blendet den Standard-Cursor aus -> Block-Cursor selbst zeichnen.
+    void paintEvent(QPaintEvent *event) override;
+    void focusInEvent(QFocusEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
 
 private:
     void applyThemeColors();
@@ -82,6 +88,13 @@ private:
     QLabel *m_searchLabel = nullptr;
 
     QFile *m_logFile = nullptr;         // Qt-Parent = this
+
+    // Selbstgezeichneter Block-Cursor (blinkend).
+    QColor m_termFg = QColor(QStringLiteral("#e6e6e6"));
+    QColor m_termBg = QColor(QStringLiteral("#101216"));
+    QTimer *m_blinkTimer = nullptr;
+    bool m_cursorOn = true;
+    void restartCursorBlink();          // nach Ausgabe/Fokus wieder sichtbar
 };
 
 } // namespace ncssh::gui
