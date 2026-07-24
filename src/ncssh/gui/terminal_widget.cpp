@@ -103,35 +103,15 @@ void TerminalWidget::paintEvent(QPaintEvent *event)
 {
     QPlainTextEdit::paintEvent(event);
 
-    // Block-Cursor an der aktuellen Position zeichnen. cursorRect() liefert die
-    // Stelle in Viewport-Koordinaten, an die der ANSI-Renderer den Textcursor
-    // gesetzt hat (Shell-Prompt bzw. nach \r/\b).
+    // Schmalen Linien-Cursor ("|") an der aktuellen Position zeichnen.
+    // cursorRect() liefert die Stelle in Viewport-Koordinaten, an die der
+    // ANSI-Renderer den Textcursor gesetzt hat (Shell-Prompt bzw. nach \r/\b).
+    if (hasFocus() && !m_cursorOn)
+        return;   // Blink-Aus-Phase (nur bei Fokus geblinkt)
+
     const QRect cr = cursorRect();
-    const QFontMetrics fm(font());
-    const int cw = qMax(1, fm.horizontalAdvance(QLatin1Char('M')));
-    const QRect block(cr.left(), cr.top(), cw, cr.height());
-
     QPainter p(viewport());
-    if (!hasFocus()) {
-        // Unfokussiert: nur ein Rahmen, damit die Position erkennbar bleibt.
-        p.setPen(m_termFg);
-        p.drawRect(block.adjusted(0, 0, -1, -1));
-        return;
-    }
-    if (!m_cursorOn)
-        return;   // Blink-Aus-Phase
-
-    // Gefuellter Block; das Zeichen darunter invertiert (Hintergrundfarbe)
-    // nachzeichnen, damit es lesbar bleibt.
-    p.fillRect(block, m_termFg);
-    QTextCursor c = textCursor();
-    c.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
-    const QString sel = c.selectedText();
-    if (!sel.isEmpty() && sel.at(0) != QChar(0x2029) /* Absatztrenner */) {
-        p.setPen(m_termBg);
-        p.setFont(font());
-        p.drawText(cr.left(), cr.top() + fm.ascent(), sel.left(1));
-    }
+    p.fillRect(QRect(cr.left(), cr.top(), 2, cr.height()), m_termFg);
 }
 
 int TerminalWidget::columns() const
