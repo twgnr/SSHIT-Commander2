@@ -1218,6 +1218,7 @@
   "Verzeichnisse vergleichen …": "Compare directories …",
   "Verzeichnisvergleich": "Directory compare",
   "Von": "From",
+  "Von der verwendeten SSH-Bibliothek (libssh2) nicht unterstützt.": "Not supported by the SSH library in use (libssh2).",
   "Von vorn gesucht.": "Wrapped around.",
   "Vor (Alt+→)": "Forward (Alt+→)",
   "Vorne kürzen": "Trim start",

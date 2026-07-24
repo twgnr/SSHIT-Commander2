@@ -159,6 +159,12 @@ ServerManagerDialog::ServerManagerDialog(AsyncBridge *bridge, QWidget *parent)
     m_compression = new QCheckBox(_t("SSH-Kompression"), this);
     form->addRow(QString(), m_compression);
     m_agentFwd = new QCheckBox(_t("SSH-Agent weiterreichen (Forwarding)"), this);
+    // libssh2 kann eingehende auth-agent@openssh.com-Kanaele NICHT annehmen.
+    // Ein aktiviertes Forwarding erzeugte auf dem Server nur ein SSH_AUTH_SOCK,
+    // das nie antwortet — daher bewusst deaktiviert statt scheinbar vorhanden.
+    m_agentFwd->setEnabled(false);
+    m_agentFwd->setToolTip(
+        _t("Von der verwendeten SSH-Bibliothek (libssh2) nicht unterstützt."));
     form->addRow(QString(), m_agentFwd);
     m_ciphers = new QLineEdit(this);
     m_ciphers->setPlaceholderText(_t("Standard — z. B. aes256-ctr,aes128-ctr"));
