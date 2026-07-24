@@ -15,6 +15,7 @@
 #include <QListWidget>
 #include <QDir>
 #include <QMessageBox>
+#include <QProcess>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTimer>
@@ -73,37 +74,88 @@ void FileAlarmManager::poll()
     const std::vector<AlarmSpec> alarms = m_alarms;
     const QHash<int, core::Snapshot> previous = m_snapshots;
 
-    // Scannen laeuft im Worker; Ergebnis (neue Schnappschuesse + Events) im GUI.
-    using Result = std::pair<QHash<int, core::Snapshot>,
-                             std::vector<std::tuple<QString, QString, QString>>>;
+    // Scannen laeuft im Worker; Ergebnis (neue Schnappschuesse + Events +
+    // Firings pro Alarm) kommt im GUI-Thread an.
+    struct Firing {
+        QString kind;
+        QString path;
+        int count = 0;
+    };
+    struct Result {
+        QHash<int, core::Snapshot> snapshots;
+        std::vector<std::tuple<QString, QString, QString>> events;
+        QHash<int, Firing> firings;  // Alarm-ID -> erstes Ereignis + Anzahl
+    };
     m_bridge->run<Result>(
         [alarms, previous]() -> Result {
-            QHash<int, core::Snapshot> snapshots;
-            std::vector<std::tuple<QString, QString, QString>> events;
+            Result r;
             for (const AlarmSpec &a : alarms) {
                 if (!a.enabled)
                     continue;
                 const core::Snapshot now = core::scanDir(a.path, a.recursive, a.includeDirs,
                                                          a.includeGlob, a.excludeGlob);
-                snapshots.insert(a.id, now);
+                r.snapshots.insert(a.id, now);
                 if (!previous.contains(a.id))
                     continue;  // erster Durchlauf: nur Basis aufnehmen
                 for (const auto &[kind, path, isDir] :
                      core::diffSnapshots(previous.value(a.id), now,
                                          a.onCreated, a.onModified, a.onDeleted)) {
-                    events.emplace_back(kind, path, a.name);
+                    r.events.emplace_back(kind, path, a.name);
+                    if (r.firings.contains(a.id))
+                        ++r.firings[a.id].count;
+                    else
+                        r.firings.insert(a.id, Firing{kind, path, 1});
                 }
             }
-            return {snapshots, events};
+            return r;
         },
         [this](const Result &result) {
-            for (auto it = result.first.begin(); it != result.first.end(); ++it)
+            for (auto it = result.snapshots.begin(); it != result.snapshots.end(); ++it)
                 m_snapshots.insert(it.key(), it.value());
-            for (const auto &[kind, path, name] : result.second)
+            for (const auto &[kind, path, name] : result.events)
                 emit event(kind, path, name);
+            // Aktionen EINMAL pro ausgeloestem Alarm (kein Prozess-Sturm).
+            for (auto it = result.firings.begin(); it != result.firings.end(); ++it) {
+                const auto spec = std::find_if(
+                    m_alarms.begin(), m_alarms.end(),
+                    [id = it.key()](const AlarmSpec &a) { return a.id == id; });
+                if (spec != m_alarms.end() && !spec->actionCmd.trimmed().isEmpty())
+                    runAction(*spec, it.value().kind, it.value().path, it.value().count);
+            }
             m_busy = false;
         },
         [this](const QString &) { m_busy = false; });
+}
+
+void FileAlarmManager::runAction(const core::AlarmSpec &spec, const QString &kind,
+                                 const QString &path, int count)
+{
+    QString cmd = spec.actionCmd.trimmed();
+    if (cmd.isEmpty())
+        return;
+    // Platzhalter ersetzen.
+    cmd.replace(QStringLiteral("{path}"), path);
+    cmd.replace(QStringLiteral("{kind}"), kind);
+    cmd.replace(QStringLiteral("{name}"), spec.name);
+    cmd.replace(QStringLiteral("{count}"), QString::number(count));
+    // Als losgeloester Prozess starten — die Shell parst Argumente/Quotes. Die
+    // Ereignisdaten stehen zusaetzlich als Umgebungsvariablen bereit (robuster
+    // als String-Interpolation bei Sonderzeichen im Pfad).
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("ALARM_PATH"), path);
+    env.insert(QStringLiteral("ALARM_KIND"), kind);
+    env.insert(QStringLiteral("ALARM_NAME"), spec.name);
+    env.insert(QStringLiteral("ALARM_COUNT"), QString::number(count));
+    QProcess proc;
+    proc.setProcessEnvironment(env);
+#ifdef Q_OS_WIN
+    proc.setProgram(QStringLiteral("cmd"));
+    proc.setArguments({QStringLiteral("/c"), cmd});
+#else
+    proc.setProgram(QStringLiteral("/bin/sh"));
+    proc.setArguments({QStringLiteral("-c"), cmd});
+#endif
+    proc.startDetached();
 }
 
 // ---------------------------------------------------------------------------
@@ -156,11 +208,18 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
     auto *excludeGlob = new QLineEdit(spec.excludeGlob, &dlg);
     excludeGlob->setPlaceholderText(_t("keine — z. B. *.tmp;*~"));
 
+    auto *actionCmd = new QLineEdit(spec.actionCmd, &dlg);
+    actionCmd->setPlaceholderText(_t("optional — z. B. echo {kind} {path} >> alarm.log"));
+    actionCmd->setToolTip(
+        _t("Lokaler Befehl bei Auslösung (einmal pro Prüfzyklus). Platzhalter: "
+           "{path} {kind} {name} {count}; auch als Umgebungsvariablen ALARM_PATH usw."));
+
     form->addRow(_t("Anzeigename (optional)"), name);
     form->addRow(_t("Zu überwachender Ordner"), pathRow);
     form->addRow(_t("Erkannte Änderungen:"), eventRow);
     form->addRow(_t("Nur diese Muster:"), includeGlob);
     form->addRow(_t("Diese Muster ignorieren:"), excludeGlob);
+    form->addRow(_t("Befehl bei Auslösung:"), actionCmd);
     form->addRow(QString(), recursive);
     form->addRow(QString(), includeDirs);
     form->addRow(QString(), enabled);
@@ -197,6 +256,7 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
     spec.enabled = enabled->isChecked();
     spec.includeGlob = includeGlob->text().trimmed();
     spec.excludeGlob = excludeGlob->text().trimmed();
+    spec.actionCmd = actionCmd->text().trimmed();
     return true;
 }
 } // namespace

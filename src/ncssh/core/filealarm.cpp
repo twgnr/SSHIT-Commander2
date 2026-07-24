@@ -25,6 +25,7 @@ QJsonObject AlarmSpec::toJson() const
         {QStringLiteral("enabled"), enabled},
         {QStringLiteral("include_glob"), includeGlob},
         {QStringLiteral("exclude_glob"), excludeGlob},
+        {QStringLiteral("action_cmd"), actionCmd},
     };
 }
 
@@ -42,6 +43,7 @@ AlarmSpec AlarmSpec::fromJson(const QJsonObject &d)
     a.enabled = d.value(QStringLiteral("enabled")).toBool(true);
     a.includeGlob = d.value(QStringLiteral("include_glob")).toString();
     a.excludeGlob = d.value(QStringLiteral("exclude_glob")).toString();
+    a.actionCmd = d.value(QStringLiteral("action_cmd")).toString();
     return a;
 }
 

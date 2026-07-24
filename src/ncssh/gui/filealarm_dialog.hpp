@@ -33,6 +33,10 @@ signals:
 
 private:
     void poll();
+    // Fuehrt den optionalen Befehl eines ausgeloesten Alarms aus (lokal, einmal
+    // pro Poll-Zyklus). Platzhalter {path} {kind} {name} {count} werden ersetzt.
+    void runAction(const core::AlarmSpec &spec, const QString &kind, const QString &path,
+                   int count);
 
     AsyncBridge *m_bridge;
     QTimer *m_timer;

@@ -28,6 +28,9 @@ struct AlarmSpec {
     // Namensfilter (jeweils ';'-getrennte Wildcard-Muster; leer = ohne Wirkung).
     QString includeGlob;   // nur passende Namen beruecksichtigen (z.B. "*.log;*.csv")
     QString excludeGlob;   // passende Namen ignorieren (z.B. "*.tmp;*~")
+    // Optionaler lokaler Befehl, der bei Ausloesung EINMAL pro Poll-Zyklus laeuft.
+    // Platzhalter: {path} {kind} {name} {count}. Leer = keine Aktion.
+    QString actionCmd;
 
     QJsonObject toJson() const;
     static AlarmSpec fromJson(const QJsonObject &d);

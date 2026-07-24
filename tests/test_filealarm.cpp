@@ -160,6 +160,7 @@ TEST(filealarm, alarmspec_json_roundtrip)
     a.recursive = true;
     a.includeGlob = QStringLiteral("*.log");
     a.excludeGlob = QStringLiteral("*.tmp");
+    a.actionCmd = QStringLiteral("echo {kind} {path}");
 
     const AlarmSpec back = AlarmSpec::fromJson(a.toJson());
     CHECK_EQ(back.id, a.id);
@@ -173,4 +174,5 @@ TEST(filealarm, alarmspec_json_roundtrip)
     CHECK_EQ(back.enabled, a.enabled);
     CHECK_EQ(back.includeGlob, a.includeGlob);
     CHECK_EQ(back.excludeGlob, a.excludeGlob);
+    CHECK_EQ(back.actionCmd, a.actionCmd);
 }
