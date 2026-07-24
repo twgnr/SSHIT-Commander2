@@ -1,6 +1,9 @@
 #include "ncssh/gui/transfer_manager.hpp"
 
+#include "ncssh/core/settings.hpp"
+
 #include <QElapsedTimer>
+#include <QThread>
 #include <algorithm>
 
 namespace ncssh::gui {
@@ -63,14 +66,39 @@ void TransferManager::run(int jobId, bool resume)
     timer->start();
     auto lastPct = std::make_shared<int>(-1);
 
-    m_bridge->stream(
-        [p, resume, timer, jobId, this](const AsyncBridge::EmitLine &emitLine,
-                                        const CancelTokenPtr &cancel) {
+    // Bandbreiten-Limit (KB/s, 0 = unbegrenzt) beim Start festhalten.
+    const qint64 rateBps =
+        qint64(core::getSettingInt(QStringLiteral("transfer_rate_limit_kbps"), 0)) * 1024;
+    auto throttleBaseBytes = std::make_shared<qint64>(-1);
+    auto throttleBaseMs = std::make_shared<qint64>(0);
+
+    BridgeTask *task = m_bridge->stream(
+        [p, resume, timer, rateBps, throttleBaseBytes, throttleBaseMs, jobId,
+         this](const AsyncBridge::EmitLine &emitLine, const CancelTokenPtr &cancel) {
             net::transferWithProgress(
                 p.src, p.srcPath, p.dst, p.dstPath,
-                [&emitLine, &cancel, timer](qint64 copied, qint64 total) {
+                [&emitLine, &cancel, timer, rateBps, throttleBaseBytes,
+                 throttleBaseMs](qint64 copied, qint64 total) {
                     if (cancel && cancel->isCancelled())
                         throw std::runtime_error("cancelled");
+                    // Bandbreiten-Drosselung: schlafen, bis der Soll-Takt erreicht
+                    // ist; in kleinen Schritten, damit Pause/Abbruch schnell greift.
+                    if (rateBps > 0) {
+                        if (*throttleBaseBytes < 0) {
+                            *throttleBaseBytes = copied;
+                            *throttleBaseMs = timer->elapsed();
+                        }
+                        const qint64 sent = copied - *throttleBaseBytes;
+                        const qint64 expectedMs = sent * 1000 / rateBps;
+                        qint64 sleepMs = expectedMs - (timer->elapsed() - *throttleBaseMs);
+                        while (sleepMs > 0) {
+                            if (cancel && cancel->isCancelled())
+                                throw std::runtime_error("cancelled");
+                            const qint64 step = std::min<qint64>(sleepMs, 50);
+                            QThread::msleep(static_cast<unsigned long>(step));
+                            sleepMs -= step;
+                        }
+                    }
                     // Fortschritt als "copied/total/ms" ueber den Line-Kanal.
                     emitLine(QStringLiteral("%1/%2/%3")
                                  .arg(copied).arg(total).arg(timer->elapsed()));
@@ -125,27 +153,55 @@ void TransferManager::run(int jobId, bool resume)
                 j->status = QStringLiteral("done");
                 emit jobUpdated(jobId);
             }
+            m_pausing.remove(jobId);
             m_tasks.remove(jobId);
         },
         // onError
         [this, jobId](const QString &err) {
             if (TransferJob *j = find(jobId)) {
                 if (err == QLatin1String("cancelled")) {
-                    j->status = QStringLiteral("cancelled");
+                    // Abbruch, der von pause() ausgeloest wurde, gilt als "pausiert".
+                    j->status = m_pausing.contains(jobId) ? QStringLiteral("paused")
+                                                          : QStringLiteral("cancelled");
                 } else {
                     j->status = QStringLiteral("error");
                     j->error = err;
                 }
+                m_pausing.remove(jobId);
                 emit jobUpdated(jobId);
             }
             m_tasks.remove(jobId);
         });
+    m_tasks.insert(jobId, task);  // Handle merken, damit cancel()/pause() greifen
 }
 
 void TransferManager::cancel(int jobId)
 {
+    m_pausing.remove(jobId);  // ausdruecklicher Abbruch, nicht Pause
     if (BridgeTask *task = m_tasks.value(jobId, nullptr))
         m_bridge->cancel(task);
+}
+
+void TransferManager::pause(int jobId)
+{
+    TransferJob *job = find(jobId);
+    if (!job || job->status != QLatin1String("running"))
+        return;
+    BridgeTask *task = m_tasks.value(jobId, nullptr);
+    if (!task)
+        return;
+    m_pausing.insert(jobId);   // der folgende "cancelled" wird zu "paused"
+    m_bridge->cancel(task);
+}
+
+void TransferManager::resumePaused(int jobId)
+{
+    TransferJob *job = find(jobId);
+    if (!job || job->status != QLatin1String("paused") || !m_params.contains(jobId))
+        return;
+    job->status = QStringLiteral("running");
+    emit jobUpdated(jobId);
+    run(jobId, true);  // am Ziel-Offset fortsetzen
 }
 
 void TransferManager::clearFinished()

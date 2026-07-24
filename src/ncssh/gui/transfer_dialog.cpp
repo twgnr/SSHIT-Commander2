@@ -1,12 +1,15 @@
 #include "ncssh/gui/transfer_dialog.hpp"
 
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/core/settings.hpp"
 #include "ncssh/gui/transfer_manager.hpp"
 
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QLabel>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -43,6 +46,7 @@ static QString statusLabel(const QString &status)
     if (status == QLatin1String("done")) return _t("fertig");
     if (status == QLatin1String("error")) return _t("Fehler");
     if (status == QLatin1String("cancelled")) return _t("abgebrochen");
+    if (status == QLatin1String("paused")) return _t("pausiert");
     return status;
 }
 
@@ -72,31 +76,70 @@ TransferDialog::TransferDialog(TransferManager *manager, QWidget *parent)
     layout->addWidget(m_table, 1);
 
     auto *buttons = new QHBoxLayout();
+    auto *pauseBtn = new QPushButton(_t("Pause / Fortsetzen"), this);
+    pauseBtn->setToolTip(_t("Laufende Übertragung anhalten bzw. pausierte fortsetzen"));
     auto *cancelBtn = new QPushButton(_t("Abbrechen"), this);
     auto *retryBtn = new QPushButton(_t("Wiederaufnehmen"), this);
     retryBtn->setToolTip(_t("Fehlgeschlagene oder abgebrochene Übertragung erneut starten"));
     auto *clearBtn = new QPushButton(_t("Abgeschlossene entfernen"), this);
     auto *closeBtn = new QPushButton(_t("Schließen"), this);
     closeBtn->setDefault(true);
-    connect(cancelBtn, &QPushButton::clicked, this, [this] {
-        const int row = m_table->currentRow();
-        if (row >= 0)
-            m_manager->cancel(m_table->item(row, 0)->data(Qt::UserRole).toInt());
+
+    // Bandbreiten-Limit (global, gilt fuer neu gestartete/fortgesetzte Transfers).
+    auto *limitLabel = new QLabel(_t("Limit:"), this);
+    auto *limitSpin = new QSpinBox(this);
+    limitSpin->setRange(0, 1024 * 1024);
+    limitSpin->setSuffix(_t(" KB/s"));
+    limitSpin->setSpecialValueText(_t("unbegrenzt"));
+    limitSpin->setSingleStep(128);
+    limitSpin->setValue(core::getSettingInt(QStringLiteral("transfer_rate_limit_kbps"), 0));
+    limitSpin->setToolTip(
+        _t("Maximale Übertragungsrate (0 = unbegrenzt). Wirkt beim nächsten Start/Fortsetzen."));
+    connect(limitSpin, qOverload<int>(&QSpinBox::valueChanged), this, [](int v) {
+        core::setSetting(QStringLiteral("transfer_rate_limit_kbps"), v);
     });
-    connect(retryBtn, &QPushButton::clicked, this, [this] {
+
+    const auto selectedJob = [this]() -> int {
         const int row = m_table->currentRow();
-        if (row >= 0)
-            m_manager->retry(m_table->item(row, 0)->data(Qt::UserRole).toInt());
+        return row >= 0 ? m_table->item(row, 0)->data(Qt::UserRole).toInt() : -1;
+    };
+    connect(pauseBtn, &QPushButton::clicked, this, [this, selectedJob] {
+        const int id = selectedJob();
+        if (id < 0)
+            return;
+        // Kontextabhaengig: laeuft -> pausieren, pausiert -> fortsetzen.
+        const auto &jobs = m_manager->jobs();
+        auto it = std::find_if(jobs.begin(), jobs.end(),
+                               [id](const net::TransferJob &j) { return j.id == id; });
+        if (it == jobs.end())
+            return;
+        if (it->status == QLatin1String("paused"))
+            m_manager->resumePaused(id);
+        else if (it->status == QLatin1String("running"))
+            m_manager->pause(id);
+    });
+    connect(cancelBtn, &QPushButton::clicked, this, [this, selectedJob] {
+        const int id = selectedJob();
+        if (id >= 0)
+            m_manager->cancel(id);
+    });
+    connect(retryBtn, &QPushButton::clicked, this, [this, selectedJob] {
+        const int id = selectedJob();
+        if (id >= 0)
+            m_manager->retry(id);
     });
     connect(clearBtn, &QPushButton::clicked, this, [this] {
         m_manager->clearFinished();
         rebuild();
     });
     connect(closeBtn, &QPushButton::clicked, this, &QDialog::accept);
+    buttons->addWidget(pauseBtn);
     buttons->addWidget(cancelBtn);
     buttons->addWidget(retryBtn);
     buttons->addWidget(clearBtn);
     buttons->addStretch(1);
+    buttons->addWidget(limitLabel);
+    buttons->addWidget(limitSpin);
     buttons->addWidget(closeBtn);
     layout->addLayout(buttons);
 

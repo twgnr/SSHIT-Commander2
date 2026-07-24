@@ -8,6 +8,7 @@
 
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <vector>
 
 namespace ncssh::gui {
@@ -25,6 +26,10 @@ public:
 
     void retry(int jobId);
     void cancel(int jobId);
+    // Pausiert eine laufende Uebertragung (Abbruch + Merken) und nimmt sie
+    // spaeter am Ziel-Offset wieder auf — ohne einen Worker-Thread zu blockieren.
+    void pause(int jobId);
+    void resumePaused(int jobId);
     void clearFinished();
 
     const std::vector<net::TransferJob> &jobs() const { return m_jobs; }
@@ -49,6 +54,7 @@ private:
     std::vector<net::TransferJob> m_jobs;
     QHash<int, Params> m_params;
     QHash<int, BridgeTask *> m_tasks;
+    QSet<int> m_pausing;  // Jobs, deren Abbruch als "pausiert" (nicht "abgebrochen") gilt
     int m_counter = 0;
 };
 
