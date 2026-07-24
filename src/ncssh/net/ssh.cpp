@@ -505,6 +505,11 @@ std::vector<FileEntry> SFTPFileSystem::listDir(const QString &path)
         const QString fn = QString::fromUtf8(name, rc);
         if (fn == QLatin1String(".") || fn == QLatin1String(".."))
             continue;
+        // Sicherheit: ein boesartiger Server darf keine Namen mit Pfad-Trennern
+        // liefern (z. B. "../../etc/passwd") — sonst koennte ein Download beim
+        // Zusammensetzen des Zielpfads das gewaehlte Verzeichnis verlassen.
+        if (fn.contains(QLatin1Char('/')) || fn.contains(QLatin1Char('\\')))
+            continue;
         FileEntry e;
         e.name = fn;
         const unsigned long perm = (attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS) ? attrs.permissions : 0;

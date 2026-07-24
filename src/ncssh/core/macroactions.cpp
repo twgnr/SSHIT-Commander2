@@ -280,10 +280,13 @@ static void winSetClipboard(const QString &text)
     EmptyClipboard();
     HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, data.size());
     if (h) {
-        void *ptr = GlobalLock(h);
-        memcpy(ptr, data.constData(), data.size());
-        GlobalUnlock(h);
-        SetClipboardData(CF_UNICODETEXT, h);
+        if (void *ptr = GlobalLock(h)) {
+            memcpy(ptr, data.constData(), data.size());
+            GlobalUnlock(h);
+            SetClipboardData(CF_UNICODETEXT, h);
+        } else {
+            GlobalFree(h);   // Sperre fehlgeschlagen -> Speicher nicht verlieren
+        }
     }
     CloseClipboard();
 }

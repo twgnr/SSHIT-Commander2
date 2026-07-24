@@ -223,6 +223,52 @@ TEST(transfer, overwrite_existing_target)
     CHECK_EQ(readFile(dst), QByteArrayLiteral("NEU"));
 }
 
+TEST(transfer, rejects_path_traversal_names)
+{
+    // Boesartiger Server: listDir liefert einen Namen mit ".." und Trenner.
+    class EvilFS : public FakeFS
+    {
+    public:
+        std::vector<FileEntry> listDir(const QString &p) override
+        {
+            std::vector<FileEntry> out;
+            if (p == QLatin1String("/s")) {
+                FileEntry ok;
+                ok.name = QStringLiteral("gut.txt");
+                ok.type = EntryType::File;
+                ok.size = 3;
+                out.push_back(ok);
+                FileEntry evil;
+                evil.name = QStringLiteral("../../evil.txt");   // Traversal-Versuch
+                evil.type = EntryType::File;
+                evil.size = 5;
+                out.push_back(evil);
+            }
+            return out;
+        }
+        qint64 size(const QString &p) override
+        {
+            return p.endsWith(QLatin1String("gut.txt")) ? 3 : 5;
+        }
+        bool isDir(const QString &p) override { return p == QLatin1String("/s"); }
+    };
+
+    EvilFS src;
+    src.files.insert(QStringLiteral("/s/gut.txt"), QByteArrayLiteral("abc"));
+    FakeFS dst;
+    dst.dirs.insert(QStringLiteral("/d"));
+    transferWithProgress(&src, QStringLiteral("/s"), &dst, QStringLiteral("/d/s"),
+                         [](qint64, qint64) {});
+
+    // Die harmlose Datei kommt an ...
+    CHECK_EQ(dst.files.value(QStringLiteral("/d/s/gut.txt")), QByteArrayLiteral("abc"));
+    // ... der Traversal-Name wird NICHT ausserhalb des Ziels geschrieben.
+    CHECK(!dst.files.contains(QStringLiteral("/evil.txt")));
+    CHECK(!dst.files.contains(QStringLiteral("/d/../../evil.txt")));
+    for (auto it = dst.files.begin(); it != dst.files.end(); ++it)
+        CHECK(it.key().startsWith(QLatin1String("/d/")));
+}
+
 TEST(transfer, resume_continues_partial_file)
 {
     QTemporaryDir tmp;

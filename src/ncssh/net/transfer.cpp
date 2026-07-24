@@ -256,6 +256,12 @@ static void collectTree(FileSystemProvider *src, const QString &sp,
         for (const FileEntry &e : src->listDir(sp)) {
             if (e.type == EntryType::Parent)
                 continue;
+            // Sicherheit (defense in depth): Namen mit Pfad-Trennern oder ".."
+            // eines boesartigen Servers ueberspringen, damit dst->join den
+            // Zielbaum nicht verlassen kann.
+            if (e.name == QLatin1String("..") || e.name.contains(QLatin1Char('/'))
+                || e.name.contains(QLatin1Char('\\')))
+                continue;
             collectTree(src, src->join(sp, e.name), dst, dst->join(dp, e.name), out);
         }
     } else {
