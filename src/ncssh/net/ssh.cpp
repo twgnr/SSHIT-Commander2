@@ -1036,6 +1036,23 @@ void SFTPFileSystem::rename(const QString &oldPath, const QString &newPath)
         fail(QStringLiteral("Umbenennen fehlgeschlagen: %1 → %2").arg(oldPath, newPath));
 }
 
+void SFTPFileSystem::symlink(const QString &target, const QString &linkPath)
+{
+    std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
+    LIBSSH2_SFTP *sftp = m_session->sftp();
+    // libssh2_sftp_symlink_ex(sftp, orig, orig_len, link, link_len, SYMLINK):
+    // legt `link` an, das auf `orig` (= target) zeigt. Der link-Parameter ist
+    // char* (nicht const) -> eigener veraenderbarer Puffer.
+    const QByteArray orig = target.toUtf8();
+    QByteArray link = linkPath.toUtf8();
+    if (libssh2_sftp_symlink_ex(sftp, orig.constData(),
+                                static_cast<unsigned int>(orig.size()), link.data(),
+                                static_cast<unsigned int>(link.size()), LIBSSH2_SFTP_SYMLINK)
+        != 0)
+        fail(QStringLiteral("Symlink konnte nicht angelegt werden: %1 → %2")
+                 .arg(linkPath, target));
+}
+
 void SFTPFileSystem::chmod(const QString &path, quint32 mode)
 {
     std::lock_guard<std::recursive_mutex> lock(m_session->mutex());

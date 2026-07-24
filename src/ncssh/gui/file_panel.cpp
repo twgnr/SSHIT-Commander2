@@ -1195,6 +1195,7 @@ void FilePanel::openContextMenu(const QPoint &pos)
 
     menu.addAction(_t("Neuer Ordner (F7)"), this, &FilePanel::opMkdir);
     menu.addAction(_t("Neue Datei …"), this, &FilePanel::opNewFile);
+    menu.addAction(_t("Symlink anlegen …"), this, &FilePanel::opSymlink);
     menu.addAction(_t("Pfad kopieren"), this, &FilePanel::copyPathToClipboard)->setEnabled(hasSel);
     menu.addAction(_t("Eigenschaften …"), this, &FilePanel::opProperties)->setEnabled(hasSel);
     menu.addSeparator();
@@ -1338,6 +1339,31 @@ void FilePanel::opMkdir()
     const QString target = provider->join(m_path, name);
     m_bridge->run(
         [provider, target] { provider->mkdir(target); },
+        [this] { refresh(); },
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+}
+
+void FilePanel::opSymlink()
+{
+    if (!m_provider)
+        return;
+    core::FileSystemProvider *provider = m_provider;
+    // Ziel (worauf der Link zeigt) mit der aktuellen Auswahl vorbelegen.
+    const QString sel = selectedPath();
+    bool ok = false;
+    const QString target =
+        QInputDialog::getText(this, _t("Symlink anlegen"), _t("Ziel (worauf der Link zeigt):"),
+                              QLineEdit::Normal, sel, &ok);
+    if (!ok || target.isEmpty())
+        return;
+    const QString name =
+        QInputDialog::getText(this, _t("Symlink anlegen"), _t("Name des Links:"),
+                              QLineEdit::Normal, provider->basename(target), &ok);
+    if (!ok || name.isEmpty())
+        return;
+    const QString linkPath = provider->join(m_path, name);
+    m_bridge->run(
+        [provider, target, linkPath] { provider->symlink(target, linkPath); },
         [this] { refresh(); },
         [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
 }

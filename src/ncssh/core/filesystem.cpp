@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QStorageInfo>
 #include <algorithm>
+#include <filesystem>
 #include <stdexcept>
 
 #ifdef Q_OS_WIN
@@ -203,6 +204,27 @@ qint64 LocalFileSystem::size(const QString &path)
 {
     const QFileInfo info(path);
     return info.exists() ? info.size() : 0;
+}
+
+void LocalFileSystem::symlink(const QString &target, const QString &linkPath)
+{
+    // Echter symbolischer Link (kein .lnk-Verknuepfungsobjekt). Unter Windows
+    // benoetigt das den Entwicklermodus bzw. erhoehte Rechte; scheitert das,
+    // wird der Fehler nach oben gereicht.
+    std::error_code ec;
+    // UTF-8-korrekt (Windows: Konstruktion aus char8_t behandelt den Pfad als UTF-8).
+    const QByteArray tgtU8 = target.toUtf8();
+    const QByteArray lnkU8 = linkPath.toUtf8();
+    const std::filesystem::path tgt(reinterpret_cast<const char8_t *>(tgtU8.constData()));
+    const std::filesystem::path lnk(reinterpret_cast<const char8_t *>(lnkU8.constData()));
+    if (std::filesystem::is_directory(tgt, ec))
+        std::filesystem::create_directory_symlink(tgt, lnk, ec);
+    else
+        std::filesystem::create_symlink(tgt, lnk, ec);
+    if (ec)
+        throw std::runtime_error(
+            ("Symlink konnte nicht angelegt werden: " + QString::fromStdString(ec.message()))
+                .toStdString());
 }
 
 } // namespace ncssh::core

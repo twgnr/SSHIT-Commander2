@@ -10,6 +10,7 @@
 
 #include <QByteArray>
 #include <QString>
+#include <stdexcept>
 #include <vector>
 
 namespace ncssh::core {
@@ -37,6 +38,16 @@ public:
     virtual QString basename(const QString &path) const = 0;
     virtual QString home() = 0;
 
+    // Legt einen symbolischen Link linkPath an, der auf target zeigt. Standard:
+    // nicht unterstuetzt — nur lokale und SFTP-Provider ueberschreiben das.
+    virtual void symlink(const QString &target, const QString &linkPath)
+    {
+        Q_UNUSED(target);
+        Q_UNUSED(linkPath);
+        throw std::runtime_error(
+            "Symbolische Links werden von diesem Dateisystem nicht unterstützt.");
+    }
+
     // Groesse in Bytes; 0 = unbekannt oder nicht vorhanden. Der Transfer nutzt
     // das fuer Gesamtfortschritt und Verifikation. (Entspricht dem
     // getattr(provider, "size", …)-Fallback des Python-Originals.)
@@ -63,6 +74,7 @@ public:
     QString basename(const QString &path) const override;
     QString home() override;
     qint64 size(const QString &path) override;
+    void symlink(const QString &target, const QString &linkPath) override;
 };
 
 } // namespace ncssh::core

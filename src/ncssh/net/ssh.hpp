@@ -146,6 +146,7 @@ public:
     QString parent(const QString &path) const override;
     QString basename(const QString &path) const override;
     QString home() override;
+    void symlink(const QString &target, const QString &linkPath) override;
 
     // Groesse einer Remote-Datei (fuer Transfer/Resume).
     qint64 size(const QString &path) override;

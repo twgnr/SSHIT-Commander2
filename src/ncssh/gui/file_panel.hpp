@@ -147,6 +147,7 @@ private:
     void opEdit();
     void opMkdir();
     void opNewFile();
+    void opSymlink();
     void opDelete();
     void opRename();
     void opProperties();
