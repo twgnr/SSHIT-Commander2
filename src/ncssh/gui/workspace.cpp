@@ -694,6 +694,10 @@ void Workspace::connectTo(const core::ServerProfile &profile)
                     m_sessions->hostkeys.add(profile.host, profile.port,
                                              session->hostFingerprint, session->hostKeyAlgo);
                     m_sessions->hostkeys.save();
+                    // Interop: den bestaetigten Key auch in OpenSSHs
+                    // ~/.ssh/known_hosts eintragen, damit das System-ssh ihn kennt.
+                    if (core::getSettingBool(QStringLiteral("openssh_known_hosts"), true))
+                        net::addToOpenSshKnownHosts(session, profile.host, profile.port);
                 }
             }
             startHealthCheck();

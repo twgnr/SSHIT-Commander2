@@ -2,10 +2,12 @@
 
 #include "ncssh/core/lsparse.hpp"
 #include "ncssh/core/ppk.hpp"
+#include "ncssh/core/settings.hpp"
 
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QUrl>
 #include <algorithm>
 #include <cstdlib>
@@ -339,6 +341,92 @@ static void secureZero(QByteArray &b)
         p[i] = 0;
 }
 
+// libssh2-Hostkey-Typ -> KNOWNHOST-Key-Bit (0 = unbekannt).
+static int knownHostKeyBit(int type)
+{
+    switch (type) {
+    case LIBSSH2_HOSTKEY_TYPE_RSA: return LIBSSH2_KNOWNHOST_KEY_SSHRSA;
+    case LIBSSH2_HOSTKEY_TYPE_DSS: return LIBSSH2_KNOWNHOST_KEY_SSHDSS;
+#ifdef LIBSSH2_HOSTKEY_TYPE_ED25519
+    case LIBSSH2_HOSTKEY_TYPE_ED25519: return LIBSSH2_KNOWNHOST_KEY_ED25519;
+    case LIBSSH2_HOSTKEY_TYPE_ECDSA_256: return LIBSSH2_KNOWNHOST_KEY_ECDSA_256;
+    case LIBSSH2_HOSTKEY_TYPE_ECDSA_384: return LIBSSH2_KNOWNHOST_KEY_ECDSA_384;
+    case LIBSSH2_HOSTKEY_TYPE_ECDSA_521: return LIBSSH2_KNOWNHOST_KEY_ECDSA_521;
+#endif
+    default: return 0;
+    }
+}
+
+static QString openSshKnownHostsPath()
+{
+    return QDir::homePath() + QStringLiteral("/.ssh/known_hosts");
+}
+
+// Prueft den aktuellen Host-Key gegen OpenSSHs ~/.ssh/known_hosts (Interop mit
+// dem System-ssh). Rueckgabe: 1 = passt/bekannt, 0 = nicht gefunden,
+// -1 = fuer diesen Host ist ein ANDERER Key hinterlegt (moeglicher MITM).
+static int checkOpenSshKnownHosts(LIBSSH2_SESSION *sess, const QString &host, int port)
+{
+    const QString khPath = openSshKnownHostsPath();
+    if (!QFile::exists(khPath))
+        return 0;
+    LIBSSH2_KNOWNHOSTS *kh = libssh2_knownhost_init(sess);
+    if (!kh)
+        return 0;
+    libssh2_knownhost_readfile(kh, khPath.toUtf8().constData(),
+                               LIBSSH2_KNOWNHOST_FILE_OPENSSH);
+    size_t len = 0;
+    int type = 0;
+    const char *key = libssh2_session_hostkey(sess, &len, &type);
+    int result = 0;
+    if (key) {
+        const int typemask = LIBSSH2_KNOWNHOST_TYPE_PLAIN | LIBSSH2_KNOWNHOST_KEYENC_RAW
+                             | knownHostKeyBit(type);
+        struct libssh2_knownhost *found = nullptr;
+        const int rc = libssh2_knownhost_checkp(kh, host.toUtf8().constData(), port,
+                                                key, len, typemask, &found);
+        if (rc == LIBSSH2_KNOWNHOST_CHECK_MATCH)
+            result = 1;
+        else if (rc == LIBSSH2_KNOWNHOST_CHECK_MISMATCH)
+            result = -1;
+    }
+    libssh2_knownhost_free(kh);
+    return result;
+}
+
+// Haengt den aktuellen Host-Key an OpenSSHs ~/.ssh/known_hosts an (aufgerufen,
+// wenn der Nutzer einen neuen Key in der GUI bestaetigt).
+void addToOpenSshKnownHosts(const SSHSessionPtr &session, const QString &host, int port)
+{
+    if (!session)
+        return;
+    std::lock_guard<std::recursive_mutex> lock(session->mutex());
+    LIBSSH2_SESSION *sess = session->raw();
+    LIBSSH2_KNOWNHOSTS *kh = libssh2_knownhost_init(sess);
+    if (!kh)
+        return;
+    const QString khPath = openSshKnownHostsPath();
+    libssh2_knownhost_readfile(kh, khPath.toUtf8().constData(),
+                               LIBSSH2_KNOWNHOST_FILE_OPENSSH);
+    size_t len = 0;
+    int type = 0;
+    const char *key = libssh2_session_hostkey(sess, &len, &type);
+    if (key) {
+        // Nicht-Standardport wird als "[host]:port" hinterlegt (OpenSSH-Format).
+        const QByteArray hostSpec = (port == 22)
+                                        ? host.toUtf8()
+                                        : QStringLiteral("[%1]:%2").arg(host).arg(port).toUtf8();
+        const int typemask = LIBSSH2_KNOWNHOST_TYPE_PLAIN | LIBSSH2_KNOWNHOST_KEYENC_RAW
+                             | knownHostKeyBit(type);
+        libssh2_knownhost_addc(kh, hostSpec.constData(), nullptr, key, len, nullptr, 0,
+                               typemask, nullptr);
+        QDir().mkpath(QFileInfo(khPath).path());
+        libssh2_knownhost_writefile(kh, khPath.toUtf8().constData(),
+                                    LIBSSH2_KNOWNHOST_FILE_OPENSSH);
+    }
+    libssh2_knownhost_free(kh);
+}
+
 SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkeys)
 {
     ensureInit();
@@ -407,8 +495,20 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
             }
         } else {
             const auto legacy = hostkeys->getLegacy(profile.host, profile.port);
+            // OpenSSH-Interop: vertraut das System-ssh (~/.ssh/known_hosts) dem
+            // Key bereits, uebernehmen wir das (kein erneutes Nachfragen).
+            const int osk = core::getSettingBool(QStringLiteral("openssh_known_hosts"), true)
+                                ? checkOpenSshKnownHosts(sess, profile.host, profile.port)
+                                : 0;
             if (legacy && *legacy == fp) {
                 status = QStringLiteral("known");
+            } else if (osk == 1) {
+                status = QStringLiteral("known");
+            } else if (osk == -1) {
+                throw HostKeyChangedError(
+                    QStringLiteral("HOST-KEY weicht von ~/.ssh/known_hosts ab! "
+                                   "Möglicher MITM-Angriff.\nErhalten: %1").arg(fp),
+                    QString(), fp, algo);
             } else if (profile.knownHostsPolicy == QLatin1String("strict")) {
                 throw HostKeyError(QStringLiteral("Unbekannter Host-Key (strict):\n%1").arg(fp));
             } else {

@@ -112,6 +112,10 @@ QString resolveKeyPath(const QString &keyPath);
 // Pruefung erfolgt NACH dem Handshake, aber VOR jeder Authentifizierung.
 SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkeys);
 
+// Interop: haengt den Host-Key der Session an OpenSSHs ~/.ssh/known_hosts an
+// (wird nach Nutzer-Bestaetigung eines neuen Keys aufgerufen).
+void addToOpenSshKnownHosts(const SSHSessionPtr &session, const QString &host, int port);
+
 // Remote-Dateisystem ueber SFTP. Erfuellt denselben Vertrag wie lokal.
 class SFTPFileSystem : public FileSystemProvider {
 public:
