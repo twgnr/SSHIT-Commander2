@@ -11,10 +11,12 @@
 
 #include <QByteArray>
 #include <QString>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <thread>
 
 typedef struct _LIBSSH2_SESSION LIBSSH2_SESSION;
 typedef struct _LIBSSH2_SFTP LIBSSH2_SFTP;
@@ -96,12 +98,21 @@ public:
 
 private:
     friend std::shared_ptr<SSHSession> connectSession(const ServerProfile &, HostKeyStore *);
+    friend int openViaProxyJump(const std::shared_ptr<SSHSession> &, const ServerProfile &,
+                                HostKeyStore *);
 
     std::recursive_mutex m_mutex;
     LIBSSH2_SESSION *m_session = nullptr;
     LIBSSH2_SFTP *m_sftp = nullptr;
     int m_socket = -1;
     bool m_closed = false;
+
+    // ProxyJump: Transport laeuft ueber einen direct-tcpip-Kanal des Sprung-Hosts.
+    // Die Sprung-Session wird hier am Leben gehalten; ein Pump-Thread schaufelt
+    // Bytes zwischen unserem lokalen Socket-Paar und diesem Kanal.
+    std::shared_ptr<SSHSession> m_jump;
+    std::thread m_pumpThread;
+    std::atomic<bool> m_pumpStop{false};
 };
 using SSHSessionPtr = std::shared_ptr<SSHSession>;
 

@@ -15,6 +15,7 @@
 #include <libssh2.h>
 #include <libssh2_sftp.h>
 #include <mutex>
+#include <vector>
 
 #ifdef Q_OS_WIN
 #  include <winsock2.h>
@@ -22,9 +23,12 @@
 #else
 #  include <sys/socket.h>
 #  include <netinet/in.h>
+#  include <netinet/tcp.h>
 #  include <arpa/inet.h>
 #  include <netdb.h>
 #  include <unistd.h>
+#  include <fcntl.h>
+#  include <cerrno>
 #endif
 
 namespace ncssh::net {
@@ -56,6 +60,73 @@ static void closeSocket(int s)
 static void fail(const QString &msg)
 {
     throw std::runtime_error(msg.toStdString());
+}
+
+static void setNonBlockingSock(int s, bool nonBlocking)
+{
+#ifdef Q_OS_WIN
+    u_long mode = nonBlocking ? 1 : 0;
+    ioctlsocket(static_cast<SOCKET>(s), FIONBIO, &mode);
+#else
+    const int fl = fcntl(s, F_GETFL, 0);
+    fcntl(s, F_SETFL, nonBlocking ? (fl | O_NONBLOCK) : (fl & ~O_NONBLOCK));
+#endif
+}
+
+static bool sockWouldBlock()
+{
+#ifdef Q_OS_WIN
+    return WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+    return errno == EWOULDBLOCK || errno == EAGAIN;
+#endif
+}
+
+// Erzeugt ein ueber den Loopback verbundenes TCP-Socket-Paar. Windows kennt
+// kein socketpair(); wir binden einen Listener auf 127.0.0.1:0, verbinden uns
+// selbst und nehmen die Gegenseite an. Danach sind a und b bidirektional
+// verbunden (a = unsere Ziel-Seite, b = Pump-Seite).
+static bool loopbackSocketPair(int &a, int &b)
+{
+    a = b = -1;
+    const SOCKET listener = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (listener == INVALID_SOCKET)
+        return false;
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    socklen_t len = sizeof(addr);
+    if (::bind(listener, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0
+        || ::listen(listener, 1) != 0
+        || ::getsockname(listener, reinterpret_cast<sockaddr *>(&addr), &len) != 0) {
+        closeSocket(static_cast<int>(listener));
+        return false;
+    }
+    const SOCKET client = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (client == INVALID_SOCKET) {
+        closeSocket(static_cast<int>(listener));
+        return false;
+    }
+    // Blockierendes connect auf einen lauschenden Loopback-Socket schliesst den
+    // TCP-Handshake ohne gleichzeitiges accept() ab (SYN landet im Accept-Queue).
+    if (::connect(client, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0) {
+        closeSocket(static_cast<int>(client));
+        closeSocket(static_cast<int>(listener));
+        return false;
+    }
+    const SOCKET server = ::accept(listener, nullptr, nullptr);
+    closeSocket(static_cast<int>(listener));
+    if (server == INVALID_SOCKET) {
+        closeSocket(static_cast<int>(client));
+        return false;
+    }
+    int one = 1;
+    ::setsockopt(client, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char *>(&one), sizeof(one));
+    ::setsockopt(server, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char *>(&one), sizeof(one));
+    a = static_cast<int>(client);
+    b = static_cast<int>(server);
+    return true;
 }
 
 // Wartet, bis der Socket in der von libssh2 gewuenschten Richtung bereit ist.
@@ -174,8 +245,16 @@ void SSHSession::close()
         libssh2_session_free(m_session);
         m_session = nullptr;
     }
+    // ProxyJump-Transport abbauen: unseren Socket schliessen bricht das lokale
+    // Socket-Paar, der Pump-Thread entblockt und beendet sich, dann die
+    // Sprung-Session freigeben. Der Pump nutzt NICHT unseren Mutex -> kein
+    // Deadlock beim join(). Fuer Direktverbindungen sind diese Schritte No-ops.
+    m_pumpStop.store(true);
     closeSocket(m_socket);
     m_socket = -1;
+    if (m_pumpThread.joinable())
+        m_pumpThread.join();
+    m_jump.reset();
 }
 
 LIBSSH2_SFTP *SSHSession::sftp()
@@ -427,13 +506,193 @@ void addToOpenSshKnownHosts(const SSHSessionPtr &session, const QString &host, i
     libssh2_knownhost_free(kh);
 }
 
+// --- ProxyJump / Sprung-Host -----------------------------------------------
+
+// Zerlegt die Sprungspezifikation "[user@]host[:port]" in ein Profil. Fehlt der
+// Benutzer, wird der des Ziels genommen. Authentifizierung am Sprung-Host:
+// derselbe Schluessel wie das Ziel (falls Key-Auth), sonst der SSH-Agent — das
+// deckt die typische Bastion-Konfiguration ab.
+static ServerProfile parseJumpSpec(const QString &spec, const ServerProfile &base)
+{
+    ServerProfile j;
+    QString s = spec.trimmed();
+    const int at = s.indexOf(QLatin1Char('@'));
+    if (at >= 0) {
+        j.username = s.left(at);
+        s = s.mid(at + 1);
+    } else {
+        j.username = base.username;
+    }
+    const int colon = s.lastIndexOf(QLatin1Char(':'));
+    bool portOk = false;
+    if (colon >= 0) {
+        const int p = s.mid(colon + 1).toInt(&portOk);
+        if (portOk) {
+            j.host = s.left(colon);
+            j.port = p;
+        }
+    }
+    if (!portOk) {
+        j.host = s;
+        j.port = 22;
+    }
+    if (base.authMethod == QLatin1String("key") && !base.keyPath.isEmpty()) {
+        j.authMethod = QStringLiteral("key");
+        j.keyPath = base.keyPath;
+        j.passphrase = base.passphrase;
+    } else {
+        j.authMethod = QStringLiteral("agent");
+    }
+    j.knownHostsPolicy = base.knownHostsPolicy;
+    j.name = QStringLiteral("Sprung-Host %1").arg(j.host);
+    return j;
+}
+
+// Schaufelt Bytes zwischen unserem lokalen Socket (sockB) und dem direct-tcpip-
+// Kanal des Sprung-Hosts, bis eine Seite schliesst oder stop gesetzt wird.
+// Laeuft in einem eigenen Thread und nutzt AUSSCHLIESSLICH die Sprung-Session
+// (die sonst niemand mehr anfasst), sperrt deren Mutex also gefahrlos.
+static void pumpProxyJump(SSHSessionPtr jump, LIBSSH2_CHANNEL *chan, int sockB,
+                          std::atomic<bool> *stop)
+{
+    LIBSSH2_SESSION *js = jump->raw();
+    const int jsock = jump->socket();
+    {
+        std::lock_guard<std::recursive_mutex> lk(jump->mutex());
+        libssh2_session_set_blocking(js, 0);  // interleaved: beide Richtungen
+    }
+    // sockB bleibt blockierend: send blockt hoechstens, bis die Ziel-Session
+    // (anderer Thread) liest — kein Busy-Spin. recv nur nach select().
+    std::vector<char> buf(32768);
+    const int maxfd = (sockB > jsock ? sockB : jsock) + 1;
+
+    while (!stop->load()) {
+        fd_set fdr;
+        FD_ZERO(&fdr);
+        FD_SET(static_cast<SOCKET>(sockB), &fdr);
+        FD_SET(static_cast<SOCKET>(jsock), &fdr);
+        timeval tv{0, 50 * 1000};
+        select(maxfd, &fdr, nullptr, nullptr, &tv);
+        if (stop->load())
+            break;
+
+        // Richtung 1: Ziel -> Sprung-Kanal
+        if (FD_ISSET(static_cast<SOCKET>(sockB), &fdr)) {
+            const int n = ::recv(sockB, buf.data(), static_cast<int>(buf.size()), 0);
+            if (n <= 0)
+                break;  // Ziel-Session hat ihren Socket geschlossen
+            int off = 0;
+            while (off < n && !stop->load()) {
+                ssize_t w;
+                {
+                    std::lock_guard<std::recursive_mutex> lk(jump->mutex());
+                    w = libssh2_channel_write(chan, buf.data() + off, n - off);
+                }
+                if (w == LIBSSH2_ERROR_EAGAIN) {
+                    waitSocket(jsock, js, 1000);
+                    continue;
+                }
+                if (w < 0) {
+                    stop->store(true);
+                    break;
+                }
+                off += static_cast<int>(w);
+            }
+        }
+
+        // Richtung 2: Sprung-Kanal -> Ziel (alles Gepufferte abholen)
+        for (;;) {
+            ssize_t r;
+            {
+                std::lock_guard<std::recursive_mutex> lk(jump->mutex());
+                r = libssh2_channel_read(chan, buf.data(), buf.size());
+            }
+            if (r <= 0)
+                break;  // EAGAIN (nichts da) oder Fehler/EOF -> unten pruefen
+            int off = 0;
+            while (off < r && !stop->load()) {
+                const int s = ::send(sockB, buf.data() + off, static_cast<int>(r - off), 0);
+                if (s > 0) {
+                    off += s;
+                } else {
+                    stop->store(true);
+                    break;
+                }
+            }
+        }
+        bool eof;
+        {
+            std::lock_guard<std::recursive_mutex> lk(jump->mutex());
+            eof = libssh2_channel_eof(chan) != 0;
+        }
+        if (eof)
+            break;
+    }
+
+    closeSocket(sockB);  // schliesst unsere Seite -> Ziel bekommt EOF
+    std::lock_guard<std::recursive_mutex> lk(jump->mutex());
+    libssh2_channel_close(chan);
+    libssh2_channel_free(chan);
+}
+
+// Baut die Verbindung zum Ziel ueber einen Sprung-Host auf und liefert den
+// lokalen Socket, ueber den das Ziel danach seinen SSH-Handshake fuehrt. Die
+// Sprung-Session sowie der Pump-Thread werden in target hinterlegt und beim
+// Schliessen von target wieder abgebaut. Nur EIN Hop wird unterstuetzt.
+int openViaProxyJump(const SSHSessionPtr &target, const ServerProfile &profile,
+                     HostKeyStore *hostkeys)
+{
+    const ServerProfile jump = parseJumpSpec(profile.proxyJump, profile);
+    SSHSessionPtr jsess;
+    try {
+        jsess = connectSession(jump, hostkeys);
+    } catch (const std::exception &e) {
+        fail(QStringLiteral("Sprung-Host (%1) nicht erreichbar: %2")
+                 .arg(jump.display(), QString::fromUtf8(e.what())));
+    }
+
+    LIBSSH2_CHANNEL *chan = nullptr;
+    {
+        std::lock_guard<std::recursive_mutex> lk(jsess->mutex());
+        const QByteArray th = profile.host.toUtf8();
+        // Sprung-Session ist blockierend -> wartet, bis der Kanal offen ist.
+        chan = libssh2_channel_direct_tcpip_ex(jsess->raw(), th.constData(), profile.port,
+                                               "127.0.0.1", 22);
+    }
+    if (!chan)
+        fail(QStringLiteral("Sprung-Host konnte keinen Kanal zu %1:%2 öffnen "
+                            "(Weiterleitung am Bastion-Host erlaubt?).")
+                 .arg(profile.host)
+                 .arg(profile.port));
+
+    int sockA = -1, sockB = -1;
+    if (!loopbackSocketPair(sockA, sockB)) {
+        std::lock_guard<std::recursive_mutex> lk(jsess->mutex());
+        libssh2_channel_close(chan);
+        libssh2_channel_free(chan);
+        fail(QStringLiteral("Interner Socket-Kanal für ProxyJump fehlgeschlagen."));
+    }
+
+    target->m_jump = jsess;
+    target->m_pumpStop.store(false);
+    target->m_pumpThread =
+        std::thread(&pumpProxyJump, jsess, chan, sockB, &target->m_pumpStop);
+    return sockA;
+}
+
 SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkeys)
 {
     ensureInit();
     auto session = std::shared_ptr<SSHSession>(new SSHSession());
     session->profile = profile;
 
-    session->m_socket = tcpConnect(profile.host, profile.port);
+    // Transport: direkt ODER ueber einen Sprung-Host (ProxyJump). Im Jump-Fall
+    // laeuft der SSH-Handshake ueber einen lokalen Socket, dessen Gegenseite ein
+    // Pump-Thread mit dem direct-tcpip-Kanal des Bastion-Hosts verbindet.
+    if (!profile.proxyJump.trimmed().isEmpty())
+        session->m_socket = openViaProxyJump(session, profile, hostkeys);
+    else
+        session->m_socket = tcpConnect(profile.host, profile.port);
     LIBSSH2_SESSION *sess = libssh2_session_init();
     if (!sess) {
         closeSocket(session->m_socket);
