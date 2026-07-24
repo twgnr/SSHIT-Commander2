@@ -3,6 +3,7 @@
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/settings.hpp"
 
+#include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -22,6 +23,8 @@ QJsonObject AlarmSpec::toJson() const
         {QStringLiteral("recursive"), recursive},
         {QStringLiteral("include_dirs"), includeDirs},
         {QStringLiteral("enabled"), enabled},
+        {QStringLiteral("include_glob"), includeGlob},
+        {QStringLiteral("exclude_glob"), excludeGlob},
     };
 }
 
@@ -37,7 +40,27 @@ AlarmSpec AlarmSpec::fromJson(const QJsonObject &d)
     a.recursive = d.value(QStringLiteral("recursive")).toBool(false);
     a.includeDirs = d.value(QStringLiteral("include_dirs")).toBool(true);
     a.enabled = d.value(QStringLiteral("enabled")).toBool(true);
+    a.includeGlob = d.value(QStringLiteral("include_glob")).toString();
+    a.excludeGlob = d.value(QStringLiteral("exclude_glob")).toString();
     return a;
+}
+
+bool matchesGlobFilter(const QString &name, const QString &includeGlob,
+                       const QString &excludeGlob)
+{
+    const auto patterns = [](const QString &s) {
+        QStringList out;
+        for (const QString &p : s.split(QLatin1Char(';'), Qt::SkipEmptyParts))
+            out << p.trimmed();
+        return out;
+    };
+    const QStringList inc = patterns(includeGlob);
+    const QStringList exc = patterns(excludeGlob);
+    if (!inc.isEmpty() && !QDir::match(inc, name))
+        return false;
+    if (!exc.isEmpty() && QDir::match(exc, name))
+        return false;
+    return true;
 }
 
 QString AlarmSpec::eventsLabel() const
@@ -52,7 +75,8 @@ QString AlarmSpec::eventsLabel() const
     return parts.isEmpty() ? _t("—") : parts.join(QStringLiteral(", "));
 }
 
-Snapshot scanDir(const QString &path, bool recursive, bool includeDirs, int limit)
+Snapshot scanDir(const QString &path, bool recursive, bool includeDirs,
+                 const QString &includeGlob, const QString &excludeGlob, int limit)
 {
     Snapshot out;
 
@@ -71,6 +95,11 @@ Snapshot scanDir(const QString &path, bool recursive, bool includeDirs, int limi
         it.next();
         const QFileInfo fi = it.fileInfo();
         if (fi.isDir() && !includeDirs)
+            continue;
+        // Namensfilter: die Traversierung laeuft weiter (Unterordner werden
+        // trotz Filter durchsucht), nur die Aufnahme in den Schnappschuss haengt
+        // am Muster.
+        if (!matchesGlobFilter(fi.fileName(), includeGlob, excludeGlob))
             continue;
         if (!record(fi))
             break;

@@ -83,7 +83,8 @@ void FileAlarmManager::poll()
             for (const AlarmSpec &a : alarms) {
                 if (!a.enabled)
                     continue;
-                const core::Snapshot now = core::scanDir(a.path, a.recursive, a.includeDirs);
+                const core::Snapshot now = core::scanDir(a.path, a.recursive, a.includeDirs,
+                                                         a.includeGlob, a.excludeGlob);
                 snapshots.insert(a.id, now);
                 if (!previous.contains(a.id))
                     continue;  // erster Durchlauf: nur Basis aufnehmen
@@ -150,9 +151,16 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
     auto *enabled = new QCheckBox(_t("aktiv"), &dlg);
     enabled->setChecked(spec.enabled);
 
+    auto *includeGlob = new QLineEdit(spec.includeGlob, &dlg);
+    includeGlob->setPlaceholderText(_t("alle — z. B. *.log;*.csv"));
+    auto *excludeGlob = new QLineEdit(spec.excludeGlob, &dlg);
+    excludeGlob->setPlaceholderText(_t("keine — z. B. *.tmp;*~"));
+
     form->addRow(_t("Anzeigename (optional)"), name);
     form->addRow(_t("Zu überwachender Ordner"), pathRow);
     form->addRow(_t("Erkannte Änderungen:"), eventRow);
+    form->addRow(_t("Nur diese Muster:"), includeGlob);
+    form->addRow(_t("Diese Muster ignorieren:"), excludeGlob);
     form->addRow(QString(), recursive);
     form->addRow(QString(), includeDirs);
     form->addRow(QString(), enabled);
@@ -187,6 +195,8 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
     spec.recursive = recursive->isChecked();
     spec.includeDirs = includeDirs->isChecked();
     spec.enabled = enabled->isChecked();
+    spec.includeGlob = includeGlob->text().trimmed();
+    spec.excludeGlob = excludeGlob->text().trimmed();
     return true;
 }
 } // namespace

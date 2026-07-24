@@ -120,6 +120,36 @@ TEST(filealarm, scan_dir_include_dirs)
                            QStringLiteral("sub")));
 }
 
+TEST(filealarm, glob_filter_include_exclude)
+{
+    // Ohne Filter passt alles.
+    CHECK(matchesGlobFilter(QStringLiteral("x.tmp"), QString(), QString()));
+    // Include: nur passende Namen.
+    CHECK(matchesGlobFilter(QStringLiteral("app.log"), QStringLiteral("*.log;*.csv"), QString()));
+    CHECK(!matchesGlobFilter(QStringLiteral("app.txt"), QStringLiteral("*.log;*.csv"), QString()));
+    // Exclude sticht: passt zwar zum Include, wird aber ausgeschlossen.
+    CHECK(!matchesGlobFilter(QStringLiteral("a~"), QStringLiteral("*"), QStringLiteral("*~;*.tmp")));
+    CHECK(matchesGlobFilter(QStringLiteral("a.log"), QStringLiteral("*"), QStringLiteral("*~;*.tmp")));
+}
+
+TEST(filealarm, scan_dir_applies_glob_filter)
+{
+    QTemporaryDir tmp;
+    CHECK(tmp.isValid());
+    touch(tmp.filePath(QStringLiteral("keep.log")));
+    touch(tmp.filePath(QStringLiteral("skip.tmp")));
+    touch(tmp.filePath(QStringLiteral("other.txt")));
+
+    const Snapshot only = scanDir(tmp.path(), false, true, QStringLiteral("*.log"), QString());
+    CHECK(anyPathEndsWith(only, QStringLiteral("keep.log")));
+    CHECK(!anyPathEndsWith(only, QStringLiteral("skip.tmp")));
+    CHECK(!anyPathEndsWith(only, QStringLiteral("other.txt")));
+
+    const Snapshot noTmp = scanDir(tmp.path(), false, true, QString(), QStringLiteral("*.tmp"));
+    CHECK(anyPathEndsWith(noTmp, QStringLiteral("other.txt")));
+    CHECK(!anyPathEndsWith(noTmp, QStringLiteral("skip.tmp")));
+}
+
 TEST(filealarm, alarmspec_json_roundtrip)
 {
     AlarmSpec a;
@@ -128,6 +158,8 @@ TEST(filealarm, alarmspec_json_roundtrip)
     a.path = QStringLiteral("/data");
     a.onModified = false;
     a.recursive = true;
+    a.includeGlob = QStringLiteral("*.log");
+    a.excludeGlob = QStringLiteral("*.tmp");
 
     const AlarmSpec back = AlarmSpec::fromJson(a.toJson());
     CHECK_EQ(back.id, a.id);
@@ -139,4 +171,6 @@ TEST(filealarm, alarmspec_json_roundtrip)
     CHECK_EQ(back.recursive, a.recursive);
     CHECK_EQ(back.includeDirs, a.includeDirs);
     CHECK_EQ(back.enabled, a.enabled);
+    CHECK_EQ(back.includeGlob, a.includeGlob);
+    CHECK_EQ(back.excludeGlob, a.excludeGlob);
 }

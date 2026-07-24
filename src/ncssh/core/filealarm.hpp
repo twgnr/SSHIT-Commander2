@@ -25,11 +25,20 @@ struct AlarmSpec {
     bool recursive = false;
     bool includeDirs = true;
     bool enabled = true;
+    // Namensfilter (jeweils ';'-getrennte Wildcard-Muster; leer = ohne Wirkung).
+    QString includeGlob;   // nur passende Namen beruecksichtigen (z.B. "*.log;*.csv")
+    QString excludeGlob;   // passende Namen ignorieren (z.B. "*.tmp;*~")
 
     QJsonObject toJson() const;
     static AlarmSpec fromJson(const QJsonObject &d);
     QString eventsLabel() const;
 };
+
+// True, wenn `name` den Filtern genuegt: passt zu mind. einem Include-Muster
+// (falls Includes gesetzt) UND zu keinem Exclude-Muster. Muster sind
+// ';'-getrennte Wildcards (*, ?). Oeffentlich fuer Tests.
+bool matchesGlobFilter(const QString &name, const QString &includeGlob,
+                       const QString &excludeGlob);
 
 // (mtime als Unix-Sekunden, groesse, ist_ordner)
 struct SnapshotEntry {
@@ -42,8 +51,11 @@ struct SnapshotEntry {
 using Snapshot = QHash<QString, SnapshotEntry>;
 
 // Momentaufnahme {vollpfad: (mtime, groesse, ist_ordner)} eines Verzeichnisses.
-Snapshot scanDir(const QString &path, bool recursive = false,
-                 bool includeDirs = true, int limit = 50'000);
+// includeGlob/excludeGlob filtern die erfassten Namen (Traversierung bleibt
+// vollstaendig, damit Unterordner trotz Filter durchsucht werden).
+Snapshot scanDir(const QString &path, bool recursive = false, bool includeDirs = true,
+                 const QString &includeGlob = {}, const QString &excludeGlob = {},
+                 int limit = 50'000);
 
 // Vergleicht zwei Schnappschuesse -> Liste (art, pfad, ist_ordner).
 // art ist "created" | "modified" | "deleted". Fuer Verzeichnisse wird
