@@ -77,6 +77,12 @@ QJsonObject ServerProfile::toJson() const
         {QStringLiteral("color"), color},
         {QStringLiteral("proxy_jump"), proxyJump},
         {QStringLiteral("last_connected"), lastConnected},
+        {QStringLiteral("keepalive_seconds"), keepaliveSeconds},
+        {QStringLiteral("connect_timeout"), connectTimeout},
+        {QStringLiteral("compression"), compression},
+        {QStringLiteral("ciphers"), ciphers},
+        {QStringLiteral("kex_algorithms"), kexAlgorithms},
+        {QStringLiteral("agent_forwarding"), agentForwarding},
     };
 }
 
@@ -100,6 +106,12 @@ ServerProfile ServerProfile::fromJson(const QJsonObject &data)
     p.color = data.value(QStringLiteral("color")).toString();
     p.proxyJump = data.value(QStringLiteral("proxy_jump")).toString();
     p.lastConnected = data.value(QStringLiteral("last_connected")).toString();
+    p.keepaliveSeconds = data.value(QStringLiteral("keepalive_seconds")).toInt(30);
+    p.connectTimeout = data.value(QStringLiteral("connect_timeout")).toInt(20);
+    p.compression = data.value(QStringLiteral("compression")).toBool(false);
+    p.ciphers = data.value(QStringLiteral("ciphers")).toString();
+    p.kexAlgorithms = data.value(QStringLiteral("kex_algorithms")).toString();
+    p.agentForwarding = data.value(QStringLiteral("agent_forwarding")).toBool(false);
     return p;
 }
 

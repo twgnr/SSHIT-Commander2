@@ -146,6 +146,27 @@ ServerManagerDialog::ServerManagerDialog(AsyncBridge *bridge, QWidget *parent)
     form->addRow(_t("Startverzeichnis"), m_startPath);
     form->addRow(_t("Tab-Farbe"), colorRow);
 
+    // --- Verbindungs-Feinsteuerung ---
+    m_keepalive = new QSpinBox(this);
+    m_keepalive->setRange(0, 3600);
+    m_keepalive->setSuffix(QStringLiteral(" s"));
+    m_keepalive->setToolTip(_t("Keepalive-Intervall (0 = aus)"));
+    form->addRow(_t("Keepalive"), m_keepalive);
+    m_timeout = new QSpinBox(this);
+    m_timeout->setRange(5, 300);
+    m_timeout->setSuffix(QStringLiteral(" s"));
+    form->addRow(_t("Verbindungs-Timeout"), m_timeout);
+    m_compression = new QCheckBox(_t("SSH-Kompression"), this);
+    form->addRow(QString(), m_compression);
+    m_agentFwd = new QCheckBox(_t("SSH-Agent weiterreichen (Forwarding)"), this);
+    form->addRow(QString(), m_agentFwd);
+    m_ciphers = new QLineEdit(this);
+    m_ciphers->setPlaceholderText(_t("Standard — z. B. aes256-ctr,aes128-ctr"));
+    form->addRow(_t("Chiffren"), m_ciphers);
+    m_kex = new QLineEdit(this);
+    m_kex->setPlaceholderText(_t("Standard — z. B. ecdh-sha2-nistp256"));
+    form->addRow(_t("Schlüsseltausch"), m_kex);
+
     m_lastConnected = new QLabel(this);
     m_lastConnected->setObjectName(QStringLiteral("Muted"));
     form->addRow(_t("Zuletzt"), m_lastConnected);
@@ -255,6 +276,12 @@ void ServerManagerDialog::loadIntoForm(const ServerProfile &p)
     const int policyIndex = m_policy->findData(p.knownHostsPolicy);
     m_policy->setCurrentIndex(policyIndex >= 0 ? policyIndex : 0);
     m_proxyJump->setText(p.proxyJump);
+    m_keepalive->setValue(p.keepaliveSeconds);
+    m_timeout->setValue(p.connectTimeout);
+    m_compression->setChecked(p.compression);
+    m_agentFwd->setChecked(p.agentForwarding);
+    m_ciphers->setText(p.ciphers);
+    m_kex->setText(p.kexAlgorithms);
     m_startPath->setText(p.startPath);
     m_savePassword->setChecked(p.savePassword);
     m_tabColor = p.color;
@@ -279,6 +306,12 @@ ServerProfile ServerManagerDialog::formToProfile() const
     p.savePassword = m_savePassword->isChecked();
     p.knownHostsPolicy = m_policy->currentData().toString();
     p.proxyJump = m_proxyJump->text().trimmed();
+    p.keepaliveSeconds = m_keepalive->value();
+    p.connectTimeout = m_timeout->value();
+    p.compression = m_compression->isChecked();
+    p.agentForwarding = m_agentFwd->isChecked();
+    p.ciphers = m_ciphers->text().trimmed();
+    p.kexAlgorithms = m_kex->text().trimmed();
     p.color = m_tabColor;
     p.startPath = m_startPath->text().trimmed().isEmpty() ? QStringLiteral(".")
                                                           : m_startPath->text().trimmed();

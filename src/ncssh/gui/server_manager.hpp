@@ -57,6 +57,13 @@ private:
     QComboBox *m_policy = nullptr;
     QLineEdit *m_proxyJump = nullptr;
     QLineEdit *m_startPath = nullptr;
+    // Verbindungs-Feinsteuerung (#6) + Agent-Forwarding (#4)
+    QSpinBox *m_keepalive = nullptr;
+    QSpinBox *m_timeout = nullptr;
+    QCheckBox *m_compression = nullptr;
+    QCheckBox *m_agentFwd = nullptr;
+    QLineEdit *m_ciphers = nullptr;
+    QLineEdit *m_kex = nullptr;
     QPushButton *m_colorButton = nullptr;
     QString m_tabColor;
     QLabel *m_lastConnected = nullptr;

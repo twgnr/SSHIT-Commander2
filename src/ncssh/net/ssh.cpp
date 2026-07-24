@@ -353,7 +353,20 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
     }
     session->m_session = sess;
     libssh2_session_set_blocking(sess, 1);
-    libssh2_session_set_timeout(sess, 20000);
+    libssh2_session_set_timeout(sess, (profile.connectTimeout > 0 ? profile.connectTimeout : 20)
+                                          * 1000);
+
+    // Verbindungs-Feinsteuerung (alles VOR dem Handshake wirksam):
+    if (profile.compression)
+        libssh2_session_flag(sess, LIBSSH2_FLAG_COMPRESS, 1);
+    if (!profile.ciphers.isEmpty()) {
+        const QByteArray c = profile.ciphers.toUtf8();
+        libssh2_session_method_pref(sess, LIBSSH2_METHOD_CRYPT_CS, c.constData());
+        libssh2_session_method_pref(sess, LIBSSH2_METHOD_CRYPT_SC, c.constData());
+    }
+    if (!profile.kexAlgorithms.isEmpty())
+        libssh2_session_method_pref(sess, LIBSSH2_METHOD_KEX,
+                                    profile.kexAlgorithms.toUtf8().constData());
 
     if (const int rc = libssh2_session_handshake(sess, session->m_socket); rc != 0) {
         QString message = QStringLiteral("SSH-Handshake fehlgeschlagen: %1").arg(lastSshError(sess));
@@ -372,7 +385,8 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
     // Keepalive ERST NACH dem Handshake konfigurieren. Wird es vorher gesetzt,
     // scheitert der Schluesseltausch mit "Unable to exchange encryption keys"
     // (libssh2-Eigenheit — die Keepalive-Logik greift sonst in den KEX ein).
-    libssh2_keepalive_config(sess, 1, 30);
+    if (profile.keepaliveSeconds > 0)
+        libssh2_keepalive_config(sess, 1, profile.keepaliveSeconds);
 
     // --- Host-Key-Pruefung VOR jeder Authentifizierung ---
     QString algo;

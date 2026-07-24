@@ -68,6 +68,13 @@ struct ServerProfile {
     QString color;                               // Tab-Farbe (Hex), optional
     QString proxyJump;                           // ProxyJump (user@host[:port]), optional
     QString lastConnected;                       // ISO-Zeitstempel der letzten Verbindung
+    // --- Verbindungs-Feinsteuerung (leer/0 = Standard) ---
+    int keepaliveSeconds = 30;                   // libssh2-Keepalive-Intervall (0 = aus)
+    int connectTimeout = 20;                     // Handshake-Timeout in Sekunden
+    bool compression = false;                    // SSH-Kompression aushandeln
+    QString ciphers;                             // bevorzugte Chiffren (kommagetrennt)
+    QString kexAlgorithms;                        // bevorzugte Schluesseltausch-Verfahren
+    bool agentForwarding = false;                // SSH-Agent an den Server weiterreichen
 
     QJsonObject toJson() const;
     static ServerProfile fromJson(const QJsonObject &data);
