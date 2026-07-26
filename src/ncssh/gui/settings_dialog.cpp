@@ -22,7 +22,9 @@
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
+#include <QApplication>
 #include <QMessageBox>
+#include <QProcess>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTabWidget>
@@ -512,6 +514,11 @@ void SettingsDialog::save()
         seen.insert(key, m_shortcuts->item(r, 1)->text());
     }
 
+    // Sprachwechsel merken (wird erst nach Neustart wirksam).
+    const QString oldLang =
+        core::getSettingString(QStringLiteral("language"), QStringLiteral("de"));
+    const QString newLang = m_language->currentData().toString();
+
     core::setSetting(QStringLiteral("language"), m_language->currentData().toString());
     core::setSetting(QStringLiteral("theme"), m_theme->currentText());
     core::setSetting(QStringLiteral("editor_font_size"), m_editorFont->value());
@@ -533,6 +540,25 @@ void SettingsDialog::save()
     core::setSetting(QString::fromLatin1(core::AI_MODEL),
                      m_aiModel->currentText().trimmed());
     core::saveShortcuts(mapping);
+
+    // Sprache geaendert? Dann ist ein Neustart noetig — fragen und ggf. sofort
+    // neu starten. Die Einstellung ist bereits atomar gespeichert, die neue
+    // Instanz liest also die neue Sprache.
+    if (oldLang != newLang) {
+        const auto choice = QMessageBox::question(
+            this, _t("Sprache geändert"),
+            _t("Die neue Sprache wird erst nach einem Neustart wirksam.\n\n"
+               "Jetzt neu starten?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        accept();
+        if (choice == QMessageBox::Yes) {
+            // Neue Instanz starten (ohne Programmpfad-Argument), dann beenden.
+            QProcess::startDetached(QApplication::applicationFilePath(),
+                                    QApplication::arguments().mid(1));
+            QApplication::quit();
+        }
+        return;
+    }
     accept();
 }
 
