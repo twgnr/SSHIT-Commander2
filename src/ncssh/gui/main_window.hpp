@@ -70,7 +70,6 @@ private:
     void openGithubAlarms();
     void openMacroManager();
     void ensureMacroDialog();     // legt m_macroDialog bei Bedarf an
-    void restoreMacroManager();   // beim Start: angedockte Makroleiste zurueckholen
     void saveSession();      // offene Tabs fuer die Wiederherstellung sichern
     void restoreSession();
     void applyThemeByName(const QString &name);

@@ -246,9 +246,9 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
     restoreSession();
     if (m_tabs->count() == 0)
         addTab();
-    // Zuletzt geoeffnete (evtl. angedockte) Makroleiste zurueckholen — erst nach
-    // dem Aufbau, damit das Andocken ein fertiges Hauptfenster vorfindet.
-    QTimer::singleShot(0, this, &MainWindow::restoreMacroManager);
+    // Der Makro-Manager wird BEWUSST nicht mehr automatisch beim Start geoeffnet
+    // — er erscheint nur noch auf ausdrueckliche Aktion des Nutzers (Toolbar/Menue
+    // "Makro-Manager"). Der zuletzt gewaehlte Andock-Rand bleibt gespeichert.
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -1511,16 +1511,6 @@ void MainWindow::openMacroManager()
     // (eine angedockte Leiste zeigt nur die Tasten und wird dafuer abgeloest).
     ensureMacroDialog();
     m_macroDialog->openManager();
-}
-
-void MainWindow::restoreMacroManager()
-{
-    // Beim Start: War die Makroleiste zuletzt geoeffnet, holen wir sie zurueck
-    // (angedockte Leiste erscheint dann gleich am gemerkten Rand).
-    if (core::macros::load().open) {
-        ensureMacroDialog();
-        m_macroDialog->present();
-    }
 }
 
 void MainWindow::openTabFavorites()
