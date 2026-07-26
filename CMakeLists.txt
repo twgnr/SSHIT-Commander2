@@ -65,6 +65,11 @@ list(REMOVE_ITEM NCSSH_SOURCES "${CMAKE_SOURCE_DIR}/src/main.cpp")
 # Gemeinsame Bibliothek fuer App und Tests (spart doppelte Uebersetzung).
 add_library(ncssh STATIC ${NCSSH_SOURCES})
 target_include_directories(ncssh PUBLIC src "${CMAKE_SOURCE_DIR}")
+# Version an den Code durchreichen — EINE Quelle der Wahrheit ist die
+# project()-Version oben; der Ueber-Dialog liest sie hierueber.
+target_compile_definitions(ncssh PUBLIC
+    SSHIT_VERSION="${PROJECT_VERSION}"
+    SSHIT_VERSION_STAGE="Beta")
 target_link_libraries(ncssh PUBLIC
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg
     libssh2::libssh2_static

@@ -624,9 +624,11 @@ void MainWindow::showAbout()
         this, _t("Über SSHIT-Commander"),
         QStringLiteral("<b>SSHIT-Commander</b><br>"
                        "%1<br><br>"
-                       "Version 1.0.0 (Beta)<br>"
+                       "Version %2 (%3)<br>"
                        "Copyright (c) by Tobias Wagner")
-            .arg(_t("Dual-Pane-Dateimanager mit SSH/SFTP und Terminal.")));
+            .arg(_t("Dual-Pane-Dateimanager mit SSH/SFTP und Terminal."),
+                 QString::fromLatin1(SSHIT_VERSION),
+                 QString::fromLatin1(SSHIT_VERSION_STAGE)));
 }
 
 void MainWindow::renameCurrentTab()
