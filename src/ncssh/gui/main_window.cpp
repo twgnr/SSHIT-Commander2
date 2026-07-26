@@ -623,11 +623,10 @@ void MainWindow::showAbout()
     QMessageBox::about(
         this, _t("Über SSHIT-Commander"),
         QStringLiteral("<b>SSHIT-Commander</b><br>"
-                       "%1<br><br>%2<br>%3")
-            .arg(_t("Dual-Pane-Dateimanager mit SSH/SFTP und Terminal."),
-                 _t("C++/Qt6-Portierung der Python-Fassung."),
-                 _t("SSH-Schicht: libssh2 · Oberfläche: Qt %1")
-                     .arg(QString::fromLatin1(qVersion()))));
+                       "%1<br><br>"
+                       "Version 1.0.0 (Beta)<br>"
+                       "Copyright (c) by Tobias Wagner")
+            .arg(_t("Dual-Pane-Dateimanager mit SSH/SFTP und Terminal.")));
 }
 
 void MainWindow::renameCurrentTab()
