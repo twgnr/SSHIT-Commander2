@@ -103,11 +103,27 @@ Python nutzt `async def` + asyncio-Loop im Thread. C++-Ersatz:
   (vcvars), damit `nmake`/`cl` verfügbar sind.
 - libssh2 nutzt dann seinen OpenSSL-Pfad (`openssl.c`), in dem
   `LIBSSH2_ED25519=1` für OpenSSL ≥ 1.1.1 gilt und X25519-KEV fest einkompiliert
-  ist. Statisch gelinkt (keine libcrypto-DLL). Verifiziert: App + 184 Tests bauen
+  ist. Statisch gelinkt (keine libcrypto-DLL). Verifiziert: App + 186 Tests bauen
   gegen beide Backends; ein Live-ed25519-Handshake ist mangels Testserver hier
   offen. OpenSSL bei Nutzung auf einem gepflegten Zweig aktuell halten (CVEs).
 
 ## Was NICHT portiert wird
 
-- `src/ncssh/ui/` (Textual-TUI) — entfällt; die Qt-GUI ist die einzige Oberfläche.
+- **`src/ncssh/ui/` (Textual-TUI, 7 Dateien / 684 Zeilen)** — entfällt; die Qt-GUI
+  ist die einzige Oberfläche. Gründe:
+  1. Das Original führt sie selbst als Altlast — in dessen `pyproject.toml` steht
+     *„Alte Textual-TUI (nur nötig für den `ncssh-tui`-Einstiegspunkt)"*, als
+     optionale Abhängigkeit hinter einem separaten Einstiegspunkt.
+  2. Textual gibt es nur für Python. Ein Port müsste eine fremde TUI-Bibliothek
+     (ftxui o. ä.) einziehen — das verstößt gegen „keine neuen externen
+     Abhängigkeiten" (s. o.) — und die Darstellungsschicht neu erfinden.
+  3. Sie ist reine Darstellung (*„spricht nur Core-Interfaces an"*) und dupliziert
+     Funktionen, die die Qt-GUI vollständig abdeckt. Der `core/`-Unterbau, auf dem
+     sie aufsetzt, **ist** portiert.
 - `smoke_gui.py`, Nuitka-/pip-Build-Skripte — durch CMake ersetzt.
+
+## Stand
+
+Die Portierung ist abgeschlossen; der Port ist inzwischen über den Umfang des
+Originals hinausgewachsen. Aktueller Stand, Ergänzungen und Einschränkungen:
+[STATUS.md](STATUS.md), Messung der Rest-Abweichungen: [GAPS.md](GAPS.md).
