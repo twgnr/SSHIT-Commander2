@@ -1,5 +1,4 @@
 // Winziger Markdown->HTML-Renderer fuer die KI-Antwortanzeige (kein Dependency).
-// (Port von core/markdown.py)
 //
 // Deckt das ab, was lokale LLMs typischerweise ausgeben und was fuer Config-/
 // Code-Antworten zaehlt: eingezaeunte Code-Bloecke, Inline-Code, fett/kursiv,

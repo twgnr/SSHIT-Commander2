@@ -1,7 +1,6 @@
 // Zeichensatz-Konvertierung von Dateien — inkl. EBCDIC.
 // Reine, testbare Logik: Quell-Bytes mit einem Codec dekodieren und mit einem
 // anderen Codec wieder kodieren. Die GUI (Editor/Tools) nutzt convert().
-// (Port von core/encodings.py)
 #pragma once
 
 #include <QByteArray>

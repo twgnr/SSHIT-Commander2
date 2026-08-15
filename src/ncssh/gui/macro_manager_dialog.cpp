@@ -244,7 +244,7 @@ void MacroManagerDialog::buildUi()
     left->addWidget(m_contextAware);
 
     // Raster-/Groessenfelder: Reihen und Spalten des aktuellen Layers sowie die
-    // globale Tastengroesse — direkt anpassbar (wie im Original).
+    // globale Tastengroesse — direkt anpassbar.
     auto *dims = new QFormLayout();
     dims->setContentsMargins(0, 8, 0, 0);
     m_rowsSpin = new QSpinBox(this);
@@ -280,7 +280,7 @@ void MacroManagerDialog::buildUi()
 
     // Andocken: den Makro-Manager an einen Rand des Hauptfensters heften.
     // Die Auswahl gilt im Ausfuehren-Modus; im Bearbeiten-Modus bleibt das
-    // Fenster schwebend (wie im Original).
+    // Fenster schwebend.
     m_dockRow = new QWidget(m_content);
     auto *dockLayout = new QHBoxLayout(m_dockRow);
     dockLayout->setContentsMargins(0, 0, 0, 0);

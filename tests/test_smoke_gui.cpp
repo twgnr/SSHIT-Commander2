@@ -1,7 +1,7 @@
 // GUI-Rauchtest: baut die echten Widgets auf der Offscreen-Plattform auf und
-// fuehrt die wichtigsten Bedienpfade durch.  (Port von smoke_gui.py)
+// fuehrt die wichtigsten Bedienpfade durch.
 //
-// Anders als das Original testet diese Datei NUR die Oberflaeche — die
+// Diese Datei testet NUR die Oberflaeche — die
 // Kernlogik (bulkrename, diff, secaudit, ansi, ppk …) ist bereits durch die
 // uebrigen Testdateien abgedeckt und wird hier nicht doppelt geprueft.
 #include "tests/harness.hpp"

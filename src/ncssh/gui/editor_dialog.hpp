@@ -1,6 +1,5 @@
 // Editor mit Syntax-Highlighting, Zeilennummern, Suchen/Ersetzen, Gehe-zu-Zeile
 // und Speichern (lokal & remote, Strg+S / Strg+Shift+S).
-// (Port von gui/editor_dialog.py + code_editor.py)
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

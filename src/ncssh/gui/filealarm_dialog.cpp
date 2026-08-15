@@ -36,7 +36,7 @@ FileAlarmManager::FileAlarmManager(AsyncBridge *bridge, QObject *parent)
 {
     connect(m_timer, &QTimer::timeout, this, &FileAlarmManager::poll);
     // Poll-Intervall aus den Einstellungen (verstecktes file_alarm_interval,
-    // Sekunden; Standard 5, min. 2) — wie im Original.
+    // Sekunden; Standard 5, min. 2).
     m_timer->setInterval(qMax(2, core::getSettingInt(QStringLiteral("file_alarm_interval"), 5))
                          * 1000);
     reload();

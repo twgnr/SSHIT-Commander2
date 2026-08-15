@@ -1,5 +1,4 @@
 // Offscreen-Test fuer das KI-Chat-Panel und den KI-Tab der Einstellungen.
-// (Port von tests/test_ai_chat_panel.py)
 //
 // Ohne laufenden Ollama-Server: das Panel wird mit vorbereiteten Nachrichten
 // aufgebaut, und die Fehlerbehandlung wird gegen einen geschlossenen Port

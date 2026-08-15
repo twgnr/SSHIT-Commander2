@@ -1,5 +1,4 @@
 // Massen-Umbenennen: aus Originalnamen + Regeln neue Namen berechnen (rein).
-// (Port von core/bulkrename.py)
 //
 // Bewusst ohne I/O — voll testbar. Die GUI (Bulk-Rename-Dialog) sammelt die
 // Dateien (inkl. optionaler Unterordner + Filter) und ruft computeRenames()
@@ -83,7 +82,7 @@ bool nameMatches(const QString &name, const QString &glob = {},
                  const std::vector<QString> &extensions = {},
                  bool ignoreCase = true);
 
-// Regeln fuer computeRenames(). (Python: Keyword-Argumente von compute_renames)
+// Regeln fuer computeRenames().
 struct RenameOptions {
     // Suchen & Ersetzen
     QString search;
@@ -97,7 +96,7 @@ struct RenameOptions {
     int trimEnd = 0;
     QString insertText;
     int insertPos = 0;                              // negativ = vom Ende
-    // Gross/Klein & Leerzeichen  (Python-Parameter "case" -> caseMode)
+    // Gross/Klein & Leerzeichen
     QString caseMode = QStringLiteral("none");      // "none"|"lower"|"upper"|"title"|"sentence"
     QString spaceMode = QStringLiteral("none");     // "none"|"underscore"|"dash"|"remove"
     // Praefix / Suffix

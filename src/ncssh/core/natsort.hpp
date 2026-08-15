@@ -1,4 +1,4 @@
-// Natuerliche Sortierung (z.B. "datei2" < "datei10").  (Port von core/natsort.py)
+// Natuerliche Sortierung (z.B. "datei2" < "datei10").
 #pragma once
 
 #include <QString>

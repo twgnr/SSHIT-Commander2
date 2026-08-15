@@ -2,7 +2,7 @@
 // ("Oeffnen mit") aus der Registry. Auf anderen Plattformen leer.
 //
 // Liefert [(Anzeigename, exe_pfad)] — das erste Element ist (falls bekannt)
-// das Standardprogramm der Endung.  (Port von core/openwith.py)
+// das Standardprogramm der Endung.
 #pragma once
 
 #include <QString>

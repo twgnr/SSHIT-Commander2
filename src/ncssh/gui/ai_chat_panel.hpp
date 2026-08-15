@@ -1,6 +1,5 @@
 // KI-Chat-Panel: erklaert Terminalausgaben/Dateien ueber ein lokales
 // Ollama-Modell, mit Folgefragen. Rein beratend — fuehrt nichts aus.
-// (Port von gui/ai_chat_panel.py)
 #pragma once
 
 #include "ncssh/gui/bridge.hpp"

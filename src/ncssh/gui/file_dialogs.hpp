@@ -2,7 +2,6 @@
 //
 // Der OS-native Datei-/Ordnerdialog ignoriert das App-Stylesheet. Der Qt-eigene
 // Dialog uebernimmt Theme-Palette und QSS — gleiches Farbschema wie der Rest.
-// (Port von gui/file_dialogs.py)
 #pragma once
 
 #include <QString>

@@ -1,5 +1,4 @@
 // Tests fuer die GitHub-Repo-Alarm-Logik (ohne Netzwerk).
-// (Port von tests/test_githubalarm.py)
 #include "tests/harness.hpp"
 
 #include "ncssh/core/githubalarm.hpp"

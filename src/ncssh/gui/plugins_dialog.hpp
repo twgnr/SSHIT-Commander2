@@ -1,5 +1,5 @@
 // Externe Plugins verwalten: Programm, Parameter ({path}), Arbeitsverzeichnis
-// und Kontextmenue-Einbindung.  (Port von gui/plugins_dialog.py)
+// und Kontextmenue-Einbindung.
 #pragma once
 
 #include "ncssh/core/plugins.hpp"

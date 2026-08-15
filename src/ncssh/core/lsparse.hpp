@@ -4,7 +4,6 @@
 // der Ausgabe von "sudo ls" in FileEntry-Objekte zu uebersetzen — also genau
 // das, was sonst SFTP readdir liefert. "-n" gibt numerische UID/GID (stabil
 // parsbar), "-A" listet versteckte Dateien ohne "."/"..".
-// (Port von core/lsparse.py)
 #pragma once
 
 #include <QString>

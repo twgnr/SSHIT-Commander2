@@ -1,9 +1,7 @@
 // Tests fuer den Transfer (net/transfer) — Inhalt, Fortschritt, Baum.
-// (Port von tests/test_transfer_local.py)
 //
 // Der lokale Pfad laeuft ueber localCopyTree, der generische ueber die
 // Provider-Methoden; beides wird hier ueber transferWithProgress angesteuert
-// (die Hilfsfunktionen sind im Original privat und hier dateilokal).
 #include "tests/harness.hpp"
 
 #include "ncssh/core/filesystem.hpp"

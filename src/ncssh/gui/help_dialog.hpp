@@ -1,6 +1,5 @@
 // Hilfe: Tastenkuerzel-Uebersicht (aus den konfigurierten Kuerzeln) und
 // Bedienungs-Handbuch mit Themenliste und Volltextsuche.
-// (Port von gui/help_dialog.py + user_guide_dialog.py)
 #pragma once
 
 #include <QDialog>

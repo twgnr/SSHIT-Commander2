@@ -29,7 +29,7 @@ GithubAlarmManager::GithubAlarmManager(AsyncBridge *bridge, QObject *parent)
 {
     connect(m_timer, &QTimer::timeout, this, &GithubAlarmManager::checkNow);
     // Pruef-Intervall aus den Einstellungen (verstecktes github_alarm_interval,
-    // Sekunden; Standard 900 = 15 min, min. 30) — wie im Original.
+    // Sekunden; Standard 900 = 15 min, min. 30).
     m_timer->setInterval(
         qMax(30, core::getSettingInt(QStringLiteral("github_alarm_interval"), 900)) * 1000);
     reload();

@@ -1,4 +1,4 @@
-// Parser fuer "ls -lnA --time-style=long-iso".  (Port von core/lsparse.py)
+// Parser fuer "ls -lnA --time-style=long-iso".
 #include "ncssh/core/lsparse.hpp"
 
 #include <QDateTime>

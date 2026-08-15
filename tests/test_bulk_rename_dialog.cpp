@@ -1,6 +1,5 @@
 // Offscreen-Test fuer den Massen-Umbenenn-Dialog: Sortierung, Nummerierung,
 // Konfliktaufloesung, gefahrlose Reihenfolge und Rueckgaengig.
-// (Port von tests/test_bulk_rename_dialog.py)
 #include "tests/harness.hpp"
 
 #include "ncssh/core/bulkrename.hpp"

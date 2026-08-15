@@ -1,4 +1,4 @@
-// Plattformabhaengige Pfade fuer persistente App-Daten.  (Port von config.py)
+// Plattformabhaengige Pfade fuer persistente App-Daten.
 #pragma once
 
 #include <QString>

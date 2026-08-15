@@ -4,7 +4,6 @@
 // Hostnamen ueber Reverse-DNS, Freigaben ueber "net view" (Windows) bzw.
 // "smbclient -L" (Linux). Der eigentliche Scan streamt Treffer ueber Callbacks;
 // reine Parser-Funktionen sind ohne Netzwerk testbar.
-// (Port von core/netscan.py)
 #pragma once
 
 #include "ncssh/gui/bridge.hpp"  // CancelTokenPtr

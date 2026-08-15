@@ -1,5 +1,4 @@
 // Befehlsausfuehrung — Abstraktion ueber lokal (QProcess) und remote (ssh).
-// (Port von core/runner.py)
 //
 // Alle Methoden sind BLOCKIEREND; sie laufen ueber die AsyncBridge auf
 // Worker-Threads. stream() liefert Zeilen ueber einen Callback und bricht

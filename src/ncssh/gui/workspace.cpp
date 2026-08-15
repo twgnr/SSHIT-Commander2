@@ -658,7 +658,7 @@ void Workspace::restoreFrom(const QJsonObject &state)
 
 void Workspace::connectTo(const core::ServerProfile &profile)
 {
-    // Verbindung landet in der aktiven Pane (wie im Original). Die Zielpane wird
+    // Verbindung landet in der aktiven Pane. Die Zielpane wird
     // JETZT festgehalten — bis das Ergebnis eintrifft, kann sich der Fokus aendern.
     FilePanel *panel = activePanel();
     ConsolePanel *console = (panel == m_rightPanel) ? m_rightConsole : m_leftConsole;

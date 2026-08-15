@@ -1,6 +1,5 @@
 // Clipboard-Manager: Historie aller kopierten Texte; ein Eintrag kann als
 // "aktiv" gesetzt werden (Strg+V fuegt dann genau diesen ein).
-// (Port von gui/clipboard_manager.py + clipboard_dialog.py)
 #pragma once
 
 #include <QDateTime>

@@ -1,6 +1,6 @@
 // Ermittelt das aktuell im Vordergrund liegende Programm (fuer kontext-
 // abhaengige Layer im Makro-Manager).  Reine WinAPI-Loesung unter Windows;
-// auf anderen Plattformen wird (0, "") geliefert.  (Port von core/appmonitor.py)
+// auf anderen Plattformen wird (0, "") geliefert.
 #pragma once
 
 #include <QString>

@@ -265,7 +265,7 @@ static void collectTree(FileSystemProvider *src, const QString &sp,
             const QString csp = src->join(sp, e.name);
             const QString cdp = dst->join(dp, e.name);
             // NUR echte Verzeichnisse rekursiv verfolgen. Symlinks werden wie im
-            // Original als Blatt behandelt (nicht hineinlaufen) — sonst wuerde
+            // als Blatt behandelt (nicht hineinlaufen) — sonst wuerde
             // ein Server-Symlink auf z. B. "/" den ganzen Zielbaum aufziehen.
             if (e.type == EntryType::Dir)
                 collectTree(src, csp, dst, cdp, out);

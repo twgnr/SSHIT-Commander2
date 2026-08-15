@@ -1,6 +1,5 @@
 // Syntax-Highlighting fuer den Editor: JSON, XML/HTML, YAML, Python, INI/TOML,
 // Shell. Die Sprache wird an der Dateiendung erkannt.
-// (Port von gui/highlighter.py)
 #pragma once
 
 #include <QRegularExpression>

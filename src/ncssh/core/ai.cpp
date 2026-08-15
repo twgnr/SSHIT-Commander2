@@ -1,4 +1,3 @@
-// (Port von core/ai.py + net/ollama.py)
 #include "ncssh/core/ai.hpp"
 
 #include "ncssh/core/settings.hpp"
@@ -29,8 +28,7 @@ QString aiModel()
 }
 
 // --- Ollama-Anbindung --------------------------------------------------------
-// Die HTTP-Schicht liegt in net/ollama (eine Implementierung, wie im Original
-// core/ai.py -> net.ollama); hier stehen nur die Adapter fuer die GUI.
+// Die HTTP-Schicht liegt in net/ollama; hier stehen nur die Adapter fuer die GUI.
 
 namespace {
 

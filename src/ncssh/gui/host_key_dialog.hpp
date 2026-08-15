@@ -1,6 +1,5 @@
 // Host-Key-Bestaetigung (Trust-on-First-Use): zeigt Host, Algorithmus und
 // Fingerprint und fragt, ob dem Server dauerhaft vertraut werden soll.
-// (Port von gui/host_key_dialog.py)
 #pragma once
 
 #include <QDialog>

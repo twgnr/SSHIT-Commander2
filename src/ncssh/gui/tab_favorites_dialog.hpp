@@ -1,5 +1,5 @@
 // Tab-Favoriten: ganze Tab-Konstellationen (Verbindung + Pane-Pfade) sichern
-// und wiederherstellen.  (Port von gui/tab_favorites_dialog.py)
+// und wiederherstellen.
 #pragma once
 
 #include "ncssh/core/tabfavorites.hpp"

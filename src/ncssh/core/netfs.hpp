@@ -4,7 +4,6 @@
 //   net://                      -> Liste der gefundenen Hosts
 //   net://<ip>                  -> Freigaben des Hosts
 //   net://<ip>/<share>/<sub...> -> Dateien (ueber UNC \\ip\share lokal gelesen)
-// (Port von core/netfs.py)
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

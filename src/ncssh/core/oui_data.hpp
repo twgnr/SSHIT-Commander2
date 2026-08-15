@@ -1,5 +1,4 @@
 // MAC-Hersteller-Zuordnung (OUI) - kuratierte, hochsichere Teilliste.
-// (Port von core/oui_data.py)
 //
 // Die ersten drei MAC-Oktette (OUI) bestimmen den Hersteller. Hinterlegt sind
 // v.a. Virtualisierungs-Vendoren und gaengige Geraete. Optional wird zusaetzlich

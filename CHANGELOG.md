@@ -5,54 +5,42 @@ Versionierung nach [SemVer](https://semver.org/lang/de/).
 
 ## [1.0.0] – Beta (unveröffentlicht)
 
-Erste Fassung: vollständiger Port des Python/PySide6-Vorgängers nach C++20/Qt 6
-mit libssh2, anschließend über dessen Funktionsumfang hinaus ausgebaut.
+Erste Fassung.
 
-### Neu gegenüber der Python-Fassung
+### Funktionen
 
-- **Terminal-Emulator**: vollwertiges VT100/xterm-Zellengitter mit Cursor-
-  Adressierung, Scrollregionen, Autowrap und Alternate-Screen — `vim`, `htop`,
-  `tmux` und `less` werden korrekt dargestellt.
-- **ProxyJump/Bastion**: Verbindung über einen Sprung-Host (`direct-tcpip`-Kanal
-  mit eigenem Pump-Thread).
-- **known_hosts-Interop**: Host-Keys werden gegen OpenSSHs `~/.ssh/known_hosts`
-  geprüft und dort auf Wunsch eingetragen.
-- **Verbindungs-Feinsteuerung pro Profil**: Keepalive, Timeout, Kompression,
-  Chiffren, Schlüsseltausch.
-- **Krypto-Backend wählbar**: optional OpenSSL 3 statt WinCNG
+- **Dateiverwaltung** in zwei Panes (lokal ⇄ remote): Kopieren/Verschieben mit
+  Fortschritt, Bandbreiten-Limit und Pause/Fortsetzen mit Wiederaufnahme am
+  Ziel-Offset, Drag & Drop, Massen-Umbenennen, Verzeichnis- und Dateivergleich,
+  Prüfsummen, ZIP, Symlinks (lokal und über SFTP), Lesezeichen je Server.
+- **SSH/SFTP**: Profilverwaltung, Anmeldung per Passwort, Schlüssel oder Agent,
+  PuTTY-PPK-Import, ProxyJump über einen Sprung-Host, Port-Weiterleitungen
+  (`-L`/`-R`/`-D` mit SOCKS5), sudo-Dateisystem, Verbindungs-Feinsteuerung pro
+  Profil (Keepalive, Timeout, Kompression, Chiffren, Schlüsseltausch).
+- **Terminal** mit vollem VT100/xterm-Emulator: Cursor-Adressierung,
+  Scrollregionen, Autowrap und Alternate-Screen, sodass `vim`, `htop`, `tmux`
+  und `less` korrekt dargestellt werden. Lokales PTY über ConPTY, entfernt über
+  die SSH-Shell.
+- **Automatisierung**: SFTP-Batch mit Skript-Editor, Live-Log und
+  Intervall-Wiederholung; Verzeichnis-Alarme lokal und über die aktive
+  SSH-Verbindung, mit Glob-Filtern, Befehlsauslösung, Desktop-Benachrichtigung
+  und Signalton; Makro-Manager mit Layern.
+- **Werkzeuge**: Editor mit Syntax-Hervorhebung, Datei- und Inhaltssuche,
+  Netzwerk-Scanner, CVE-Audit über OSV.dev, Zeichensatz-Konverter inkl. EBCDIC,
+  venv-Verwaltung, KI-Chat über ein lokales Ollama.
+- **Krypto-Backend wählbar**: standardmäßig WinCNG, optional OpenSSL 3
   (`-DUSE_OPENSSL_BACKEND=ON`) und damit ed25519/curve25519.
-- **Übertragungen**: Bandbreiten-Limit sowie Pause/Fortsetzen mit Wiederaufnahme
-  am Ziel-Offset.
-- **Symlinks anlegen** (lokal und über SFTP).
-- **Tunnel-Presets** aus dem Serverprofil öffnen automatisch beim Verbinden.
-- **SFTP-Batch**: skriptbare Dateiaufgaben mit Editor, Live-Log und
-  Intervall-Wiederholung.
-- **Alarm Trigger** erweitert: Überwachung entfernter Verzeichnisse über die
-  aktive SSH-Verbindung, Glob-Filter je Alarm, Befehl bei Auslösung sowie
-  Desktop-Benachrichtigung und Signalton.
-
-### Behoben
-
-Während des Ports gefundene und korrigierte Fehler:
-
-- SSH-Keepalive wurde vor dem Handshake gesetzt und brach jeden Schlüsseltausch
-  ab („Unable to exchange encryption keys").
-- ECDSA/ECDH fehlten im WinCNG-Build; moderne Server waren dadurch nicht
-  erreichbar.
-- Fehlender `keyboard-interactive`-Fallback bei Passwort-Anmeldung (PAM).
-- Wiederaufnahme abgebrochener Übertragungen kopierte in Wahrheit neu.
-- Abbrechen einer Übertragung war wirkungslos (Task-Handle wurde nie abgelegt).
-- Tastenkürzel-Einstellungen wurden nie gelesen; sechs weitere Optionen waren
-  ohne Wirkung.
-- Makro-Sequenzen wurden angelegt, aber nie ausgeführt.
+- Oberfläche in Deutsch und Englisch, vier Themes plus eigene.
 
 ### Sicherheit
 
 - Host-Key-Prüfung findet **vor** jeder Authentifizierung statt — bei
   unbekanntem oder geändertem Schlüssel gehen keine Zugangsdaten an den Server.
+  Interoperabel mit OpenSSHs `~/.ssh/known_hosts` (lesend und schreibend).
 - Abwehr von Path-Traversal in SFTP-Verzeichnislisten.
-- Passwörter und Schlüsselmaterial werden nach Gebrauch im Speicher überschrieben;
-  Passwörter liegen im Windows Credential Manager, nicht in Konfigurationsdateien.
+- Passwörter und Schlüsselmaterial werden nach Gebrauch im Speicher
+  überschrieben; Passwörter liegen im Windows Credential Manager, nicht in
+  Konfigurationsdateien.
 - Symlinks werden beim rekursiven Kopieren nicht verfolgt.
 - Temporäre Dateien werden beim Beenden entfernt.
 

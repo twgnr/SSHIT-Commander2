@@ -1,7 +1,6 @@
 // Datei-Encoding-Konverter: wandelt Textdateien zwischen Zeichensaetzen um
 // (UTF-8, Windows-1252, EBCDIC u.v.m.), mit Auto-Erkennung, Vorschau,
 // Fehlerstrategie und Ausgabe in eine neue Datei oder als Ueberschreiben.
-// (Port von gui/encoding_converter_dialog.py)
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

@@ -2,7 +2,6 @@
 //
 // Wird genutzt, wenn das Ziel eines Kopier-/Verschiebevorgangs auf einem
 // entfernten Server liegt, wo der native QFileDialog nicht browsen kann.
-// (Port von gui/dir_chooser.py)
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

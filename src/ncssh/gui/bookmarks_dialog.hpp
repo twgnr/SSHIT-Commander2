@@ -1,5 +1,5 @@
 // Pfad-Lesezeichen pro Server verwalten: anspringen, entfernen, exportieren
-// und importieren.  (Port von gui/bookmarks_dialog.py)
+// und importieren.
 #pragma once
 
 #include "ncssh/core/bookmarks.hpp"

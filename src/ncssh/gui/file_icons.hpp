@@ -3,7 +3,7 @@
 // QFileIconProvider liefert Typ-Icons nur fuer *existierende* Dateien. Damit
 // das auch fuer Remote-Dateien (und ohne reale Datei) funktioniert, wird je
 // Endung einmalig eine leere Probe-Datei angelegt und deren Icon
-// zwischengespeichert.  (Port von gui/file_icons.py)
+// zwischengespeichert.
 #pragma once
 
 #include <QHash>

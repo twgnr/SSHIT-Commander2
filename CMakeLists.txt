@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 project(sshit_commander2 VERSION 1.0.0 LANGUAGES C CXX)
 
 # ---------------------------------------------------------------------------
-# C++-Port von SSHIT-Commander (Python/PySide6 -> C++/Qt6).
+# SSHIT-Commander — Dual-Pane-Dateimanager mit SSH/SFTP und Terminal.
 # Build:  cmake --preset default && cmake --build --preset default
 # ---------------------------------------------------------------------------
 

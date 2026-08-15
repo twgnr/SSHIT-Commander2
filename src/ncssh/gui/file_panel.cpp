@@ -193,12 +193,16 @@ void FilePanel::buildUi(const QString &title)
         endPathEdit();
         navigateTo(target);
     });
-    auto *reload = new QPushButton(QStringLiteral("⟳"), this);
+    // Gezeichnete Symbole statt Unicode-Zeichen: "⟳" und "☆" fehlen in vielen
+    // Windows-UI-Schriften und erscheinen dann als leeres Kaestchen.
+    auto *reload = new QPushButton(this);
+    reload->setIcon(themedIcon(QStringLiteral("reload"), 16));
     reload->setFixedWidth(34);
     reload->setToolTip(_t("Neu laden"));
     connect(reload, &QPushButton::clicked, this, &FilePanel::refresh);
-    // Lesezeichen: aktuellen Pfad merken (☆/★) bzw. Liste oeffnen
-    m_starButton = new QPushButton(QStringLiteral("☆"), this);
+    // Lesezeichen: aktuellen Pfad merken (Stern leer/gefuellt) bzw. Liste oeffnen
+    m_starButton = new QPushButton(this);
+    m_starButton->setIcon(themedIcon(QStringLiteral("star"), 16));  // bis zur ersten Navigation
     m_starButton->setFixedWidth(34);
     m_starButton->setToolTip(_t("Aktuellen Pfad als Lesezeichen (pro Server)"));
     connect(m_starButton, &QPushButton::clicked, this, &FilePanel::toggleBookmark);
@@ -791,7 +795,7 @@ void FilePanel::navigateTo(const QString &path)
 {
     if (!m_provider || path.isEmpty())
         return;
-    hideStatus();   // Navigieren schliesst die Status-Anzeige (wie im Original)
+    hideStatus();   // Navigieren schliesst die Status-Anzeige
     loadDir(path);
 }
 
@@ -866,7 +870,7 @@ void FilePanel::loadDir(const QString &path, bool record)
 void FilePanel::populate(const std::vector<FileEntry> &entries)
 {
     // Sortieren nach der gewaehlten Spalte — ".." und Ordner bleiben oben.
-    // Namen wahlweise natuerlich (datei2 vor datei10), wie im Original.
+    // Namen wahlweise natuerlich (datei2 vor datei10).
     const bool natural = core::getSettingBool(QStringLiteral("natural_sort"), true);
     const QString key = m_sortKey;
     auto nameLess = [natural](const FileEntry &a, const FileEntry &b) {
@@ -1895,7 +1899,9 @@ void FilePanel::updateBookmarkButton()
     if (!m_starButton)
         return;
     const bool marked = !m_path.isEmpty() && m_bookmarks.contains(m_bookmarkKey, m_path);
-    m_starButton->setText(marked ? QStringLiteral("★") : QStringLiteral("☆"));
+    // Gefuellter Stern = gemerkt, Kontur = nicht gemerkt.
+    m_starButton->setIcon(themedIcon(
+        marked ? QStringLiteral("star-filled") : QStringLiteral("star"), 16));
 }
 
 void FilePanel::toggleBookmark()
@@ -2079,7 +2085,7 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
         case Qt::Key_Right:
             if (ke->modifiers() & Qt::AltModifier) { goForward(); return true; }
             break;
-        case Qt::Key_Insert:              // Einfg : markieren (wie im Original)
+        case Qt::Key_Insert:              // Einfg : markieren
             if (obj != m_filterEdit) { markCurrent(true, /*toggle=*/false); return true; }
             break;
         case Qt::Key_Delete:              // Entf : aktuellen Eintrag entmarkieren

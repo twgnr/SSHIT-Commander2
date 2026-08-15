@@ -1,5 +1,4 @@
 // Online-CVE-Abgleich ueber OSV.dev (https://osv.dev) — frei, ohne API-Key.
-// (Port von net/cve.py)
 //
 // Beide Funktionen sind BLOCKIEREND (QNetworkAccessManager + QEventLoop im
 // Worker) und laufen ueber die AsyncBridge auf Worker-Threads.

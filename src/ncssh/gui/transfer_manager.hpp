@@ -1,5 +1,4 @@
 // Transfer-Manager: fuehrt Uebertragungen aus, meldet Fortschritt via Qt-Signale.
-// (Port von gui/transfer_manager.py)
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

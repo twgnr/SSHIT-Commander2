@@ -1,6 +1,5 @@
 // Minimap fuer den Editor: stark verkleinerte Zeilen-Uebersicht des Dokuments
 // mit sichtbarem Bereich und farbigen Suchtreffern; Klick springt hin.
-// (Port von gui/minimap.py)
 #pragma once
 
 #include <QWidget>

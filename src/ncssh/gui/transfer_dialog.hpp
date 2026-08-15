@@ -1,6 +1,5 @@
 // Transfer-Queue: laufende/fertige Uebertragungen mit Fortschritt, Geschwindigkeit
 // und ETA; Abbrechen, Wiederholen, Liste aufraeumen.
-// (Port von gui/transfer_dialog.py)
 #pragma once
 
 #include <QDialog>

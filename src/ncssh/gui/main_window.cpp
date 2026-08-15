@@ -441,7 +441,7 @@ void MainWindow::buildMenus()
     }
     view->addAction(_t("Theme-Editor …"), this, &MainWindow::openThemeEditor);
     view->addSeparator();
-    // Versteckte Dateien der aktiven Pane umschalten (wie im Original auch im Menue).
+    // Versteckte Dateien der aktiven Pane umschalten (auch im Menue).
     view->addAction(_t("Versteckte Dateien"), this, [this] {
         if (Workspace *ws = currentWorkspace())
             if (FilePanel *panel = ws->activePanel())
@@ -480,7 +480,7 @@ void MainWindow::buildMenus()
     applyShortcuts();   // konfigurierte Kuerzel auf die registrierten Aktionen legen
 
     // --- Toolbar (gezeichnete Icons in der Textfarbe des Themes) ---
-    // Wie im Original nur Icons (Text als Tooltip), 18px und kompakt — so passen
+    // Nur Icons (Text als Tooltip), 18px und kompakt — so passen
     // alle Aktionen in eine niedrige Leiste.
     auto *toolbar = addToolBar(_t("Aktionen"));
     toolbar->setMovable(false);
@@ -515,7 +515,7 @@ void MainWindow::buildMenus()
     toolbar->addAction(themedIcon(QStringLiteral("search")), _t("Suchen"), this,
                        [this] { openSearch(QStringLiteral("content")); });
     toolbar->addSeparator();
-    // Datei-Aktionen (wie im Original: wirken auf die aktive Pane).
+    // Datei-Aktionen (wirken auf die aktive Pane).
     toolbar->addAction(themedIcon(QStringLiteral("view")), _t("Ansehen"), this,
                        [fileOp] { fileOp(QStringLiteral("view")); });
     toolbar->addAction(themedIcon(QStringLiteral("edit")), _t("Bearbeiten"), this,

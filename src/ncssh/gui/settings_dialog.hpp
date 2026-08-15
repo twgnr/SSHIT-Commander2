@@ -1,6 +1,5 @@
 // Einstellungs-Dialog: Allgemein (Sprache, Theme, Schriftgroessen, Datumsformat,
 // versteckte Dateien, Startpfad), KI (Ollama) und Tastenkuerzel.
-// (Port von gui/settings_dialog.py)
 #pragma once
 
 #include "ncssh/gui/bridge.hpp"

@@ -1,5 +1,4 @@
 // Befehlskatalog mit Erklaerungen + Parameter-Schema fuer den Assistenten.
-// (Port von core/commands.py)
 #include "ncssh/core/commands.hpp"
 
 #include "ncssh/core/i18n.hpp"
@@ -1607,7 +1606,6 @@ std::vector<CS> buildCatalog()
 const std::vector<CommandSpec> &catalog()
 {
     // Uebersetzung wird beim ersten Zugriff eingefroren — entspricht dem
-    // Verhalten des Python-Originals (Uebersetzung beim Modul-Import).
     static const std::vector<CommandSpec> cat = buildCatalog();
     return cat;
 }

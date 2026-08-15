@@ -1,4 +1,4 @@
-// Online-CVE-Abgleich ueber OSV.dev — Implementierung.  (Port von net/cve.py)
+// Online-CVE-Abgleich ueber OSV.dev — Implementierung.
 #include "ncssh/net/cve.hpp"
 
 #include <QEventLoop>

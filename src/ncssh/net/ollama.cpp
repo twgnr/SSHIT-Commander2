@@ -1,4 +1,4 @@
-// Ollama-HTTP-Client — Implementierung.  (Port von net/ollama.py)
+// Ollama-HTTP-Client — Implementierung.
 #include "ncssh/net/ollama.hpp"
 
 #include <QEventLoop>
@@ -70,9 +70,9 @@ QJsonObject readJson(const QString &baseUrl, const QString &path,
 
 // Oeffnet die Anfrage und liefert jede Antwortzeile als geparstes JSON-Objekt
 // an onObject (NDJSON-Streaming). Leere und nicht parsbare Zeilen werden
-// uebersprungen (wie im Original). Verbindungsfehler werden als
+// uebersprungen. Verbindungsfehler werden als
 // OllamaUnreachable geworfen; ein Abbruch ueber das CancelToken beendet den
-// Transfer still — das Aequivalent zu GeneratorExit im Original.
+// Transfer still.
 void streamJsonLines(const QString &baseUrl, const QString &path,
                      const QJsonObject &payload, const JsonCallback &onObject,
                      const CancelTokenPtr &cancel)

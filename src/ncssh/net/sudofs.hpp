@@ -3,7 +3,7 @@
 // Im sudo-Modus einer Pane laufen alle Operationen ueber die bestehende SSH-
 // Verbindung als root (bzw. via sudo), statt ueber SFTP als angemeldeter Nutzer.
 // Schreiben/Passwort gehen ueber stdin (tee bzw. sudo -S), nie ueber die
-// Kommandozeile.  (Port von net/sudofs.py)
+// Kommandozeile.
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

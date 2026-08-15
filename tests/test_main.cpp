@@ -2,7 +2,6 @@
 //
 // Registriert Testfunktionen ueber das TEST()-Makro und fuehrt sie aus.
 // Rueckgabe 0 = alle bestanden, sonst die Anzahl der Fehlschlaege.
-// (Ersetzt pytest aus tests/ des Python-Originals.)
 #include "tests/harness.hpp"
 
 #include <QApplication>
@@ -13,7 +12,7 @@ int main(int argc, char *argv[])
 {
     // QApplication (nicht QCoreApplication): die GUI-Smoke-Tests bauen echte
     // Widgets. Ohne Bildschirm laeuft das ueber die Offscreen-Plattform —
-    // entspricht QT_QPA_PLATFORM=offscreen im Python-Original (smoke_gui.py).
+    // entspricht QT_QPA_PLATFORM=offscreen.
     //
     // Fehlt das Plugin, bleibt Qt beim Start mit einer MessageBox stehen (und
     // ein Testlauf haengt endlos) — deshalb wird die Vorgabe nur gesetzt bzw.

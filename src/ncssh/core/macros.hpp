@@ -5,7 +5,7 @@
 // Datei: <config_dir>/macros.json  (Schema-Version 1)
 //
 // Tastenbelegungen sind bewusst QJsonObject, weil das "payload" je nach
-// "action_type" sehr unterschiedlich aussieht.  (Port von core/macros.py)
+// "action_type" sehr unterschiedlich aussieht.
 #pragma once
 
 #include <QJsonObject>

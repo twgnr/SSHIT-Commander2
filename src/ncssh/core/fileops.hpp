@@ -1,5 +1,4 @@
 // Lokale Datei-Helfer: Pruefsummen, ZIP erstellen, Ordnergroesse (Bordmittel).
-// (Port von core/fileops.py)
 #pragma once
 
 #include <QDateTime>

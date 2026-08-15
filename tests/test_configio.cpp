@@ -1,5 +1,4 @@
 // Tests fuer Konfigurations-Im-/Export (core/configio).
-// (Port von tests/test_configio.py)
 #include "tests/harness.hpp"
 
 #include "ncssh/config.hpp"

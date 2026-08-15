@@ -1,9 +1,8 @@
 // Tests fuer die reine KI-Logik (core/ai, core/markdown) — ohne Netzwerk.
-// (Port von tests/test_ai.py)
 //
 // Die Streaming-Tests pruefen hier die Chunk->Ausgabe-Abbildungen
 // (chatChunkText / pullChunkLine) statt einen gestubbten HTTP-Generator: das
-// ist genau die Logik, die das Original ueber den Monkeypatch getestet hat.
+// ist genau die Logik, die ohne laufenden Server pruefbar ist.
 #include "tests/harness.hpp"
 
 #include "ncssh/core/ai.hpp"
@@ -142,7 +141,7 @@ TEST(ai, pull_chunks_format_progress)
 TEST(ai, unreachable_server_raises)
 {
     // Port 1 ist praktisch nie belegt -> Verbindungsfehler muss als
-    // OllamaUnreachable ankommen (im Original: URLError-Familie).
+    // OllamaUnreachable ankommen.
     bool threw = false;
     try {
         ollamaVersion(QStringLiteral("http://127.0.0.1:1"), 2000);

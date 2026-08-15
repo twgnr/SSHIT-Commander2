@@ -1,6 +1,6 @@
 // venv aufsetzen/verwalten: virtuelle Python-Umgebung anlegen und in einem
 // Terminal aktivieren; listet bekannte venv-/pipenv-Umgebungen mit Typ,
-// Version, Projekt und Notiz.  (Port von gui/venv_dialog.py)
+// Version, Projekt und Notiz.
 #pragma once
 
 #include "ncssh/core/venvtools.hpp"

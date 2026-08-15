@@ -1,5 +1,4 @@
 // Tests fuer Pane-Hilfsmodule: natsort, gitstatus, fileops.
-// (Port von tests/test_paneutils.py)
 #include "tests/harness.hpp"
 
 #include "ncssh/core/fileops.hpp"

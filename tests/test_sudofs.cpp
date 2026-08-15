@@ -3,7 +3,6 @@
 // Eine Fake-Ausfuehrung zeichnet jeden (Befehl, stdin) auf und liefert eine
 // vorgegebene Antwort. Wichtigster Punkt: das sudo-Passwort darf NIE im stdin
 // des Nutzbefehls (z.B. tee) landen — sonst stuende es in der Zieldatei.
-// (Port von tests/test_sudofs.py)
 #include "tests/harness.hpp"
 
 #include "ncssh/core/filesystem.hpp"

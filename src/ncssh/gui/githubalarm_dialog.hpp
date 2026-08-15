@@ -1,5 +1,4 @@
 // GitHub-Repo-Alarm: ueberwacht Repositories auf neue Pushes.
-// (Port von gui/githubalarm_dialog.py + githubalarm_manager.py)
 #pragma once
 
 #include "ncssh/core/githubalarm.hpp"

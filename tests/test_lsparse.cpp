@@ -1,5 +1,4 @@
 // Tests fuer den ls-Parser (core/lsparse) — rein, ohne I/O.
-// (Port von tests/test_lsparse.py)
 #include "tests/harness.hpp"
 
 #include "ncssh/core/lsparse.hpp"

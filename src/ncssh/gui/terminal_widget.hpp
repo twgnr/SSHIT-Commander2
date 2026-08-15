@@ -1,6 +1,5 @@
 // Interaktives Terminal: echter PTY-Shell-Channel (lokal via ConPTY, remote via
 // SSH) mit ANSI-Farben, Scrollback, Kopieren/Einfuegen.
-// (Port von gui/terminal_widget.py, zusammengefasst)
 #pragma once
 
 #include "ncssh/core/terminal_emulator.hpp"

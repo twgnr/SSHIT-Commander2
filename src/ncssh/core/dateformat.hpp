@@ -1,6 +1,5 @@
 // Benutzerfreundliches Datumsformat (Token wie DD.MM.YYYY HH24:MI) -> strftime.
 // So muss der Nutzer keine %-Codes kennen. Standard ist das deutsche Format.
-// (Port von core/dateformat.py)
 #pragma once
 
 #include <QDateTime>

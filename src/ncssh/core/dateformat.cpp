@@ -1,4 +1,4 @@
-// Benutzerfreundliches Datumsformat -> strftime.  (Port von core/dateformat.py)
+// Benutzerfreundliches Datumsformat -> strftime.
 #include "ncssh/core/dateformat.hpp"
 
 #include <QHash>

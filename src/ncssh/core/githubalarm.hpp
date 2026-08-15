@@ -2,7 +2,7 @@
 //
 // Pro Repo wird der Zeitstempel des letzten Pushs (pushed_at der GitHub-API)
 // abgefragt; aendert er sich, gibt es "neue Daten". parseRepoInput und die
-// Datenmodelle sind rein/testbar.  (Port von core/githubalarm.py)
+// Datenmodelle sind rein/testbar.
 #pragma once
 
 #include <QJsonObject>

@@ -1,12 +1,12 @@
 // Shell-Backends: verbinden ein TerminalWidget mit einem echten PTY.
 //
-// LocalShellBackend  : lokale Shell ueber Windows ConPTY (ersetzt pywinpty),
+// LocalShellBackend  : lokale Shell ueber Windows ConPTY,
 //                      gelesen in einem Hintergrund-Thread.
 // RemoteShellBackend : interaktiver SSH-Shell-Channel ueber net::RemoteShell.
 //
 // Beide melden empfangene Daten als Qt-Signal dataReceived(QString) (thread-
 // sicher an die GUI), nehmen Eingaben ueber write(QString) und passen die
-// Groesse via resize(cols, rows) an.  (Port von gui/shell_backends.py)
+// Groesse via resize(cols, rows) an.
 #pragma once
 
 #include "ncssh/gui/bridge.hpp"

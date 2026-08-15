@@ -1,5 +1,4 @@
 // Tests fuer die Netzwerkscanner-Engine und den virtuellen Provider (ohne Netz).
-// (Port von tests/test_netscan.py)
 #include "tests/harness.hpp"
 
 #include "ncssh/core/netfs.hpp"

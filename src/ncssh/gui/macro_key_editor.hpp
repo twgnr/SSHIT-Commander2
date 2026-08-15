@@ -1,6 +1,5 @@
 // Editor fuer eine einzelne Makro-Taste: Beschriftung, Icon, Schrift, Kuerzel
 // und die Aktion samt typabhaengigem Payload-Editor.
-// (Port von gui/macro_key_editor.py)
 #pragma once
 
 #include "ncssh/core/macroactions.hpp"

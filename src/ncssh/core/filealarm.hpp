@@ -4,7 +4,6 @@
 // erzeugt eine Momentaufnahme {pfad: (mtime, groesse, ist_ordner)}, diffSnapshots
 // ermittelt daraus neue / geaenderte / geloeschte Eintraege. Beide Funktionen
 // sind rein und testbar; das Polling-Intervall liegt im GUI-Manager.
-// (Port von core/filealarm.py)
 #pragma once
 
 #include <QHash>

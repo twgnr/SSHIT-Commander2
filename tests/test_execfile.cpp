@@ -1,5 +1,4 @@
 // Tests fuer die Erkennung ausfuehrbarer Dateien (Farbmarkierung).
-// (Port von tests/test_execfile.py)
 #include "tests/harness.hpp"
 
 #include "ncssh/core/execfile.hpp"

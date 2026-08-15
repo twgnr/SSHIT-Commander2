@@ -21,28 +21,13 @@ Qt 6 und libssh2.
   Port-Weiterleitungen (`-L`/`-R`/`-D` mit SOCKS5), sudo-Dateisystem.
 - **Terminal**: echtes PTY (lokal über ConPTY, remote über SSH) mit vollem
   VT100/xterm-Emulator — `vim`, `htop`, `tmux` und `less` laufen.
+- **Automatisierung**: SFTP-Batch mit Skript-Editor und Zeitplanung,
+  Verzeichnis-Alarme (lokal und remote) mit Befehlsauslösung, Makro-Manager mit
+  Layern.
 - **Werkzeuge**: Editor mit Syntax-Hervorhebung, Datei-/Inhaltssuche,
   Netzwerk-Scanner, CVE-Audit (OSV.dev), Zeichensatz-Konverter, venv-Verwaltung,
-  Makro-Manager mit Layern, Verzeichnis-Alarme (lokal und remote), SFTP-Batch mit
-  Zeitplanung, KI-Chat über ein lokales Ollama.
+  KI-Chat über ein lokales Ollama.
 - Deutsch und Englisch, vier Themes plus eigene.
-
-## Herkunft
-
-Der Code ist ein Port eines Python/PySide6-Vorgängers gleichen Namens. Die
-Portierung ist abgeschlossen; der C++-Stand ist inzwischen über den Umfang des
-Originals hinausgewachsen (Terminal-Emulator, ProxyJump, SFTP-Batch u. a.).
-Einordnung und Messung: [STATUS.md](STATUS.md) und [GAPS.md](GAPS.md).
-
-| Python-Original | C++-Port |
-|---|---|
-| PySide6 / Qt 6 (Python) | Qt 6.8 (C++, Widgets) |
-| asyncssh (SSH/SFTP) | libssh2 1.11 (statisch; WinCNG-Crypto, optional OpenSSL) |
-| asyncio-Loop im Thread + Qt-Signale | Worker-Thread-Pool (`AsyncBridge`) + Qt-Signale |
-| pywinpty (lokales PTY) | Windows ConPTY (`CreatePseudoConsole`) |
-| pyte (Terminal-Emulation) | eigener VT100/xterm-Emulator (Zellengitter, Alternate-Screen) |
-| keyring (Credential Manager) | Windows Credential Manager API (`wincred.h`) |
-| urllib/requests | `QNetworkAccessManager` |
 
 ## Architektur
 
@@ -107,15 +92,32 @@ Erzeugt `build\SSHIT-Commander-<Version>.zip`.
 .\test.ps1             # 186 Tests (oder: ctest --test-dir build)
 ```
 
-**Optional: OpenSSL-Krypto** für ed25519/curve25519 —
-`cmake --preset default -DUSE_OPENSSL_BACKEND=ON`. Voraussetzungen und
-Hintergrund in [PORTING.md](PORTING.md).
+### Krypto-Backend (WinCNG oder OpenSSL)
+
+- **Standard: WinCNG** (`-DUSE_OPENSSL_BACKEND=OFF`). Kein OpenSSL nötig, aber
+  **ohne ed25519/curve25519**. Mit `ENABLE_ECDSA_WINCNG` sind ecdsa-Hostkeys und
+  ecdh-sha2-nistp*-KEX aktiv, sodass Standard-OpenSSH-Server (die mehrere
+  Verfahren anbieten) funktionieren. Es scheitert nur bei Servern, die
+  ausschließlich ed25519/curve25519 anbieten, oder bei ed25519-**Login-Keys**.
+- **Opt-in: OpenSSL** (`-DUSE_OPENSSL_BACKEND=ON`) → ed25519/curve25519 + ecdsa.
+  `cmake/OpenSSLBackend.cmake` stellt OpenSSL bereit:
+  1. `-DOPENSSL_ROOT_DIR=<pfad>` auf ein vorgebautes statisches OpenSSL, **oder**
+  2. aus Quellcode bauen (OpenSSL 3.3.2, `Configure VC-WIN64A no-asm no-shared`,
+     `nmake` — **kein nasm nötig**). Ergebnis wird im Build-Verzeichnis gecacht.
+- **Voraussetzung für Weg 2:** ein vollständiges perl (Strawberry/ActiveState)
+  mit `Locale::Maketext::Simple` — das perl aus Git-Bash reicht NICHT. Notfalls
+  `-DOPENSSL_PERL=<pfad/perl.exe>` erzwingen. Aufruf aus einer MSVC-Umgebung
+  (vcvars), damit `nmake`/`cl` verfügbar sind.
+- libssh2 nutzt dann seinen OpenSSL-Pfad, in dem `LIBSSH2_ED25519=1` für
+  OpenSSL ≥ 1.1.1 gilt und X25519 fest einkompiliert ist. Statisch gelinkt
+  (keine libcrypto-DLL). OpenSSL bei Nutzung auf einem gepflegten Zweig aktuell
+  halten (CVEs).
 
 ## Konfiguration
 
 Einstellungen, Profile und Lesezeichen liegen unter `%APPDATA%\ncssh`.
 Passwörter und Token landen im **Windows Credential Manager**, nicht in den
-Konfigurationsdateien. Das Format ist mit der Python-Fassung kompatibel.
+Konfigurationsdateien.
 
 ## Bekannte Grenzen
 
@@ -131,15 +133,6 @@ Konfigurationsdateien. Das Format ist mit der Python-Fassung kompatibel.
 - Keine systemweiten Makro-Hotkeys (Makrotasten lösen per Klick aus).
 - Nicht breit erprobt: exotische Auth-/SFTP-/Tunnel-Kombinationen,
   ProxyJump und ed25519-Handshakes mangels passender Testserver.
-
-## Dokumente
-
-| Datei | Inhalt |
-|---|---|
-| [STATUS.md](STATUS.md) | Stand, Modulübersicht, Ergänzungen über das Original hinaus |
-| [GAPS.md](GAPS.md) | Messung der verbliebenen Abweichungen zum Original |
-| [PORTING.md](PORTING.md) | Konventionen, Typ-Mapping, Krypto-Backends |
-| [CHANGELOG.md](CHANGELOG.md) | Änderungen je Version |
 
 ## Drittanbieter-Komponenten
 

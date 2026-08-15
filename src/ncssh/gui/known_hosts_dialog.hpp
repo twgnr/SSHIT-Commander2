@@ -1,5 +1,4 @@
 // Bekannte Host-Keys verwalten (TOFU-Store ansehen und Eintraege entfernen).
-// (Port von gui/known_hosts_dialog.py)
 #pragma once
 
 #include "ncssh/core/hostkeys.hpp"

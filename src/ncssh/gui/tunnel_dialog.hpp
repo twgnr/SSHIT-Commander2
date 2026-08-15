@@ -1,5 +1,5 @@
 // SSH-Tunnel / Port-Forwarding: lokal (-L), remote (-R) und dynamisch/SOCKS (-D)
-// oeffnen und stoppen.  (Port von gui/tunnel_dialog.py + tunnel_manager.py)
+// oeffnen und stoppen.
 #pragma once
 
 #include "ncssh/core/models.hpp"

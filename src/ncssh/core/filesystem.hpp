@@ -1,4 +1,4 @@
-// Einheitliche Dateisystem-Abstraktion.  (Port von core/filesystem.py)
+// Einheitliche Dateisystem-Abstraktion.
 //
 // Die UI kennt nur dieses Interface — ob lokal oder via SFTP ist transparent.
 // Alle Methoden sind BLOCKIEREND und laufen ueber die AsyncBridge auf
@@ -49,8 +49,7 @@ public:
     }
 
     // Groesse in Bytes; 0 = unbekannt oder nicht vorhanden. Der Transfer nutzt
-    // das fuer Gesamtfortschritt und Verifikation. (Entspricht dem
-    // getattr(provider, "size", …)-Fallback des Python-Originals.)
+    // das fuer Gesamtfortschritt und Verifikation.
     virtual qint64 size(const QString &path) { Q_UNUSED(path); return 0; }
 };
 

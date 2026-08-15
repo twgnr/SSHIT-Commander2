@@ -1,7 +1,6 @@
 // Sicherheits-Audit (CVE): liest OS/Kernel und Pakete eines verbundenen Linux-
 // Servers aus, ermittelt offene Sicherheitsupdates (apt/dnf), prueft sshd/ufw/
 // Konten und gleicht Kernkomponenten online gegen OSV.dev ab.
-// (Port von gui/security_dialog.py)
 #pragma once
 
 #include "ncssh/gui/bridge.hpp"

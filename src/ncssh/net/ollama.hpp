@@ -1,5 +1,4 @@
 // Ollama-HTTP-Client (https://ollama.com) — lokales LLM, kein API-Key.
-// (Port von net/ollama.py)
 //
 // Spricht einen lokal laufenden Ollama-Server ueber dessen REST-API an.
 // Bewusst nur QtNetwork (QNetworkAccessManager + QEventLoop, blockierend im
@@ -10,7 +9,7 @@
 // NDJSON-Antwortzeile als geparstes QJsonObject ueber einen Callback.
 // Abbruch erfolgt kooperativ ueber das CancelToken: es bricht den laufenden
 // HTTP-Transfer ab — so propagiert die Cancellation bis in die HTTP-Schicht
-// (Aequivalent zum Schliessen des Generators im Original).
+// (bricht den laufenden Transfer ab).
 #pragma once
 
 #include "ncssh/gui/bridge.hpp"   // CancelToken
@@ -28,7 +27,7 @@ using ncssh::gui::CancelTokenPtr;
 
 inline const QString DEFAULT_BASE_URL = QStringLiteral("http://localhost:11434");
 
-// Health-Check / Modell-Liste (Original: 5 Sekunden).
+// Health-Check / Modell-Liste (5 Sekunden).
 inline constexpr int kConnectTimeoutMs = 5000;
 
 // Allgemeiner Ollama-Fehler.

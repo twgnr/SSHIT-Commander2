@@ -1,5 +1,5 @@
 // Ein Arbeitsbereich (Tab): zwei Panes (lokal + remote) mit je eigener Konsole,
-// gekoppelt an eine SSH-Verbindung.  (Port von gui/workspace.py, zusammengefasst)
+// gekoppelt an eine SSH-Verbindung.
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

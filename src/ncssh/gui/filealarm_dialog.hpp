@@ -1,6 +1,5 @@
 // Datei-Alarm: Verzeichnisse auf Aenderungen ueberwachen (Polling per
 // Schnappschuss-Vergleich) und Ereignisse melden.
-// (Port von gui/filealarm_dialog.py + filealarm_manager.py)
 #pragma once
 
 #include "ncssh/core/filealarm.hpp"

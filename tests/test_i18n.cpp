@@ -1,5 +1,4 @@
 // Tests fuer die i18n-Schicht (core/i18n) und den englischen Katalog.
-// (Port von tests/test_i18n.py; dort hiess die Funktion tr(), hier _t().)
 //
 // Enthaelt das Vollstaendigkeits-Gate: ruft tools/i18n_extract.py --check und
 // schlaegt fehl, sobald ein _t("…")-Literal keine englische Uebersetzung hat.
@@ -88,7 +87,7 @@ TEST(i18n, available_languages)
 
 TEST(i18n, command_catalog_translates)
 {
-    // Der Befehlskatalog wird — wie im Python-Original beim Import — einmalig
+    // Der Befehlskatalog wird einmalig
     // beim ersten Zugriff uebersetzt. Deshalb hier vor dem ersten catalog()
     // auf Englisch schalten; kein anderer Test fasst den Katalog an.
     LanguageGuard guard;

@@ -2,7 +2,6 @@
 //
 // Jeder CommandSpec hat ein Template mit {name}-Platzhaltern, die der
 // Assistent (UI) aus CommandParam fuellt.
-// (Port von core/commands.py)
 #pragma once
 
 #include <QHash>
@@ -43,7 +42,7 @@ QString wrapPrivilege(const QString &command, bool sudo = false, const QString &
 QString render(const CommandSpec &spec, const QHash<QString, QString> &values);
 
 // Der vollstaendige Katalog. Bewusst breit gefaechert; leicht erweiterbar.
-// Anzeigetexte werden beim ersten Zugriff uebersetzt (wie beim Python-Import).
+// Anzeigetexte werden beim ersten Zugriff uebersetzt.
 const std::vector<CommandSpec> &catalog();
 
 // Befehle passend zum OS ("posix" oder "windows"); "any" immer dabei.

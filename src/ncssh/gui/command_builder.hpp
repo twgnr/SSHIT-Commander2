@@ -1,7 +1,6 @@
 // Befehlsassistent: Parameter eines Befehls per Textfeld / Dropdown / Checkbox
 // setzen, mit Live-Vorschau; einfuegen oder direkt ausfuehren. Unter Linux
 // zusaetzlich sudo / als anderer Benutzer.
-// (Port von gui/command_builder.py)
 #pragma once
 
 #include "ncssh/core/commands.hpp"

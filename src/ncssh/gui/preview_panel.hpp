@@ -1,6 +1,5 @@
 // Vorschau-Panel: zeigt den Inhalt der markierten Datei schreibgeschuetzt an
 // (Text oder Bild). Reine Anzeige — keine Bearbeitung.
-// (Port von gui/preview_panel.py)
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

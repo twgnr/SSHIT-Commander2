@@ -1,5 +1,4 @@
 // Umschaltbare Themes (Fusion + QSS + Palette), inkl. benutzerdefinierter Themes.
-// (Port von gui/style.py)
 #pragma once
 
 #include <QHash>

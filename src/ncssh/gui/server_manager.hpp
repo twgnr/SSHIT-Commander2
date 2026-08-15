@@ -1,5 +1,4 @@
 // Server-Profile verwalten und eine Verbindung auswaehlen.
-// (Port von gui/server_manager.py, funktional zusammengefasst)
 #pragma once
 
 #include "ncssh/core/models.hpp"

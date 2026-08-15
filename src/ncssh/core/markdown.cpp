@@ -1,4 +1,3 @@
-// (Port von core/markdown.py)
 #include "ncssh/core/markdown.hpp"
 
 #include <QRegularExpression>

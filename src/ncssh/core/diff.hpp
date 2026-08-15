@@ -1,5 +1,4 @@
 // Verzeichnisvergleich (eine Ebene): Links/Rechts gegenueberstellen.
-// (Port von core/diff.py)
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

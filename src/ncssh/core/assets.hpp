@@ -1,6 +1,5 @@
 // Pfade zu mitgelieferten Ressourcen (Logos, Icons).
 // Im C++-Port liegen die Assets im Qt-Ressourcensystem (":/assets/...").
-// (Port von core/assets.py)
 #pragma once
 
 #include <QString>

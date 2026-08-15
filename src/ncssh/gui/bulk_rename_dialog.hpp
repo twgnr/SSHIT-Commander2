@@ -1,7 +1,6 @@
 // Massen-Umbenennen: Suchen/Ersetzen (Text/Platzhalter/Regex), Praefix/Suffix,
 // Nummerierung, Gross-/Kleinschreibung, Endung — mit Live-Vorschau,
 // Konfliktauflösung und gefahrloser Ausfuehrungsreihenfolge.
-// (Port von gui/bulk_rename_dialog.py)
 #pragma once
 
 #include "ncssh/core/bulkrename.hpp"

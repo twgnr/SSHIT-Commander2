@@ -4,7 +4,7 @@
 // "Uebertragungen / Kopieren / Bearbeiten" wenig aussagekraeftig. Die hier
 // gezeichneten Glyphen sind eindeutig. Die Farbe wird uebergeben (i.d.R. die
 // Textfarbe des aktuellen Themes), sodass die Icons in hellen wie dunklen
-// Themes lesbar bleiben.  (Port von gui/icons.py)
+// Themes lesbar bleiben.
 #pragma once
 
 #include <QColor>

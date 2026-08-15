@@ -1,5 +1,4 @@
 // SSH-Port-Forwarding ueber libssh2: lokal (-L), remote (-R), dynamisch (-D).
-// (Port von net/tunnels.py; asyncssh -> libssh2 mit eigenen Pump-Threads)
 #pragma once
 
 #include "ncssh/core/models.hpp"

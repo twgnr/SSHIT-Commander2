@@ -1,7 +1,6 @@
 // Such-Befehle (Dateiname / Inhalt) — OS-abhaengig, rein/testbar.
 // Unterstuetzt Wildcards (Glob) und Regex sowie diverse Filter (Typ, Binaer-
 // dateien einbeziehen, ganzes Wort, Ordner ausschliessen, nur Dateinamen).
-// (Port von core/search.py)
 #pragma once
 
 #include <QString>

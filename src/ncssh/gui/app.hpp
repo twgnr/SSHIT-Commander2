@@ -1,5 +1,4 @@
 // GUI-Einstiegspunkt: QApplication + Async-Bruecke + Hauptfenster.
-// (Port von gui/app.py)
 #pragma once
 
 namespace ncssh::gui {

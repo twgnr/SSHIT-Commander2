@@ -3,7 +3,6 @@
 // Interpretiert SGR-Farben (16/256/Truecolor, fett/kursiv/unterstrichen),
 // behandelt Zeilenumbruch, Wagenruecklauf und Zeile-Loeschen; andere
 // Steuersequenzen werden verworfen, statt als "Muell" angezeigt zu werden.
-// (Port von gui/ansi.py)
 #pragma once
 
 #include <QColor>

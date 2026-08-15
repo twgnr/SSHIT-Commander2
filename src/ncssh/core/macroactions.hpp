@@ -1,7 +1,7 @@
 // Ausfuehrung der Makro-Aktionen — geraeteunabhaengiger Port des Stream-Deck-
-// Handlers.  (Port von core/macroactions.py)
+// Handlers.
 //
-// Anders als das Original laeuft hier KEINE Stream-Deck-Hardware: Tasten werden
+// Es laeuft KEINE Stream-Deck-Hardware: Tasten werden
 // in der Qt-Oberflaeche angeklickt. Die Aktionslogik (Programme starten,
 // Tastatur/Maus simulieren, Fenster verwalten, HTTP, Medien) ist uebernommen.
 //

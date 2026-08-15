@@ -1,5 +1,4 @@
 // Hauptfenster: Tabs (Arbeitsbereiche), Menues, Toolbar, Statusleiste.
-// (Port von gui/main_window.py, funktional zusammengefasst)
 #pragma once
 
 #include "ncssh/core/models.hpp"

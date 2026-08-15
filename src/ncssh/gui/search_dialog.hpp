@@ -1,6 +1,5 @@
 // System-Suche: Dateiname-Suche und Inhalts-Suche (grep) mit Wildcards/Regex,
 // Ausschluessen, Filtern; Ergebnisse laufen live ein.
-// (Port von gui/search_dialog.py)
 #pragma once
 
 #include "ncssh/core/filesearch.hpp"

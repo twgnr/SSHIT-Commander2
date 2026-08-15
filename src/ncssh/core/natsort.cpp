@@ -1,4 +1,4 @@
-// Natuerliche Sortierung.  (Port von core/natsort.py)
+// Natuerliche Sortierung.
 #include "ncssh/core/natsort.hpp"
 
 #include <algorithm>
@@ -33,12 +33,12 @@ NaturalKey naturalKey(const QString &text)
 {
     // Entspricht re.split(r"(\d+)", text): Text- und Zahlabschnitte im Wechsel,
     // inklusive leerer Textstuecke am Anfang/Ende — die bleiben erhalten, damit
-    // die Vergleichsreihenfolge exakt der des Originals entspricht.
+    // die Vergleichsreihenfolge stabil bleibt.
     NaturalKey key;
     const int n = text.size();
     int i = 0;
     for (;;) {
-        // Textabschnitt (ggf. leer), kleingeschrieben wie im Original.
+        // Textabschnitt (ggf. leer), kleingeschrieben.
         int start = i;
         while (i < n && !text.at(i).isDigit())
             ++i;

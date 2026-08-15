@@ -3,7 +3,6 @@
 // Unterstuetzt unverschluesselte PPK v2/v3 fuer ssh-ed25519, ssh-rsa, ecdsa-*
 // und ssh-dss. Verschluesselte PPK werden abgelehnt (Hinweis: in PuTTYgen als
 // OpenSSH exportieren). Reine Bytes-Verarbeitung, gut testbar.
-// (Port von core/ppk.py)
 #pragma once
 
 #include <QByteArray>

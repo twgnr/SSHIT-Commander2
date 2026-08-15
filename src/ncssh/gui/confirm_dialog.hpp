@@ -1,6 +1,5 @@
 // Bestaetigungsdialoge: zeigen vor Kopier-/Verschiebe-/Umbenenn-/Loesch-Aktionen
 // die betroffenen Pfade (Quelle -> Ziel) und fuehren die Aktion erst nach OK aus.
-// (Port von gui/confirm_dialog.py)
 #pragma once
 
 #include <QDialog>

@@ -1,5 +1,4 @@
 // Pfad-Lesezeichen, pro Server gruppiert (Key = Profilname bzw. "local").
-// (Port von core/bookmarks.py)
 #pragma once
 
 #include <QHash>

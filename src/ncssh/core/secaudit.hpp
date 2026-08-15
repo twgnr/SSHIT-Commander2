@@ -1,5 +1,5 @@
 // Sicherheits-Audit: Parser fuer OS-/Paketdaten (rein, ohne I/O) plus
-// Online-CVE-Abgleich ueber OSV.dev.  (Port von core/secaudit.py und net/cve.py)
+// Online-CVE-Abgleich ueber OSV.dev.
 //
 // Die Parser sind ohne Netzwerk testbar; osvQuerybatch/osvGetVuln fragen die
 // freie OSV-API (ohne API-Key) blockierend ab und laufen ueber die AsyncBridge

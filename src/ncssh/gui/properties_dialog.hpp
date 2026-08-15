@@ -1,5 +1,5 @@
 // Eigenschaften & Rechte: Groesse/Owner/Datum + chmod-Editor mit rwx-Checkboxen
-// und Oktal-Anzeige.  (Port von gui/properties_dialog.py)
+// und Oktal-Anzeige.
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

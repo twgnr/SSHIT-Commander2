@@ -1,7 +1,6 @@
 // Sichere Ablage von Passwoertern/Passphrasen im OS-Keyring.
 // Windows: Credential Manager (WinVault). Faellt der Keyring aus, schlaegt der
 // Zugriff still fehl — es wird nichts im Klartext persistiert.
-// (Port von core/secrets.py)
 #pragma once
 
 #include <QString>

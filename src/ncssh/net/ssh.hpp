@@ -1,7 +1,6 @@
 // libssh2-Anbindung: Verbindung, SFTP-Dateisystem, Remote-Runner, PTY-Shell.
 // Hier — und NUR hier — wird libssh2 eingebunden. Die obere Schicht sieht
 // ausschliesslich die Interfaces FileSystemProvider und CommandRunner.
-// (Port von net/ssh.py; asyncssh -> libssh2)
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

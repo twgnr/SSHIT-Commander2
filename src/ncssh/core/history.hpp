@@ -1,4 +1,4 @@
-// Persistente Befehlshistorie + Favoriten (JSON).  (Port von core/history.py)
+// Persistente Befehlshistorie + Favoriten (JSON).
 #pragma once
 
 #include <QString>

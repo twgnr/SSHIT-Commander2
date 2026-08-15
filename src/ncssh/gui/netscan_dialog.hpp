@@ -1,6 +1,5 @@
 // Netzwerk-Scanner: Ziele/Ports waehlen, Hosts live einlaufen lassen
 // (IP, Name, MAC/Hersteller, offene Ports, Freigaben, Weboberflaeche).
-// (Port von gui/netscan_dialog.py)
 #pragma once
 
 #include "ncssh/core/netscan.hpp"

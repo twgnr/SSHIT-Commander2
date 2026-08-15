@@ -434,7 +434,7 @@ bool ConsolePanel::eventFilter(QObject *obj, QEvent *event)
             return true;
         }
         if (ke->key() == Qt::Key_Escape) {
-            // Wie im Original: erst die Suchleiste schliessen, sonst abbrechen.
+            // Erst die Suchleiste schliessen, sonst abbrechen.
             if (m_searchBar && m_searchBar->isVisible()) {
                 hideSearch();
                 return true;

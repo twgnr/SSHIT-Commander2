@@ -1,6 +1,5 @@
 // Datei-Pane: Pfadzeile, Dateitabelle, Navigation und Datei-Operationen.
 // Arbeitet gegen einen FileSystemProvider (lokal oder SFTP/sudo) — transparent.
-// (Port von gui/file_panel.py; funktional zusammengefasst)
 #pragma once
 
 #include "ncssh/core/bookmarks.hpp"
@@ -232,8 +231,7 @@ private:
     QTimer *m_typeAheadTimer = nullptr;
 
     // App-weite Zwischenablage — funktioniert auch fuer Remote-Pfade und kennt
-    // den Unterschied zwischen Kopieren und Ausschneiden. (Original: Klassen-
-    // attribute von FilePanel.)
+    // den Unterschied zwischen Kopieren und Ausschneiden.
     static core::FileSystemProvider *s_clipProvider;
     static QStringList s_clipPaths;
     static bool s_clipMove;

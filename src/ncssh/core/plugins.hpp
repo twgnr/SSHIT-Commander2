@@ -1,5 +1,4 @@
 // Externe Plugins (eigenstaendige Programme) verwalten und starten.
-// (Port von core/plugins.py)
 //
 // Programme werden im Ordner "plugins/" im Hauptverzeichnis der Anwendung
 // abgelegt (eigene Unterordner je Programm). In der Verwaltung wird die
@@ -9,13 +8,13 @@
 // * Arbeitsverzeichnis,
 // * Kontextmenue (Datei/Ordner) — dann wird der Pfad des Elements uebergeben.
 //
-// Die Metadaten liegen in <config>/plugins.json. Gestartet wird — wie im
-// Original via subprocess — als externer Prozess ueber QProcess.
+// Die Metadaten liegen in <config>/plugins.json. Gestartet wird als
+// externer Prozess ueber QProcess.
 //
-// Namespace-Hinweis: Die Funktionsnamen des Python-Moduls (load, save, launch,
-// ...) sind bewusst in einem eigenen Namespace ncssh::core::plugins gekapselt,
-// damit die generischen Namen den flachen core-Namespace nicht verschmutzen —
-// Aufrufe lesen sich wie im Original: plugins::load().
+// Namespace-Hinweis: Die generischen Funktionsnamen (load, save, launch, ...)
+// sind bewusst in einem eigenen Namespace ncssh::core::plugins gekapselt,
+// damit sie den flachen core-Namespace nicht verschmutzen — Aufrufe lesen
+// sich dann als plugins::load().
 #pragma once
 
 #include <QJsonObject>
@@ -29,8 +28,7 @@ namespace ncssh::core::plugins {
 const std::vector<std::pair<QString, QString>> &targetLabels();
 
 // Hauptverzeichnis der Anwendung (neben der EXE).
-// Das Original unterscheidet PyInstaller/Nuitka/Quellcode-Lauf; im C++-Build
-// ist das schlicht das Verzeichnis der laufenden EXE.
+// Schlicht das Verzeichnis der laufenden EXE.
 QString appBaseDir();
 
 // "plugins/"-Ordner; wird bei Bedarf angelegt.

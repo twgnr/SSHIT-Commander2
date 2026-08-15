@@ -50,7 +50,7 @@ void deleteSecret(const QString &profileName, const QString &kind)
     CredDeleteW(reinterpret_cast<LPCWSTR>(target.utf16()), CRED_TYPE_GENERIC, 0);
 }
 
-#else  // POSIX: kein Keyring-Backend eingebaut -> stiller No-Op wie in Python
+#else  // POSIX: kein Keyring-Backend eingebaut -> stiller No-Op
 
 void setSecret(const QString &, const QString &, const QString &) {}
 std::optional<QString> getSecret(const QString &, const QString &) { return std::nullopt; }

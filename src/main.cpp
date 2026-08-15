@@ -1,4 +1,4 @@
-// Einstiegspunkt (Port von __main__.py -> gui/app.py::main)
+// Einstiegspunkt
 #include "ncssh/gui/app.hpp"
 
 int main(int argc, char *argv[])

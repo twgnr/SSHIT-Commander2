@@ -1,6 +1,6 @@
 // Konsole: Befehl -> Ausgabe mit CWD-Sync und Historie, ueber den CommandRunner
 // (lokal oder remote). Remote-Befehle laufen ueber ein PTY (runTerminal), lokale
-// zeilenbasiert.  (Port von gui/console_panel.py + console_widget.py, zusammengefasst)
+// zeilenbasiert.
 #pragma once
 
 #include "ncssh/core/history.hpp"

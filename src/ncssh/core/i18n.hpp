@@ -1,6 +1,6 @@
 // Leichtgewichtige Mehrsprachigkeit — der deutsche Quelltext ist der Schluessel.
-// (Port von core/i18n.py; heisst hier _t statt tr, um QObject::tr nicht zu
-// verdecken.)  Kataloge liegen als flaches JSON unter :/i18n/<code>.json.
+// Die Funktion heisst _t statt tr, um QObject::tr nicht zu verdecken.
+// Kataloge liegen als flaches JSON unter :/i18n/<code>.json.
 #pragma once
 
 #include <QString>

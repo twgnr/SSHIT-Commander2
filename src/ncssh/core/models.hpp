@@ -1,4 +1,4 @@
-// Reine Datenmodelle — keine Logik, keine I/O.  (Port von core/models.py)
+// Reine Datenmodelle — keine Logik, keine I/O.
 #pragma once
 
 #include <QDateTime>

@@ -1,6 +1,6 @@
 // Import gespeicherter Sitzungen aus PuTTY und WinSCP (Windows) sowie
 // ~/.ssh/config. Passwoerter werden nicht uebernommen; Key-Pfade und
-// Verbindungsdaten werden importiert.  (Port von core/importers.py)
+// Verbindungsdaten werden importiert.
 #pragma once
 
 #include "ncssh/core/models.hpp"

@@ -1,12 +1,11 @@
 // KI-Assistent: Orchestrierung rund um den lokalen Ollama-Server.
-// (Port von core/ai.py; enthaelt zusaetzlich den Ollama-HTTP-Client aus
-// net/ollama.py — HTTP via QNetworkAccessManager, blockierend im Worker.)
+// Enthaelt zusaetzlich den Ollama-HTTP-Client (QNetworkAccessManager,
+// blockierend im Worker).
 //
 // Buendelt drei Dinge, alle UI-frei und damit testbar:
 //
 // * Einstellungen — schlanke Accessoren ueber core/settings.
-// * Streaming — die blockierenden Streaming-Generatoren des Originals werden
-//   zu blockierenden Methoden mit Zeilen-Callback (LineCallback) und
+// * Streaming — blockierende Methoden mit Zeilen-Callback (LineCallback) und
 //   kooperativem Abbruch (CancelTokenPtr); die GUI konsumiert sie ueber
 //   AsyncBridge::stream. Der Blocking->Async-Adapter (_aiter_blocking)
 //   entfaellt, weil die Bridge bereits Worker-Threads stellt.
@@ -18,7 +17,7 @@
 #pragma once
 
 #include "ncssh/core/runner.hpp"   // LineCallback, CancelTokenPtr
-#include "ncssh/net/ollama.hpp"    // HTTP-Schicht (wie core/ai.py -> net.ollama)
+#include "ncssh/net/ollama.hpp"    // HTTP-Schicht
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -38,8 +37,8 @@ QString ollamaUrl();
 QString aiModel();
 
 // --- Ollama-Anbindung --------------------------------------------------------
-// Die HTTP-Schicht selbst liegt in net/ollama (eine Implementierung, wie im
-// Original); hier stehen nur die Adapter, die die GUI benutzt.
+// Die HTTP-Schicht selbst liegt in net/ollama; hier stehen nur die Adapter,
+// die die GUI benutzt.
 
 inline constexpr const char *OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434";
 inline constexpr int OLLAMA_CONNECT_TIMEOUT_MS = net::kConnectTimeoutMs;

@@ -26,7 +26,7 @@ struct Topic {
     QString body;   // Markdown
 };
 
-// Handbuch-Themen (feldgenaue Bedienungsdoku wie im Original).
+// Handbuch-Themen (feldgenaue Bedienungsdoku).
 const std::vector<Topic> &topics()
 {
     static const std::vector<Topic> list = {

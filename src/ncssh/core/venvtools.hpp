@@ -1,5 +1,4 @@
 // Hilfen rund um Python-virtuelle-Umgebungen (venv/pipenv).
-// (Port von core/venvtools.py)
 //
 // Erzeugt die Shell-Befehle zum Anlegen/Aktivieren einer venv und findet
 // bekannte Umgebungen auf der Platte. Keine GUI, kein Qt-Widgets.

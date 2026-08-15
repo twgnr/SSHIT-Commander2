@@ -1,5 +1,4 @@
 // Tests fuer die Datei-Alarm-Logik (scanDir/diffSnapshots/Spec) — ohne Qt-GUI.
-// (Port von tests/test_filealarm.py)
 #include "tests/harness.hpp"
 
 #include "ncssh/core/filealarm.hpp"

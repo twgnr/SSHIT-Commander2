@@ -1,6 +1,6 @@
 // SSH-Schluessel erzeugen und zwischen OpenSSH und PuTTY (PPK) konvertieren.
 // Erzeugung ueber das systemeigene ssh-keygen (OpenSSH-Format); die PPK-
-// Konvertierung nutzt core/ppk.  (Port von core/keytools.py)
+// Konvertierung nutzt core/ppk.
 #pragma once
 
 #include <QByteArray>

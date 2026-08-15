@@ -1,4 +1,4 @@
-// Live-Datenquellen fuer dynamische Makro-Tasten.  (Port von core/dataproviders.py)
+// Live-Datenquellen fuer dynamische Makro-Tasten.
 #include "ncssh/core/dataproviders.hpp"
 
 #include <QDate>
@@ -43,7 +43,7 @@ quint64 fileTimeToU64(const FILETIME &ft)
 }
 #endif
 
-// CPU-Auslastung in Prozent. Wie psutil.cpu_percent(): Differenz seit dem
+// CPU-Auslastung in Prozent: Differenz seit dem
 // letzten Aufruf; der allererste Aufruf liefert 0.
 double cpuPercent()
 {
@@ -70,7 +70,7 @@ double cpuPercent()
 #endif
 }
 
-// RAM-Auslastung in Prozent (wie psutil.virtual_memory().percent).
+// RAM-Auslastung in Prozent.
 double ramPercent()
 {
 #ifdef Q_OS_WIN
@@ -109,12 +109,12 @@ QString disk()
 }
 
 // Anzeigename -> (Beschriftung im Editor, Funktion, braucht System-Statistik?)
-// Beschriftungen laufen wie im Original NICHT durch die Uebersetzung.
+// Beschriftungen laufen bewusst NICHT durch die Uebersetzung.
 struct Provider {
     const char *name;
     const char *label;
     QString (*fn)();
-    bool needsPsutil;
+    bool needsSystemStats;
 };
 
 constexpr Provider kProviders[] = {
@@ -151,10 +151,10 @@ QString providerLabel(const QString &name)
     return p ? QString::fromUtf8(p->label) : QStringLiteral("?");
 }
 
-bool needsPsutil(const QString &name)
+bool needsSystemStats(const QString &name)
 {
     const Provider *p = find(name);
-    return p && p->needsPsutil;
+    return p && p->needsSystemStats;
 }
 
 QString value(const QString &name)
@@ -169,10 +169,9 @@ QString value(const QString &name)
     }
 }
 
-bool psutilAvailable()
+bool systemStatsAvailable()
 {
     // System-Statistiken sind unter Windows per WinAPI eingebaut; die
-    // psutil-Abfrage des Originals entfaellt dort.
 #ifdef Q_OS_WIN
     return true;
 #else

@@ -1,5 +1,4 @@
 // Tab-Favoriten: gespeicherte Tab-Layouts (pro Tab: Verbindung + Pane-Pfade).
-// (Port von core/tabfavorites.py)
 //
 // Bewusst getrennt von den Pfad-Lesezeichen (core/bookmarks). Hier wird ein
 // kompletter Satz Tabs als benannter Favorit abgelegt, um ihn spaeter wieder
@@ -33,7 +32,7 @@ public:
     bool rename(const QString &oldName, const QString &newName);
 
 private:
-    // Eintraege in Einfuege-Reihenfolge (wie ein Python-Dict).
+    // Eintraege in Einfuege-Reihenfolge.
     using Entry = std::pair<QString, std::vector<QJsonObject>>;
 
     std::vector<Entry>::iterator findEntry(const QString &name);

@@ -1,6 +1,5 @@
 // Befehlsverlauf & Favoriten: Befehle aus der Historie als Favorit speichern
 // und per Doppelklick in die aktive Konsole einfuegen.
-// (Port von gui/history_dialog.py)
 #pragma once
 
 #include "ncssh/core/history.hpp"

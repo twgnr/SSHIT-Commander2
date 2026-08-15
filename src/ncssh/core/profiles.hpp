@@ -1,5 +1,4 @@
 // Persistente Verwaltung gespeicherter Server-Profile (JSON).
-// (Port von core/profiles.py)
 #pragma once
 
 #include "ncssh/core/models.hpp"

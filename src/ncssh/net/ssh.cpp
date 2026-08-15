@@ -182,7 +182,7 @@ static QString lastSshError(LIBSSH2_SESSION *session)
     return msg ? QString::fromUtf8(msg) : QStringLiteral("SSH-Fehler");
 }
 
-// Fingerprint wie asyncssh: "SHA256:" + Base64(SHA256(hostkey)) ohne Padding.
+// Fingerprint: "SHA256:" + Base64(SHA256(hostkey)) ohne Padding.
 static QString hostFingerprint(LIBSSH2_SESSION *session, QString &algoOut)
 {
     int keyType = 0;

@@ -1,13 +1,13 @@
-// Async-Bruecke: Worker-Thread-Pool statt asyncio-Loop.  (Port von gui/bridge.py)
+// Async-Bruecke: Worker-Thread-Pool fuer blockierende Arbeit.
 //
 // Die gesamte Logik-/Netzwerk-Schicht (libssh2, lokale Subprozesse) laeuft auf
 // Worker-Threads. Ergebnisse werden ueber Qt-Queued-Invokes thread-sicher ins
 // GUI gereicht. So bleibt das Qt-Fenster jederzeit responsiv.
 //
-// Python-Aequivalenz:
-//   bridge.run_coro(coro, on_done, on_error)  ->  bridge.run<T>(job, onDone, onError)
-//   bridge.stream(agen, on_line, ...)         ->  bridge.stream(job, onLine, ...)
-//   bridge.cancel(task)                       ->  bridge.cancel(task)
+// Einstiegspunkte:
+//   bridge.run<T>(job, onDone, onError)   — Ergebnis-Job
+//   bridge.stream(job, onLine, ...)       — zeilenweise Ausgabe
+//   bridge.cancel(task)                   — kooperativer Abbruch
 #pragma once
 
 #include <QMetaObject>

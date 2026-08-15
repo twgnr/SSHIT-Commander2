@@ -11,6 +11,7 @@
 #include <QPointF>
 #include <QPolygonF>
 #include <QRectF>
+#include <QtMath>
 #include <functional>
 
 namespace ncssh::gui {
@@ -167,13 +168,62 @@ void drawDelete(QPainter &p, qreal s, const QColor &c)
 
 void drawReload(QPainter &p, qreal s, const QColor &c)
 {
-    // Kreisbogen mit Pfeilspitze.
+    // Kreispfeil: offener Bogen mit gefuellter Spitze, die in die Luecke zeigt.
+    // Die Spitze sitzt tangential am Bogenanfang, damit die Drehrichtung
+    // (im Uhrzeigersinn) auch bei 16 px eindeutig lesbar bleibt.
+    const qreal r = s * 0.28;
+    const QPointF center(s * 0.5, s * 0.5);
+    const qreal startDeg = 125.0;   // Bogenanfang oben links
+    const qreal spanDeg = 275.0;    // deutliche Luecke oben rechts
+
+    p.setPen(strokePen(c, s * 0.125));
+    p.setBrush(Qt::NoBrush);
+    p.drawArc(QRectF(center.x() - r, center.y() - r, 2 * r, 2 * r),
+              int(startDeg * 16), int(spanDeg * 16));
+
+    // Spitze deutlich breiter als die Strichstaerke, sonst verschwindet sie bei
+    // 16 px im Bogen. Sie sitzt AUF dem Bogenende (leicht nach hinten versetzt),
+    // damit sie nicht wie ein Faehnchen aus dem Kreis ragt.
+    const qreal a = qDegreesToRadians(startDeg);
+    const QPointF base(center.x() + r * qCos(a), center.y() - r * qSin(a));
+    const QPointF dir(qSin(a), qCos(a));          // Tangente im Uhrzeigersinn
+    const QPointF nrm(-dir.y(), dir.x());
+    const QPointF back = base - dir * (s * 0.05);
+    QPolygonF head;
+    head << base + dir * (s * 0.18) << back + nrm * (s * 0.145)
+         << back - nrm * (s * 0.145);
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.drawPolygon(head);
+}
+
+// Fuenfzackiger Stern, Spitze oben. Der Mittelpunkt liegt bewusst leicht unter
+// der Bildmitte, damit die hohe Spitze das Zeichen nicht nach oben zieht.
+QPolygonF starPolygon(qreal s)
+{
+    const QPointF center(s * 0.5, s * 0.54);
+    const qreal outer = s * 0.40, inner = s * 0.168;
+    QPolygonF poly;
+    for (int i = 0; i < 10; ++i) {
+        const qreal r = (i % 2 == 0) ? outer : inner;
+        const qreal a = qDegreesToRadians(90.0 + i * 36.0);
+        poly << QPointF(center.x() + r * qCos(a), center.y() - r * qSin(a));
+    }
+    return poly;
+}
+
+void drawStar(QPainter &p, qreal s, const QColor &c)
+{
     p.setPen(strokePen(c, s * 0.09));
     p.setBrush(Qt::NoBrush);
-    const QRectF box(s * 0.20, s * 0.20, s * 0.60, s * 0.60);
-    p.drawArc(box, 60 * 16, 260 * 16);
-    p.drawLine(QPointF(s * 0.70, s * 0.24), QPointF(s * 0.72, s * 0.40));
-    p.drawLine(QPointF(s * 0.72, s * 0.40), QPointF(s * 0.56, s * 0.36));
+    p.drawPolygon(starPolygon(s));
+}
+
+void drawStarFilled(QPainter &p, qreal s, const QColor &c)
+{
+    p.setPen(strokePen(c, s * 0.09));
+    p.setBrush(c);
+    p.drawPolygon(starPolygon(s));
 }
 
 void drawSearch(QPainter &p, qreal s, const QColor &c)
@@ -290,7 +340,7 @@ void drawArrowUp(QPainter &p, qreal s, const QColor &c)
 
 void drawBookmark(QPainter &p, qreal s, const QColor &c)
 {
-    // Gefuelltes Lesezeichen mit Kerbe unten (wie im Original).
+    // Gefuelltes Lesezeichen mit Kerbe unten.
     p.setPen(Qt::NoPen);
     p.setBrush(c);
     const qreal w = s * 0.6;
@@ -329,6 +379,8 @@ const QHash<QString, DrawFn> &registry()
         {QStringLiteral("tab"), drawTab},
         {QStringLiteral("play"), drawPlay},
         {QStringLiteral("bookmark"), drawBookmark},
+        {QStringLiteral("star"), drawStar},
+        {QStringLiteral("star-filled"), drawStarFilled},
         {QStringLiteral("nav-back"), drawArrowLeft},
         {QStringLiteral("nav-forward"), drawArrowRight},
         {QStringLiteral("nav-up"), drawArrowUp},

@@ -1,4 +1,4 @@
-// Bekannte Host-Keys (Trust-on-First-Use).  (Port von core/hostkeys.py)
+// Bekannte Host-Keys (Trust-on-First-Use).
 //
 // Speichert Fingerprints pro "host:port|algorithmus". Das Pinning PRO KEY-TYP
 // verhindert Fehlalarme, wenn ein Server mehrere Host-Keys anbietet (z.B.

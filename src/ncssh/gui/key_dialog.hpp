@@ -1,5 +1,5 @@
 // Dialog zum Erzeugen von SSH-Schluesseln und zum Konvertieren zwischen
-// OpenSSH und PuTTY (PPK).  (Port von gui/key_dialog.py)
+// OpenSSH und PuTTY (PPK).
 #pragma once
 
 #include "ncssh/gui/bridge.hpp"

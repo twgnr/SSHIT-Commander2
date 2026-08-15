@@ -1,7 +1,7 @@
 // Makro-Manager: Raster frei belegbarer Tasten in mehreren Layern.
 // Zwei Modi: Bearbeiten (Klick oeffnet den Tasten-Editor) und Ausfuehren
 // (Klick loest die Aktion aus). Optional wechselt der Layer automatisch zum
-// zuletzt aktiven Programm.  (Port von gui/macro_manager_dialog.py)
+// zuletzt aktiven Programm.
 #pragma once
 
 #include "ncssh/core/macroactions.hpp"

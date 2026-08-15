@@ -1,5 +1,4 @@
 // Einzeldatei-Vergleich: zwei Dateien als farbiger Unified-Diff.
-// (Port von gui/filediff_dialog.py)
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

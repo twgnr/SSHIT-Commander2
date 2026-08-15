@@ -7,7 +7,6 @@
 //
 // Reine Navigations-/Editor-Tasten (Tab, Backspace, Alt+Pfeile, Space, F2 ...)
 // sind bewusst NICHT hier — sie bleiben fest verdrahtet.
-// (Port von core/shortcuts.py)
 #pragma once
 
 #include <QHash>

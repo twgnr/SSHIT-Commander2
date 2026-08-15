@@ -1,7 +1,6 @@
 // Befehlspalette: tabellarischer, sortierbarer Katalog nuetzlicher Shell-Befehle
 // (Befehl · Kategorie · Plattform · Beschreibung) mit OS-Filter und Suche.
 // Gefaehrliche Befehle sind farbig markiert.
-// (Port von gui/command_palette.py)
 #pragma once
 
 #include "ncssh/core/commands.hpp"

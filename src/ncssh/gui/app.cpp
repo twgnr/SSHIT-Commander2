@@ -1,5 +1,4 @@
 // GUI-Einstiegspunkt: QApplication + Async-Bruecke + Hauptfenster.
-// (Port von gui/app.py)
 #include "ncssh/gui/app.hpp"
 
 #include "ncssh/core/assets.hpp"

@@ -1,6 +1,5 @@
 // Verzeichnis-Vergleich/Sync: beide Panes gegenueberstellen (nur links/rechts,
 // neuer), optional rekursiv, und per Klick angleichen (ueber die Transfer-Queue).
-// (Port von gui/diff_dialog.py)
 #pragma once
 
 #include "ncssh/core/diff.hpp"

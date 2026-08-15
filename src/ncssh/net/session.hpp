@@ -1,5 +1,4 @@
 // Verwaltet aktive SSH-Sessions (Connection-Pool, einfaches Lifecycle).
-// (Port von net/session.py)
 #pragma once
 
 #include "ncssh/core/hostkeys.hpp"

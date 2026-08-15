@@ -1,5 +1,4 @@
 // Lokale Such-Engine in reinem C++ - grep-aehnlich, plattformunabhaengig.
-// (Port von core/filesearch.py)
 //
 // Wird fuer LOKALE Suchen genutzt (insb. Windows, wo findstr schwach ist) und
 // liefert dieselben Treffer-Zeilen wie grep/findstr ("pfad:zeile:text" bzw. nur

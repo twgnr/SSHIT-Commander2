@@ -1,5 +1,4 @@
 // Tests fuer die Sicherheits-Audit-Parser (core/secaudit) — rein, ohne I/O.
-// (Port von tests/test_secaudit.py)
 #include "tests/harness.hpp"
 
 #include "ncssh/core/secaudit.hpp"

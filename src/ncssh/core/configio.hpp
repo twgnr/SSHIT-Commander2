@@ -4,7 +4,7 @@
 // GitHub, Server, Lesezeichen, Tab-Favoriten, Befehlsverlauf). Geheimnisse
 // (Passwoerter, GitHub-Token) liegen im OS-Schluesselbund und werden bewusst
 // NICHT exportiert. Host-Keys (TOFU) sind rechnerspezifisch und ebenfalls
-// ausgenommen.  (Port von core/configio.py)
+// ausgenommen.
 #pragma once
 
 #include <QJsonObject>

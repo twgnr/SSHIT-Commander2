@@ -1,6 +1,5 @@
 // Git-Status fuer ein Verzeichnis (Badges M/A/D/R/? je direktem Kind).
 // parsePorcelain ist rein/testbar; gitStatus fuehrt git aus (im Worker-Thread).
-// (Port von core/gitstatus.py)
 #pragma once
 
 #include <QHash>

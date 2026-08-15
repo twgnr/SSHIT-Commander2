@@ -1,5 +1,4 @@
 // Tests fuer die reine Massen-Umbenenn-Logik (core/bulkrename).
-// (Port von tests/test_bulkrename.py)
 #include "tests/harness.hpp"
 
 #include "ncssh/core/bulkrename.hpp"

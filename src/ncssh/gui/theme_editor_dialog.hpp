@@ -1,6 +1,5 @@
 // Theme-Editor: eigene Farbschemata anlegen, bearbeiten und loeschen —
 // mit Live-Vorschau auf dem Dialog selbst.
-// (Port von gui/theme_editor_dialog.py)
 #pragma once
 
 #include "ncssh/gui/style.hpp"

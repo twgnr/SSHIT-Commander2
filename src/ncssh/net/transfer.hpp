@@ -1,6 +1,5 @@
 // Datei-Transfer zwischen zwei Providern, mit optionalem Fortschritt.
 // Unterstuetzt lokal<->lokal, lokal<->remote (Up-/Download) und remote<->remote.
-// (Port von net/transfer.py)
 #pragma once
 
 #include "ncssh/core/filesystem.hpp"

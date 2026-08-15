@@ -1,5 +1,4 @@
 // Einzeldatei-Vergleich: erzeugt einen Unified-Diff (Zeile, Art).
-// (Port von core/filediff.py; difflib -> eigener LCS-basierter Unified-Diff)
 #pragma once
 
 #include <QString>
