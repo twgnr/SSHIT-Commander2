@@ -69,9 +69,17 @@ foreach ($dir in @("platforms", "styles", "imageformats", "iconengines",
     $src = Join-Path $build $dir
     if (Test-Path $src) { Copy-Item -Recurse $src $stage }
 }
-# Begleitende Unterlagen mitgeben (Drittanbieter-Hinweise!).
-foreach ($doc in @("README.md", "CHANGELOG.md")) {
+# Begleitende Unterlagen mitgeben. LICENSE und licenses/ sind PFLICHT: Qt wird
+# unter der LGPL v3 weitergegeben, die bei Binaerweitergabe den Lizenztext und
+# den Verweis auf die Qt-Quellen verlangt; libssh2 (BSD) verlangt den
+# Copyright-Hinweis.
+foreach ($doc in @("README.md", "LICENSE")) {
     if (Test-Path (Join-Path $root $doc)) { Copy-Item (Join-Path $root $doc) $stage }
+}
+if (Test-Path (Join-Path $root "licenses")) {
+    Copy-Item -Recurse (Join-Path $root "licenses") $stage
+} else {
+    Write-Warning "Ordner licenses/ fehlt - das Paket erfuellt die LGPL-Auflagen nicht."
 }
 if (Test-Path (Join-Path $root "plugins\README.txt")) {
     New-Item -ItemType Directory -Force (Join-Path $stage "plugins") | Out-Null

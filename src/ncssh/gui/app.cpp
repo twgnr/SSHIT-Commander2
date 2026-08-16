@@ -34,7 +34,9 @@ int appMain(int argc, char *argv[])
     setWindowsAppId();
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("SSHIT-Commander"));
-    app.setApplicationDisplayName(QStringLiteral("SSHIT-Commander"));
+    app.setApplicationVersion(QString::fromLatin1(SSHIT_VERSION));
+    // Bewusst KEIN applicationDisplayName: Qt haengt ihn sonst an jeden
+    // Fenstertitel an — das Hauptfenster fuehrt Name und Version bereits selbst.
 
     ncssh::core::setLanguage(ncssh::core::getSettingString(
         QStringLiteral("language"), QStringLiteral("de")));  // vor dem UI-Aufbau

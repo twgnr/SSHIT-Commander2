@@ -166,7 +166,12 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
                 m_githubNotice->setVisible(true);
             });
 
-    setWindowTitle(QStringLiteral("SSHIT-Commander"));
+    // Version + Entwicklungsstand im Titel — beides kommt aus CMake, damit es
+    // nicht doppelt gepflegt werden muss.
+    const QString appTitle = QStringLiteral("SSHIT-Commander %1 (%2)")
+                                 .arg(QString::fromLatin1(SSHIT_VERSION),
+                                      QString::fromLatin1(SSHIT_VERSION_STAGE));
+    setWindowTitle(appTitle);
     const QString iconPath = core::assetPath(QStringLiteral("sshit.png"));
     if (!iconPath.isEmpty())
         setWindowIcon(QIcon(QPixmap(iconPath)));
@@ -176,7 +181,7 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
     // System welche unterstuetzt. Klick auf den Ballon holt das Fenster nach vorn.
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
         m_tray = new QSystemTrayIcon(windowIcon(), this);
-        m_tray->setToolTip(QStringLiteral("SSHIT-Commander"));
+        m_tray->setToolTip(appTitle);
         connect(m_tray, &QSystemTrayIcon::messageClicked, this, [this] {
             showNormal();
             raise();
