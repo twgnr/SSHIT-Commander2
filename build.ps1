@@ -8,7 +8,11 @@
 # Professional/Enterprise/BuildTools und andere Installationspfade funktionieren.
 param(
     [switch]$Fresh,
-    [switch]$Package
+    [switch]$Package,
+    # Ueberschreibt die Stufe im Paketnamen, z. B. -Label "beta.1" fuer ein
+    # Release mit dem Tag v1.0.0-beta.1. Ohne Angabe wird SSHIT_VERSION_STAGE
+    # aus der CMakeLists genommen.
+    [string]$Label
 )
 
 $ErrorActionPreference = "Stop"
@@ -55,11 +59,29 @@ $build = Join-Path $root "build"
 $exe = Join-Path $build "sshit-commander.exe"
 if (-not (Test-Path $exe)) { throw "sshit-commander.exe nicht gefunden - Build fehlgeschlagen?" }
 
-$version = (Select-String -Path (Join-Path $root "CMakeLists.txt") `
+# Version und Entwicklungsstufe aus der CMakeLists lesen - eine Quelle fuer
+# Programm und Paketname. Ergebnis z. B.: SSHIT-Commander-1.0.0-beta-win64
+$cmakeFile = Join-Path $root "CMakeLists.txt"
+$version = (Select-String -Path $cmakeFile `
     -Pattern 'project\(.*VERSION\s+([0-9.]+)').Matches[0].Groups[1].Value
-$stage = Join-Path $build "package\SSHIT-Commander-$version"
-if (Test-Path (Split-Path $stage)) { Remove-Item -Recurse -Force (Split-Path $stage) }
-New-Item -ItemType Directory -Force $stage | Out-Null
+if ($Label) {
+    $channel = $Label
+} else {
+    $m = Select-String -Path $cmakeFile -Pattern 'SSHIT_VERSION_STAGE="([^"]*)"'
+    $channel = if ($m) { $m.Matches[0].Groups[1].Value } else { "" }
+}
+# Stabile Fassungen tragen keine Stufe im Namen.
+$channel = $channel.ToLowerInvariant()
+if ($channel -in @("release", "stable", "final")) { $channel = "" }
+
+$releaseName = "SSHIT-Commander-$version"
+if ($channel) { $releaseName += "-$channel" }
+$releaseName += "-win64"
+
+$stageDir = Join-Path $build "package\$releaseName"
+if (Test-Path (Split-Path $stageDir)) { Remove-Item -Recurse -Force (Split-Path $stageDir) }
+New-Item -ItemType Directory -Force $stageDir | Out-Null
+$stage = $stageDir
 
 Copy-Item $exe $stage
 Get-ChildItem "$build\*.dll" | Copy-Item -Destination $stage
@@ -86,7 +108,11 @@ if (Test-Path (Join-Path $root "plugins\README.txt")) {
     Copy-Item (Join-Path $root "plugins\README.txt") (Join-Path $stage "plugins")
 }
 
-$zip = Join-Path $build "SSHIT-Commander-$version.zip"
-if (Test-Path $zip) { Remove-Item -Force $zip }
-Compress-Archive -Path "$stage\*" -DestinationPath $zip
+# Aeltere Pakete derselben Version aufraeumen, damit kein veralteter Stand
+# neben dem neuen liegt und versehentlich hochgeladen wird.
+Get-ChildItem (Join-Path $build "SSHIT-Commander-*.zip") -ErrorAction SilentlyContinue |
+    Remove-Item -Force
+
+$zip = Join-Path $build "$releaseName.zip"
+Compress-Archive -Path "$stageDir\*" -DestinationPath $zip
 Write-Host "Paket erstellt: $zip"
