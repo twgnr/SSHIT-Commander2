@@ -28,6 +28,7 @@ class FakeExec
 public:
     QList<Call> calls;
     QList<QPair<QString, ExecResult>> replies;
+    QList<QPair<QString, ExecResult>> onceReplies;   // je Treffer nur einmal
 
     void reply(const QString &needle, const QByteArray &out, const QByteArray &err = {},
                int exitStatus = 0)
@@ -39,9 +40,28 @@ public:
         replies.append({needle, r});
     }
 
+    // Antwort, die nur fuer den ERSTEN passenden Aufruf gilt — z. B. ein
+    // einmalig abgelaufener sudo-Timestamp.
+    void replyOnce(const QString &needle, const QByteArray &out, const QByteArray &err = {},
+                   int exitStatus = 0)
+    {
+        ExecResult r;
+        r.out = out;
+        r.err = err;
+        r.exitStatus = exitStatus;
+        onceReplies.append({needle, r});
+    }
+
     ExecResult operator()(const QString &command, const QByteArray &stdinData)
     {
         calls.append({command, stdinData});
+        for (int i = 0; i < onceReplies.size(); ++i) {
+            if (command.contains(onceReplies[i].first)) {
+                const ExecResult res = onceReplies[i].second;
+                onceReplies.removeAt(i);
+                return res;
+            }
+        }
         for (const auto &[needle, res] : replies) {
             if (command.contains(needle))
                 return res;
@@ -110,9 +130,13 @@ SudoFileSystem makeFs(PosixPaths &paths, FakeExec &exec, const QString &password
 
 TEST(sudofs, write_password_never_in_data_stream)
 {
-    // Passwort-Modus: tee bekommt NUR die Daten, das Passwort geht an "sudo -v".
+    // Passwort-Modus mit abgelaufenem Timestamp: der erste Versuch wird von
+    // sudo abgelehnt, dann Auffrischen per "sudo -v" und Wiederholung. tee
+    // bekommt in BEIDEN Versuchen nur die Daten, das Passwort geht an "sudo -v".
     PosixPaths paths;
     FakeExec exec;
+    exec.replyOnce(QStringLiteral("tee"), {},
+                   QByteArrayLiteral("sudo: a password is required"), 1);
     SudoFileSystem fs = makeFs(paths, exec, QStringLiteral("s3cret"));
     fs.writeBytes(QStringLiteral("/etc/x.conf"), QByteArrayLiteral("payload-bytes"));
 
@@ -123,14 +147,27 @@ TEST(sudofs, write_password_never_in_data_stream)
         return;
     CHECK_EQ(refresh.first().stdinData, QByteArrayLiteral("s3cret\n"));
 
-    // ... und der tee-Aufruf mit -n, dessen stdin AUSSCHLIESSLICH die Nutzdaten sind.
+    // ... und die tee-Aufrufe mit -n, deren stdin AUSSCHLIESSLICH die Nutzdaten sind.
     const auto tee = exec.matching(QStringLiteral("tee"));
-    CHECK(!tee.isEmpty());
-    if (tee.isEmpty())
-        return;
-    CHECK(tee.first().command.startsWith(QStringLiteral("sudo -n ")));
-    CHECK_EQ(tee.first().stdinData, QByteArrayLiteral("payload-bytes"));
-    CHECK(!tee.first().stdinData.contains("s3cret"));
+    CHECK_EQ(tee.size(), qsizetype(2));   // abgelehnter Versuch + Wiederholung
+    for (const Call &call : tee) {
+        CHECK(call.command.startsWith(QStringLiteral("sudo -n ")));
+        CHECK_EQ(call.stdinData, QByteArrayLiteral("payload-bytes"));
+        CHECK(!call.stdinData.contains("s3cret"));
+    }
+}
+
+TEST(sudofs, valid_timestamp_skips_refresh)
+{
+    // Gueltiger Timestamp: genau EIN Exec pro Operation, kein "sudo -v" —
+    // das doppelte Kanal-Oeffnen je Listing war ein Performance-Problem.
+    PosixPaths paths;
+    FakeExec exec;
+    SudoFileSystem fs = makeFs(paths, exec, QStringLiteral("s3cret"));
+    fs.writeBytes(QStringLiteral("/etc/x.conf"), QByteArrayLiteral("abc"));
+
+    CHECK(exec.matching(QStringLiteral("-v")).isEmpty());
+    CHECK_EQ(exec.calls.size(), qsizetype(1));
 }
 
 TEST(sudofs, write_nopasswd_single_call)

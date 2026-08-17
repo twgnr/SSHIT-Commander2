@@ -122,6 +122,13 @@ QString resolveKeyPath(const QString &keyPath);
 // Pruefung erfolgt NACH dem Handshake, aber VOR jeder Authentifizierung.
 SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkeys);
 
+// Zweite, unabhaengige Verbindung zum Server einer bestehenden Session — als
+// eigene Datenleitung fuer Transfers, damit Listings/Konsole nicht am Session-
+// Mutex der Hauptverbindung warten. Der Host-Key MUSS exakt dem der bereits
+// verifizierten Hauptverbindung entsprechen. Liefert nullptr, wenn keine
+// zweite Verbindung moeglich ist (Server-Limit, 2FA, anderer Key, ...).
+SSHSessionPtr openSiblingSession(const SSHSessionPtr &base);
+
 // Interop: haengt den Host-Key der Session an OpenSSHs ~/.ssh/known_hosts an
 // (wird nach Nutzer-Bestaetigung eines neuen Keys aufgerufen).
 void addToOpenSshKnownHosts(const SSHSessionPtr &session, const QString &host, int port);

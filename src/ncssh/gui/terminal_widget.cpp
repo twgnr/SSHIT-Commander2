@@ -359,6 +359,10 @@ void TerminalWidget::stop()
 {
     if (!m_backend)
         return;
+    // close() beendet und joint die Lesethreads SYNCHRON — deleteLater raeumt
+    // danach nur noch das QObject auf. Beim App-Ende wird das Event ggf. nie
+    // zugestellt (keine Ereignisschleife mehr); das ist unkritisch, weil dann
+    // keine Threads mehr laufen.
     m_backend->close();
     m_backend->deleteLater();
     m_backend = nullptr;

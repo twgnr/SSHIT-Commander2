@@ -15,11 +15,13 @@
 #include <algorithm>
 #include <QDir>
 #include <QEvent>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QAbstractButton>
+#include <QPushButton>
 #include <QSplitter>
 #include <QStyle>
 #include <QTimer>
@@ -101,11 +103,16 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     for (QSplitter *col : {leftCol, rightCol})
         connect(col, &QSplitter::splitterMoved, this, [this] { saveConsoleSplits(); });
 
-    // Lokale Provider zuweisen
-    m_leftPanel->setProvider(m_localFs.get());
+    // Lokale Provider zuweisen. Der konfigurierte Standard-Startpfad gewinnt
+    // gegen das Home-Verzeichnis, sofern er (noch) existiert.
+    const QString configuredStart = core::getSettingString(QStringLiteral("start_path"));
+    const QString localStart =
+        (!configuredStart.isEmpty() && QFileInfo(configuredStart).isDir()) ? configuredStart
+                                                                           : QString();
+    m_leftPanel->setProvider(m_localFs.get(), localStart);
     m_leftConsole->setRunner(m_localRunner.get(), QDir::homePath());
     m_leftConsole->setCompletionProvider(m_localFs.get());
-    m_rightPanel->setProvider(m_localFs.get());
+    m_rightPanel->setProvider(m_localFs.get(), localStart);
     m_rightConsole->setRunner(m_localRunner.get(), QDir::homePath());
     m_rightConsole->setCompletionProvider(m_localFs.get());
 
@@ -124,10 +131,10 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
 
     // Aktive Seite merken (bestimmt Ziel von Befehlspalette/Werkzeugen) und die
     // Pane/Konsole der aktiven Seite blau umranden.
-    connect(m_leftPanel, &FilePanel::activated, this, [this] { m_rightActive = false; highlightActive(); });
-    connect(m_rightPanel, &FilePanel::activated, this, [this] { m_rightActive = true; highlightActive(); });
-    connect(m_leftConsole, &ConsolePanel::activated, this, [this] { m_rightActive = false; highlightActive(); });
-    connect(m_rightConsole, &ConsolePanel::activated, this, [this] { m_rightActive = true; highlightActive(); });
+    connect(m_leftPanel, &FilePanel::activated, this, [this] { m_rightActive = false; m_sidePicked = true; highlightActive(); });
+    connect(m_rightPanel, &FilePanel::activated, this, [this] { m_rightActive = true; m_sidePicked = true; highlightActive(); });
+    connect(m_leftConsole, &ConsolePanel::activated, this, [this] { m_rightActive = false; m_sidePicked = true; highlightActive(); });
+    connect(m_rightConsole, &ConsolePanel::activated, this, [this] { m_rightActive = true; m_sidePicked = true; highlightActive(); });
 
     // Solange nichts verbunden ist, liegt die (potenzielle) Verbindung rechts.
     m_connectedPanel = m_rightPanel;
@@ -251,6 +258,12 @@ void Workspace::pasteInto(FilePanel *target, bool move)
 
 Workspace::~Workspace()
 {
+    // Geordneter Abbau: erst die Terminal-Lesethreads stoppen und die
+    // Weiterleitungen schliessen, DANN die Session — sonst arbeiten die
+    // Threads auf freigegebenen libssh2-Objekten. Das Hauptfenster loescht
+    // die Workspaces explizit, solange der SessionManager noch lebt.
+    m_leftConsole->shutdownShell();
+    m_rightConsole->shutdownShell();
     m_tunnels.stopAll();  // Weiterleitungen vor dem Sessionende schliessen
     if (m_session)
         m_sessions->close(m_session);
@@ -318,11 +331,14 @@ void Workspace::startHealthCheck()
                     if (alive || m_session != session || session->closing)
                         return;
                     const core::ServerProfile profile = session->profile;
+                    // Wiederverbinden in DERSELBEN Pane — nicht in der gerade
+                    // aktiven, der Fokus kann inzwischen woanders liegen.
+                    FilePanel *panel = m_connectedPanel;
                     m_healthTimer->stop();
                     emit statusMessage(
                         _t("Verbindung verloren — verbinde neu: %1").arg(profile.display()));
                     disconnectSession();
-                    connectTo(profile);
+                    connectTo(profile, panel);
                 },
                 [this](const QString &) { m_healthPending = false; });
         });
@@ -337,21 +353,23 @@ void Workspace::disconnectSession()
     if (m_healthTimer)
         m_healthTimer->stop();
     m_tunnels.stopAll();          // Weiterleitungen zuerst schliessen
-    m_sessions->close(m_session);
-    m_session.reset();
-    // Reihenfolge zaehlt: erst die Verbraucher abhaengen, dann die Objekte
-    // freigeben — sonst zeigt eine Pane noch auf ein totes Dateisystem.
+    // Reihenfolge zaehlt: erst die Verbraucher abhaengen — insbesondere das
+    // Terminal, dessen Lesethread sonst waehrend des Schliessens auf die
+    // freigegebene libssh2-Session zugreift —, DANN die Session schliessen
+    // und zuletzt die Provider-Objekte freigeben.
     FilePanel *panel = m_connectedPanel ? m_connectedPanel : m_rightPanel;
     ConsolePanel *console = m_connectedConsole ? m_connectedConsole : m_rightConsole;
     panel->setSudoAvailable(false);
     panel->setConnected(false);
-    console->setSession({});
+    console->setSession({});      // stoppt ein laufendes Remote-Terminal
     console->setRunner(m_localRunner.get(), QDir::homePath());
     console->setCompletionProvider(m_localFs.get());
     // Rechte Pane bekommt wieder ihren Remote-Platzhalter, die linke "Lokal".
     panel->setHeaderTitle(panel == m_leftPanel ? _t("Lokal")
                                                : _t("Remote (nicht verbunden)"));
     panel->setProvider(m_localFs.get(), QDir::homePath());
+    m_sessions->close(m_session);
+    m_session.reset();
     m_connectedPanel = m_rightPanel;
     m_connectedConsole = m_rightConsole;
     m_sudoFs.reset();
@@ -426,6 +444,25 @@ void Workspace::swapPanes()
         return;
     m_leftPanel->setProvider(rightProvider, rightPath);
     m_rightPanel->setProvider(leftProvider, leftPath);
+    // Die Verbindung haengt an der Pane — ihr Zubehoer (Titel, Chips,
+    // Lesezeichen-Gruppe, Verbindungs-Zeiger) muss mitwandern, sonst wirken
+    // Trennen/sudo anschliessend auf die falsche Seite.
+    if (m_session && m_connectedPanel) {
+        FilePanel *from = m_connectedPanel;
+        FilePanel *to = (from == m_leftPanel) ? m_rightPanel : m_leftPanel;
+        to->setHeaderTitle(m_session->label());
+        to->setConnected(true);
+        to->setSudoAvailable(m_session->osType == QLatin1String("posix"));
+        to->setSudoActive(from->sudoActive());
+        to->setBookmarkKey(m_session->profile.name.isEmpty() ? m_session->label()
+                                                             : m_session->profile.name);
+        from->setHeaderTitle(from == m_leftPanel ? _t("Lokal") : _t("Remote (nicht verbunden)"));
+        from->setConnected(false);
+        from->setSudoAvailable(false);
+        from->setSudoActive(false);
+        from->setBookmarkKey(QStringLiteral("local"));
+        m_connectedPanel = to;
+    }
 }
 
 void Workspace::syncPanes()
@@ -608,8 +645,15 @@ void Workspace::enableSudoFilesystem(const QString &keepPath)
 QJsonObject Workspace::toJson() const
 {
     // Nur der Profilname wird gesichert — Geheimnisse bleiben im Keyring.
+    // connected_side merkt sich, welche Pane die Verbindung trug: nur deren
+    // Pfad ist ein Remote-Pfad und darf beim Wiederherstellen nicht dem
+    // lokalen Dateisystem vorgesetzt werden.
     return QJsonObject{
         {QStringLiteral("profile"), m_session ? m_session->profile.name : QString()},
+        {QStringLiteral("connected_side"),
+         m_session ? QString(m_connectedPanel == m_leftPanel ? QStringLiteral("left")
+                                                             : QStringLiteral("right"))
+                   : QString()},
         {QStringLiteral("left_path"), m_leftPanel->currentPath()},
         {QStringLiteral("right_path"), m_rightPanel->currentPath()},
         {QStringLiteral("left_console_detached"), m_floatingConsoles.contains(m_leftConsole)},
@@ -617,58 +661,110 @@ QJsonObject Workspace::toJson() const
     };
 }
 
+// Liefert einen nutzbaren lokalen Startpfad fuer die Wiederherstellung: den
+// gespeicherten, falls er existiert — sonst den konfigurierten
+// Standard-Startpfad, sonst C:\. Faengt insbesondere gespeicherte Remote-
+// Pfade (/home/…) und net://-Pfade ab, die nach einem Neustart sonst dem
+// LOKALEN Dateisystem vorgesetzt wuerden und eine Fehlermeldung ausloesen.
+static QString safeLocalPath(const QString &saved)
+{
+    if (!saved.isEmpty() && !saved.startsWith(QLatin1String("net://"))
+        && QFileInfo(saved).isDir())
+        return saved;
+    const QString fallback = core::getSettingString(QStringLiteral("start_path"));
+    if (!fallback.isEmpty() && QFileInfo(fallback).isDir())
+        return fallback;
+    return QStringLiteral("C:\\");
+}
+
 void Workspace::restoreFrom(const QJsonObject &state)
 {
-    const QString leftPath = state.value(QStringLiteral("left_path")).toString();
-    if (!leftPath.isEmpty())
-        m_leftPanel->navigateTo(leftPath);
-
     // Zuvor abgedockte Konsolen wieder abdocken (nach dem Aufbau der Spalten).
     if (state.value(QStringLiteral("left_console_detached")).toBool())
         QTimer::singleShot(0, this, [this] { undockConsole(m_leftConsole); });
     if (state.value(QStringLiteral("right_console_detached")).toBool())
         QTimer::singleShot(0, this, [this] { undockConsole(m_rightConsole); });
 
+    const QString leftPath = state.value(QStringLiteral("left_path")).toString();
+    const QString rightPath = state.value(QStringLiteral("right_path")).toString();
     const QString profileName = state.value(QStringLiteral("profile")).toString();
-    if (profileName.isEmpty()) {
-        const QString rightPath = state.value(QStringLiteral("right_path")).toString();
-        if (!rightPath.isEmpty())
-            m_rightPanel->navigateTo(rightPath);
-        return;
+    // Aeltere Sitzungsdaten kannten connected_side noch nicht; damals lag die
+    // Verbindung immer rechts.
+    const QString side = state.value(QStringLiteral("connected_side")).toString();
+    FilePanel *connPanel = (side == QLatin1String("left")) ? m_leftPanel : m_rightPanel;
+    FilePanel *otherPanel = (connPanel == m_leftPanel) ? m_rightPanel : m_leftPanel;
+    const QString connPath = (connPanel == m_leftPanel) ? leftPath : rightPath;
+    const QString otherPath = (otherPanel == m_leftPanel) ? leftPath : rightPath;
+
+    // Die nicht verbundene Seite ist immer lokal.
+    otherPanel->navigateTo(safeLocalPath(otherPath));
+
+    const bool reconnect = !profileName.isEmpty()
+                           && core::getSettingBool(QStringLiteral("auto_connect_last"), true);
+    if (reconnect) {
+        core::ProfileStore store;
+        store.load();
+        if (const auto profile = store.get(profileName)) {
+            core::ServerProfile p = *profile;
+            store.hydrate(p);  // Secrets aus dem Keyring nachladen
+            if (!connPath.isEmpty())
+                p.startPath = connPath;
+            connectTo(p, connPanel, /*quiet=*/true);
+            return;
+        }
     }
-    // Verbindung aus dem gespeicherten Profil wiederherstellen — nur wenn der
-    // Nutzer das automatische Verbinden zum letzten Server erlaubt hat.
-    if (!core::getSettingBool(QStringLiteral("auto_connect_last"), true)) {
-        const QString rightPath = state.value(QStringLiteral("right_path")).toString();
-        if (!rightPath.isEmpty())
-            m_rightPanel->navigateTo(rightPath);
-        return;
-    }
-    core::ProfileStore store;
-    store.load();
-    if (const auto profile = store.get(profileName)) {
-        core::ServerProfile p = *profile;
-        store.hydrate(p);  // Secrets aus dem Keyring nachladen
-        const QString rightPath = state.value(QStringLiteral("right_path")).toString();
-        if (!rightPath.isEmpty())
-            p.startPath = rightPath;
-        connectTo(p);
-    }
+    // Keine Verbindung (abgeschaltet/Profil weg): der gespeicherte Remote-Pfad
+    // ist ohne Verbindung wertlos -> lokaler Ersatzpfad (C:\).
+    connPanel->navigateTo(safeLocalPath(connPath));
 }
 
-void Workspace::connectTo(const core::ServerProfile &profile)
+void Workspace::connectTo(const core::ServerProfile &profile, FilePanel *target, bool quiet)
 {
-    // Verbindung landet in der aktiven Pane. Die Zielpane wird
-    // JETZT festgehalten — bis das Ergebnis eintrifft, kann sich der Fokus aendern.
-    FilePanel *panel = activePanel();
+    // Zielpane JETZT festhalten — bis das Ergebnis eintrifft, kann sich der
+    // Fokus aendern. Ohne explizites Ziel: die aktive Pane; hat der Nutzer in
+    // diesem Tab noch nie eine Seite angeklickt, die rechte ("Remote").
+    FilePanel *panel = target ? target : (m_sidePicked ? activePanel() : m_rightPanel);
+    if (m_connecting) {
+        emit statusMessage(_t("Es läuft bereits ein Verbindungsversuch."));
+        return;
+    }
+    // Ein Tab traegt genau eine Verbindung. Zielt der Nutzer auf die andere
+    // Pane, waehrend schon eine besteht, entscheidet er: neuer Tab (empfohlen,
+    // die bestehende Verbindung bleibt) oder Verbindung ersetzen.
+    if (m_session && panel != m_connectedPanel && !quiet) {
+        QMessageBox box(QMessageBox::Question, _t("Bereits verbunden"),
+                        _t("Dieser Tab ist bereits mit %1 verbunden. "
+                           "Pro Tab ist eine SSH-Verbindung möglich.")
+                            .arg(m_session->label()),
+                        QMessageBox::NoButton, this);
+        auto *newTab = box.addButton(_t("In neuem Tab verbinden"), QMessageBox::AcceptRole);
+        auto *replace = box.addButton(_t("Verbindung ersetzen"), QMessageBox::DestructiveRole);
+        box.addButton(QMessageBox::Cancel);
+        box.exec();
+        if (box.clickedButton() == newTab) {
+            emit connectInNewTabRequested(profile);
+            return;
+        }
+        if (box.clickedButton() != replace)
+            return;
+    }
     ConsolePanel *console = (panel == m_rightPanel) ? m_rightConsole : m_leftConsole;
-    m_connectedPanel = panel;
-    m_connectedConsole = console;
+    m_connecting = true;
 
     net::SessionManager *sessions = m_sessions;
     m_bridge->run<net::SSHSessionPtr>(
         [sessions, profile] { return sessions->open(profile); },
         [this, profile, panel, console](const net::SSHSessionPtr &session) {
+            m_connecting = false;
+            // Erst NACH erfolgreichem Aufbau die alte Verbindung abbauen:
+            // schlaegt der Aufbau fehl, bleibt die bestehende Sitzung nutzbar.
+            // disconnectSession() haengt zudem die alte Pane vom Provider ab,
+            // BEVOR m_remoteFs unten ersetzt (und damit zerstoert) wird —
+            // sonst zeigte sie auf ein freigegebenes Dateisystem.
+            if (m_session)
+                disconnectSession();
+            m_connectedPanel = panel;
+            m_connectedConsole = console;
             m_session = session;
             m_remoteFs = session->filesystem();
             m_remoteRunner = session->runner();
@@ -676,7 +772,9 @@ void Workspace::connectTo(const core::ServerProfile &profile)
             // Lesezeichen getrennt je Verbindung (Profilname).
             panel->setBookmarkKey(profile.name.isEmpty() ? session->label()
                                                           : profile.name);
-            panel->setProvider(m_remoteFs.get());
+            // Startpfad des Profils respektieren (auch von der Sitzungs-
+            // wiederherstellung gesetzt); leer -> Home des Servers.
+            panel->setProvider(m_remoteFs.get(), profile.startPath);
             // Konsole-CWD folgt spaeter dem Pane-Home.
             console->setRunner(m_remoteRunner.get(), QStringLiteral("."));
             console->setCompletionProvider(m_remoteFs.get());  // Tab-Pfade vom Server
@@ -727,7 +825,8 @@ void Workspace::connectTo(const core::ServerProfile &profile)
                         _t("Tunnel nicht geöffnet: %1").arg(tunnelErrors.join(QStringLiteral("; "))));
             }
         },
-        [this, profile](const QString &err) {
+        [this, profile, panel, quiet](const QString &err) {
+            m_connecting = false;
             // Geaenderter Host-Key: der Versuch wurde vor der Authentifizierung
             // abgebrochen. Erst nach ausdruecklicher Zustimmung erneut versuchen.
             const net::HostKeyMismatch mismatch = m_sessions->lastMismatch();
@@ -739,10 +838,17 @@ void Workspace::connectTo(const core::ServerProfile &profile)
                     m_sessions->hostkeys.add(mismatch.host, mismatch.port,
                                              mismatch.received, mismatch.algorithm);
                     m_sessions->hostkeys.save();
-                    connectTo(profile);   // jetzt passt der Pin
+                    connectTo(profile, panel, quiet);   // jetzt passt der Pin
                 } else {
                     emit statusMessage(_t("Abgebrochen — Host-Key nicht bestätigt."));
                 }
+                return;
+            }
+            if (quiet) {
+                // Sitzungswiederherstellung: kein modaler Dialog beim Start.
+                // Die Pane bleibt lokal nutzbar (C:\ bzw. Standard-Startpfad).
+                emit statusMessage(_t("Automatisches Verbinden fehlgeschlagen: %1").arg(err));
+                panel->navigateTo(safeLocalPath(QString()));
                 return;
             }
             QMessageBox::critical(this, _t("Verbindung fehlgeschlagen"), err);

@@ -51,6 +51,14 @@ public:
     // Groesse in Bytes; 0 = unbekannt oder nicht vorhanden. Der Transfer nutzt
     // das fuer Gesamtfortschritt und Verifikation.
     virtual qint64 size(const QString &path) { Q_UNUSED(path); return 0; }
+
+    // Kanonische Anzeige-/Navigationsform eines Pfads. Die Pane normalisiert
+    // jedes Navigationsziel hierueber, damit ein Verzeichnis immer nur EINE
+    // Schreibweise hat. Standard: unveraendert (POSIX/net:// sind bereits
+    // eindeutig); lokal wird absolut + native Separatoren erzwungen — sonst
+    // landet "." wortwoertlich in der Pfadleiste und "C:/" und "C:\" gelten
+    // als zwei verschiedene Ebenen.
+    virtual QString normalize(const QString &path) const { return path; }
 };
 
 // Lokales Dateisystem (blockierende OS-Calls; via Bridge auf Worker-Threads).
@@ -74,6 +82,7 @@ public:
     QString home() override;
     qint64 size(const QString &path) override;
     void symlink(const QString &target, const QString &linkPath) override;
+    QString normalize(const QString &path) const override;
 };
 
 } // namespace ncssh::core

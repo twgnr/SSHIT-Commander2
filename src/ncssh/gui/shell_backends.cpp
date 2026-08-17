@@ -2,6 +2,8 @@
 
 #include <QDir>
 #include <QMetaObject>
+#include <chrono>
+#include <thread>
 
 #ifdef Q_OS_WIN
 #  include <windows.h>
@@ -143,13 +145,29 @@ void LocalShellBackend::resize(int cols, int rows)
 
 void LocalShellBackend::close()
 {
-    if (!m_alive.exchange(false))
+    if (m_closing.exchange(true))
         return;
 #ifdef Q_OS_WIN
+    // Reihenfolge gegen den dokumentierten ConPTY-Deadlock: erst den Client
+    // beenden, dann die Konsole schliessen, WAEHREND der Lesethread die
+    // Ausgabe-Pipe weiter leert (m_alive bleibt so lange true) —
+    // ClosePseudoConsole blockiert sonst endlos, wenn ungelesene Ausgabe
+    // ansteht. Genau das liess den Prozess nach dem Schliessen des Fensters
+    // als fensterlosen Zombie weiterleben. Erst danach den Thread joinen und
+    // zuletzt die Handles freigeben.
+    if (m_impl->pi.hProcess) {
+        TerminateProcess(m_impl->pi.hProcess, 0);
+        CloseHandle(m_impl->pi.hProcess);
+        CloseHandle(m_impl->pi.hThread);
+        m_impl->pi = {};
+    }
     if (m_impl->hpc) {
-        ClosePseudoConsole(m_impl->hpc);  // beendet auch die Shell
+        ClosePseudoConsole(m_impl->hpc);  // Lesethread draint parallel weiter
         m_impl->hpc = nullptr;
     }
+    m_alive = false;   // Pipe laeuft leer, ReadFile liefert EOF -> Thread endet
+    if (m_thread.joinable())
+        m_thread.join();
     if (m_impl->inWrite) {
         CloseHandle(m_impl->inWrite);
         m_impl->inWrite = nullptr;
@@ -163,12 +181,8 @@ void LocalShellBackend::close()
         HeapFree(GetProcessHeap(), 0, m_impl->attrList);
         m_impl->attrList = nullptr;
     }
-    if (m_impl->pi.hProcess) {
-        TerminateProcess(m_impl->pi.hProcess, 0);
-        CloseHandle(m_impl->pi.hProcess);
-        CloseHandle(m_impl->pi.hThread);
-        m_impl->pi = {};
-    }
+#else
+    m_alive = false;
 #endif
 }
 
@@ -203,7 +217,7 @@ void RemoteShellBackend::start(const net::SSHSessionPtr &session, int cols, int 
         while (m_alive.load()) {
             QByteArray data;
             try {
-                data = m_shell->read(8192, 100);
+                data = m_shell->read(32768, 100);
             } catch (const std::exception &exc) {
                 if (m_alive.load()) {
                     const QString msg = QString::fromUtf8(exc.what());
@@ -218,6 +232,10 @@ void RemoteShellBackend::start(const net::SSHSessionPtr &session, int cols, int 
             const QString text = QString::fromUtf8(data);
             QMetaObject::invokeMethod(this, [this, text] { emit dataReceived(text); },
                                       Qt::QueuedConnection);
+            // Winzige Pause zwischen vollen Puffern: der Windows-Mutex ist
+            // nicht fair, bei stroemender Terminalausgabe wuerde die Schleife
+            // sonst alle SFTP-Jobs (Listings, Transfers) verhungern lassen.
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         QMetaObject::invokeMethod(this, [this] { emit closed(); }, Qt::QueuedConnection);
     });
@@ -241,6 +259,12 @@ void RemoteShellBackend::close()
         return;
     if (m_shell)
         m_shell->close();
+    // Lesethread SOFORT einsammeln (nicht erst im Destruktor): das Backend
+    // wird per deleteLater entsorgt, und beim App-Ende laeuft keine
+    // Ereignisschleife mehr, die es zustellen wuerde — der Thread bliebe
+    // sonst ungejoint auf der gerade schliessenden Session zurueck.
+    if (m_thread.joinable() && m_thread.get_id() != std::this_thread::get_id())
+        m_thread.join();
 }
 
 } // namespace ncssh::gui

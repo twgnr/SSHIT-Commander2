@@ -177,7 +177,8 @@ void FilePanel::buildUi(const QString &title)
     m_crumbScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_crumbScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_crumbScroll->setFixedHeight(30);
-    m_crumbScroll->setToolTip(_t("Rechts in die leere Fläche klicken, um den Pfad einzugeben"));
+    m_crumbScroll->setToolTip(
+        _t("Klick auf die leere Fläche: Pfad eingeben · Rechtsklick: Pfad kopieren"));
     auto *crumbHost = new QWidget(m_crumbScroll);
     m_crumbLayout = new QHBoxLayout(crumbHost);
     m_crumbLayout->setContentsMargins(2, 0, 2, 0);
@@ -256,8 +257,12 @@ void FilePanel::buildUi(const QString &title)
     connect(m_table, &QTableWidget::customContextMenuRequested, this,
             &FilePanel::openContextMenu);
     // Auswahl an die Vorschau melden und die Statuszeile nachziehen.
+    // Verzeichnisse haben keine Vorschau — fuer sie wird nichts gemeldet,
+    // sonst loest jeder Klick auf einen Remote-Ordner einen sinnlosen
+    // SFTP-Lesezugriff aus.
     connect(m_table, &QTableWidget::itemSelectionChanged, this, [this] {
-        emit selectionChanged(selectedPath());
+        const FileEntry *entry = selectedEntry();
+        emit selectionChanged(entry && !entry->isDir() ? selectedPath() : QString());
         updateSelectionStatus();
     });
     // Klickbare Spalten-Sortierung
@@ -565,9 +570,30 @@ void FilePanel::buildBreadcrumb()
         btn->setCursor(Qt::PointingHandCursor);
         const QString full = parts[i].second;
         connect(btn, &QToolButton::clicked, this, [this, full] { navigateTo(full); });
+        // Rechtsklick auf einen Crumb: gleiches Menue wie auf der Leerflaeche.
+        btn->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(btn, &QToolButton::customContextMenuRequested, this,
+                [this, btn](const QPoint &pos) { showBreadcrumbMenu(btn->mapToGlobal(pos)); });
         m_crumbLayout->addWidget(btn);
     }
     m_crumbLayout->addStretch();
+}
+
+void FilePanel::showBreadcrumbMenu(const QPoint &globalPos)
+{
+    QMenu menu(this);
+    menu.addAction(_t("Pfad kopieren"), this,
+                   [this] { QApplication::clipboard()->setText(m_path); });
+    menu.addAction(_t("Pfad bearbeiten"), this, &FilePanel::beginPathEdit);
+    menu.exec(globalPos);
+}
+
+void FilePanel::mousePressEvent(QMouseEvent *event)
+{
+    // Klick irgendwo in der Pane (Kopfzeile, Leerflaechen) macht sie zur
+    // aktiven Seite — darauf verlaesst sich u. a. "Verbinden" im Workspace.
+    emit activated();
+    QWidget::mousePressEvent(event);
 }
 
 // --- Ansicht: Detail / Kachel ----------------------------------------------
@@ -598,9 +624,9 @@ void FilePanel::applyPaneStyle()
     QHeaderView *vh = m_table->verticalHeader();
     vh->setSectionResizeMode(QHeaderView::Fixed);
     vh->setMinimumSectionSize(rowH);   // sonst klemmt Qt kleine Hoehen hoch
+    // Fixed + DefaultSectionSize gilt fuer alle Zeilen — die fruehere
+    // setRowHeight-Schleife war eine O(n)-Runde im GUI-Thread pro Listing.
     vh->setDefaultSectionSize(rowH);
-    for (int r = 0; r < m_table->rowCount(); ++r)
-        m_table->setRowHeight(r, rowH);
 
     // Kachelansicht: groessere Icons + Kachelgroesse (Platz fuer Beschriftung).
     const int gi = compact ? (thumbs ? 64 : 44) : (thumbs ? 96 : 64);
@@ -778,15 +804,24 @@ void FilePanel::endPathEdit()
 void FilePanel::setProvider(core::FileSystemProvider *provider, const QString &startPath)
 {
     m_provider = provider;
+    // Der alte Pfad gehoert zum alten Provider; ein leerer m_path markiert
+    // zugleich "erstes Laden" (loadDir weicht bei Fehlern still aufs Home aus).
+    m_path.clear();
     if (!provider)
         return;
     if (!startPath.isEmpty()) {
         navigateTo(startPath);
     } else {
-        // Home des Providers ermitteln (blockierend im Worker).
+        // Home des Providers ermitteln (blockierend im Worker). Die Sequenz
+        // entwertet das Ergebnis, falls inzwischen woandershin navigiert wurde
+        // (z. B. Sitzungswiederherstellung direkt nach dem Konstruktor).
+        const quint64 seq = ++m_loadSeq;
         m_bridge->run<QString>(
             [provider] { return provider->home(); },
-            [this](const QString &home) { navigateTo(home); },
+            [this, seq](const QString &home) {
+                if (seq == m_loadSeq)
+                    navigateTo(home);
+            },
             [this](const QString &err) { emit statusMessage(err); });
     }
 }
@@ -830,12 +865,23 @@ void FilePanel::goUp()
         navigateTo(parent);
 }
 
-void FilePanel::loadDir(const QString &path, bool record)
+void FilePanel::loadDir(const QString &rawPath, bool record)
 {
     core::FileSystemProvider *provider = m_provider;
+    // Jede Navigation auf die kanonische Form bringen: lokal absolut + native
+    // Separatoren. Sonst zeigt die Pfadleiste "." (Startpfad relativ) oder
+    // zerlegt "C:/" und "C:\" in zwei Breadcrumb-Ebenen.
+    const QString path = provider->normalize(rawPath);
+    // Nur die juengste Anfrage zaehlt: eine langsam eintrudelnde SFTP-Antwort
+    // darf eine spaetere Navigation nicht mehr ueberschreiben.
+    const quint64 seq = ++m_loadSeq;
+    if (provider->isRemote)
+        emit statusMessage(_t("Öffne %1 …").arg(path));
     m_bridge->run<std::vector<FileEntry>>(
         [provider, path] { return provider->listDir(path); },
-        [this, path, record](const std::vector<FileEntry> &entries) {
+        [this, path, record, seq](const std::vector<FileEntry> &entries) {
+            if (seq != m_loadSeq)
+                return;
             if (record && path != m_path) {
                 // Verlauf: alles nach der aktuellen Position verwerfen
                 if (m_histPos >= 0 && m_histPos + 1 < m_history.size())
@@ -861,8 +907,26 @@ void FilePanel::loadDir(const QString &path, bool record)
             updateBookmarkButton();
             emit pathChanged(path);
         },
-        [this](const QString &err) {
+        [this, path, seq](const QString &err) {
+            if (seq != m_loadSeq)
+                return;
             emit statusMessage(err);
+            // Erstes Laden eines Providers fehlgeschlagen (z. B. gespeicherter
+            // Startpfad existiert nicht mehr): still aufs Home ausweichen statt
+            // die Pane leer zu lassen — und ohne modalen Dialog beim Start.
+            if (m_path.isEmpty() && m_provider) {
+                core::FileSystemProvider *provider = m_provider;
+                m_bridge->run<QString>(
+                    [provider] { return provider->home(); },
+                    [this, path, seq](const QString &home) {
+                        // home != path verhindert eine Endlosschleife, falls
+                        // schon das Home selbst nicht lesbar ist.
+                        if (seq == m_loadSeq && home != path)
+                            navigateTo(home);
+                    },
+                    [](const QString &) {});
+                return;
+            }
             QMessageBox::warning(this, _t("Fehler"), err);
         });
 }
@@ -920,18 +984,27 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
     const bool execHighlight = core::getSettingBool(QStringLiteral("exec_highlight"), true);
     const QColor execColor(core::getSettingString(QStringLiteral("exec_color"),
                                                   QStringLiteral("#3fb950")));
-    m_table->setRowCount(0);
-    m_rows.clear();
-    int row = 0;
-    qint64 totalSize = 0;
-    int fileCount = 0, dirCount = 0;
+    // Sichtbare Eintraege vorab bestimmen und die Tabelle EINMAL dimensionieren:
+    // insertRow je Zeile kostet bei grossen Verzeichnissen ein Model-Signal
+    // plus Relayout pro Eintrag.
+    std::vector<const FileEntry *> visible;
+    visible.reserve(sorted.size());
     for (const FileEntry &e : sorted) {
         if (!m_showHidden && e.hidden && e.type != EntryType::Parent)
             continue;
         if (filtering && e.type != EntryType::Parent
             && !filterRe.match(e.name).hasMatch())
             continue;
-        m_table->insertRow(row);
+        visible.push_back(&e);
+    }
+    m_table->setUpdatesEnabled(false);
+    m_table->setRowCount(int(visible.size()));
+    m_rows.clear();
+    int row = 0;
+    qint64 totalSize = 0;
+    int fileCount = 0, dirCount = 0;
+    for (const FileEntry *pe : visible) {
+        const FileEntry &e = *pe;
         auto *nameItem = new QTableWidgetItem(e.name);
         nameItem->setData(Qt::UserRole, e.name);
         // Programm-Logos vor den Dateinamen (abschaltbar in den Einstellungen).
@@ -965,6 +1038,7 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
         m_rows.push_back(e);
         ++row;
     }
+    m_table->setUpdatesEnabled(true);
     m_baseStatus = _t("%1 Einträge (%2 Ordner, %3 Dateien)")
                        .arg(dirCount + fileCount).arg(dirCount).arg(fileCount)
                    + QStringLiteral(" · ") + humanSize(totalSize);
@@ -2017,9 +2091,15 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
             m_userResizing = false;
         return false;
     }
-    // Klick auf die freie Flaeche neben den Breadcrumbs -> Pfad eingeben.
+    // Klick auf die freie Flaeche neben den Breadcrumbs -> Pfad eingeben;
+    // Rechtsklick -> Menue mit "Pfad kopieren".
     if (m_crumbScroll && obj == m_crumbScroll->widget()
         && event->type() == QEvent::MouseButtonPress) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() == Qt::RightButton) {
+            showBreadcrumbMenu(me->globalPosition().toPoint());
+            return true;
+        }
         beginPathEdit();
         return true;
     }
@@ -2055,6 +2135,16 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
     }
     if (event->type() == QEvent::KeyPress) {
         auto *ke = static_cast<QKeyEvent *>(event);
+        // Das Pfad-Eingabefeld ist ein normales QLineEdit: Esc bricht ab, alle
+        // uebrigen Tasten (auch Strg+C zum Kopieren, Backspace, +/-/*) gehoeren
+        // dem Feld — sie duerfen keine Datei-Operationen ausloesen.
+        if (obj == m_pathEdit) {
+            if (ke->key() == Qt::Key_Escape) {
+                endPathEdit();
+                return true;
+            }
+            return false;
+        }
         // Konfigurierbare Datei-Operationen zuerst: das in den Einstellungen
         // hinterlegte Kuerzel gewinnt gegen die feste F3..F8-Vorgabe.
         if (obj != m_filterEdit) {

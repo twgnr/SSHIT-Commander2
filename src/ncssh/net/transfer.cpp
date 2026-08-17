@@ -6,10 +6,14 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
+#include <QSet>
 #include <libssh2.h>
 #include <libssh2_sftp.h>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <vector>
 
 namespace ncssh::net {
 
@@ -18,8 +22,14 @@ using core::FileEntry;
 using core::LocalFileSystem;
 
 static constexpr qint64 kLocalChunk = 1024 * 1024;   // 1 MiB
-static constexpr qint64 kSftpChunk = 128 * 1024;     // 128 KiB
+// Gross genug, dass libssh2 mehrere SFTP-Requests im Flug haelt (Read-Ahead /
+// Write-Pipelining) — 128 KiB und weniger degenerieren auf hoher Latenz zu
+// einem synchronen Roundtrip je Block.
+static constexpr qint64 kSftpChunk = 256 * 1024;
 static constexpr qint64 kGenericMax = 256 * 1024 * 1024;
+// Ab dieser Groesse lohnt eine eigene Datenverbindung (der zusaetzliche
+// SSH-Handshake kostet selbst um eine Sekunde).
+static constexpr qint64 kDedicatedSessionMin = 8 * 1024 * 1024;
 
 QString directionOf(FileSystemProvider *src, FileSystemProvider *dst)
 {
@@ -129,19 +139,25 @@ static void streamUpload(const QString &localPath, SFTPFileSystem *sftp, const Q
     QFile in(localPath);
     if (!in.open(QIODevice::ReadOnly))
         throw std::runtime_error(("Kann Quelle nicht lesen: " + localPath).toStdString());
-    std::lock_guard<std::recursive_mutex> lock(sftp->session()->mutex());
-    LIBSSH2_SFTP *s = sftp->session()->sftp();
-    // Beim Fortsetzen nicht abschneiden (kein TRUNC), sonst wie bisher.
-    const long flags = offset > 0 ? (LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT)
-                                  : (LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_TRUNC);
-    LIBSSH2_SFTP_HANDLE *h = libssh2_sftp_open(
-        s, remotePath.toUtf8().constData(), flags, 0644);
-    if (!h)
-        throw std::runtime_error(("Kann Remote-Datei nicht schreiben: " + remotePath).toStdString());
+    // Session-Mutex nur je Block halten: ein Upload darf Listings und Konsole
+    // nicht bis zum Dateiende blockieren.
+    auto &mutex = sftp->session()->mutex();
+    LIBSSH2_SFTP_HANDLE *h = nullptr;
+    {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        LIBSSH2_SFTP *s = sftp->session()->sftp();
+        // Beim Fortsetzen nicht abschneiden (kein TRUNC), sonst wie bisher.
+        const long flags = offset > 0 ? (LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT)
+                                      : (LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_TRUNC);
+        h = libssh2_sftp_open(s, remotePath.toUtf8().constData(), flags, 0644);
+        if (!h)
+            throw std::runtime_error(("Kann Remote-Datei nicht schreiben: " + remotePath).toStdString());
+        if (offset > 0)
+            libssh2_sftp_seek64(h, static_cast<libssh2_uint64_t>(offset));
+    }
     qint64 copied = baseCopied;
     if (offset > 0) {
         in.seek(offset);
-        libssh2_sftp_seek64(h, static_cast<libssh2_uint64_t>(offset));
         copied += offset;
         progress(copied, total);
     }
@@ -149,9 +165,17 @@ static void streamUpload(const QString &localPath, SFTPFileSystem *sftp, const Q
     while (!(buf = in.read(kSftpChunk)).isEmpty()) {
         qint64 sent = 0;
         while (sent < buf.size()) {
-            const ssize_t n = libssh2_sftp_write(h, buf.constData() + sent, buf.size() - sent);
+            ssize_t n;
+            {
+                std::lock_guard<std::recursive_mutex> lock(mutex);
+                if (sftp->session()->closing)
+                    throw std::runtime_error("Sitzung geschlossen.");
+                n = libssh2_sftp_write(h, buf.constData() + sent, buf.size() - sent);
+            }
             if (n < 0) {
-                libssh2_sftp_close(h);
+                std::lock_guard<std::recursive_mutex> lock(mutex);
+                if (!sftp->session()->closing)
+                    libssh2_sftp_close(h);
                 throw std::runtime_error(("Upload fehlgeschlagen: " + remotePath).toStdString());
             }
             sent += n;
@@ -159,7 +183,9 @@ static void streamUpload(const QString &localPath, SFTPFileSystem *sftp, const Q
         copied += buf.size();
         progress(copied, total);
     }
-    libssh2_sftp_close(h);
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if (!sftp->session()->closing)
+        libssh2_sftp_close(h);
 }
 
 static void streamDownload(SFTPFileSystem *sftp, const QString &remotePath, const QString &localPath,
@@ -170,29 +196,42 @@ static void streamDownload(SFTPFileSystem *sftp, const QString &remotePath, cons
     // Beim Fortsetzen an das vorhandene lokale Ziel anhaengen.
     if (!out.open(offset > 0 ? QIODevice::ReadWrite : QIODevice::WriteOnly))
         throw std::runtime_error(("Kann Ziel nicht schreiben: " + localPath).toStdString());
-    std::lock_guard<std::recursive_mutex> lock(sftp->session()->mutex());
-    LIBSSH2_SFTP *s = sftp->session()->sftp();
-    LIBSSH2_SFTP_HANDLE *h = libssh2_sftp_open(s, remotePath.toUtf8().constData(),
-                                               LIBSSH2_FXF_READ, 0);
-    if (!h)
-        throw std::runtime_error(("Kann Remote-Datei nicht lesen: " + remotePath).toStdString());
+    // Session-Mutex nur je Block halten (siehe streamUpload).
+    auto &mutex = sftp->session()->mutex();
+    LIBSSH2_SFTP_HANDLE *h = nullptr;
+    {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        LIBSSH2_SFTP *s = sftp->session()->sftp();
+        h = libssh2_sftp_open(s, remotePath.toUtf8().constData(), LIBSSH2_FXF_READ, 0);
+        if (!h)
+            throw std::runtime_error(("Kann Remote-Datei nicht lesen: " + remotePath).toStdString());
+        if (offset > 0)
+            libssh2_sftp_seek64(h, static_cast<libssh2_uint64_t>(offset));
+    }
     qint64 copied = baseCopied;
     if (offset > 0) {
         out.seek(offset);
-        libssh2_sftp_seek64(h, static_cast<libssh2_uint64_t>(offset));
         copied += offset;
         progress(copied, total);
     }
-    char buf[131072];
+    std::vector<char> buf(kSftpChunk);
     for (;;) {
-        const ssize_t n = libssh2_sftp_read(h, buf, sizeof(buf));
+        ssize_t n;
+        {
+            std::lock_guard<std::recursive_mutex> lock(mutex);
+            if (sftp->session()->closing)
+                throw std::runtime_error("Sitzung geschlossen.");
+            n = libssh2_sftp_read(h, buf.data(), buf.size());
+        }
         if (n <= 0)
             break;
-        out.write(buf, n);
+        out.write(buf.data(), n);
         copied += n;
         progress(copied, total);
     }
-    libssh2_sftp_close(h);
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if (!sftp->session()->closing)
+        libssh2_sftp_close(h);
 }
 
 // Kopiert EINE Datei mit dem schnellsten passenden Pfad.
@@ -270,7 +309,9 @@ static void collectTree(FileSystemProvider *src, const QString &sp,
             if (e.type == EntryType::Dir)
                 collectTree(src, csp, dst, cdp, out);
             else
-                out.emplace_back(csp, cdp, pathSize(src, csp));
+                // Groesse aus dem Listing uebernehmen — ein stat je Datei
+                // waere bei SFTP ein eigener Netz-Roundtrip pro Eintrag.
+                out.emplace_back(csp, cdp, e.size ? e.size : pathSize(src, csp));
         }
     } else {
         out.emplace_back(sp, dp, pathSize(src, sp));
@@ -288,11 +329,34 @@ void transferWithProgress(FileSystemProvider *src, const QString &srcPath,
         return;
     }
 
-    if (!pathIsDir(src, srcPath)) {
+    const bool srcIsDir = pathIsDir(src, srcPath);
+    const qint64 singleSize = srcIsDir ? 0 : pathSize(src, srcPath);
+
+    // Eigene Datenverbindung fuer die Remote-Seite: der Transfer teilt sich
+    // sonst den Session-Mutex mit Listings und Konsole — waehrend eines langen
+    // Uploads fuehlte sich jede Navigation zaeh an. Nur wenn es sich lohnt
+    // (Verzeichnisbaum oder grosse Datei), denn der zusaetzliche Handshake
+    // kostet selbst um eine Sekunde. Schlaegt der Aufbau fehl (Server-Limit,
+    // 2FA, anderer Host-Key), laeuft alles wie bisher ueber die geteilte
+    // Session.
+    auto *rsrc = dynamic_cast<SFTPFileSystem *>(src);
+    auto *rdst = dynamic_cast<SFTPFileSystem *>(dst);
+    SFTPFileSystem *remote = rsrc ? rsrc : rdst;
+    std::unique_ptr<SFTPFileSystem> dedicated;
+    if (remote && (srcIsDir || singleSize >= kDedicatedSessionMin)) {
+        if (SSHSessionPtr twin = openSiblingSession(remote->session())) {
+            dedicated = std::make_unique<SFTPFileSystem>(std::move(twin));
+            if (rsrc)
+                src = dedicated.get();
+            else
+                dst = dedicated.get();
+        }
+    }
+
+    if (!srcIsDir) {
         // Einzeldatei
-        const qint64 total = pathSize(src, srcPath);
         qint64 copied = 0;
-        copyOneFile(src, srcPath, dst, dstPath, copied, total, progress, resume);
+        copyOneFile(src, srcPath, dst, dstPath, copied, singleSize, progress, resume);
         return;
     }
 
@@ -322,17 +386,42 @@ void transferWithProgress(FileSystemProvider *src, const QString &srcPath,
 bool verifyTree(FileSystemProvider *src, const QString &srcPath,
                 FileSystemProvider *dst, const QString &dstPath)
 {
+    // Das Ziel je Verzeichnis EINMAL listen statt fuer jede Datei einzeln zu
+    // statten — bei SFTP war das ein Netz-Roundtrip pro Datei.
+    QHash<QString, qint64> dstFileSize;
+    QSet<QString> dstDirs, dstLinks;
+    try {
+        for (const FileEntry &d : dst->listDir(dstPath)) {
+            if (d.type == EntryType::Parent)
+                continue;
+            if (d.type == EntryType::Dir)
+                dstDirs.insert(d.name);
+            else if (d.type == EntryType::Symlink)
+                dstLinks.insert(d.name);   // Zieltyp unklar -> unten einzeln pruefen
+            else
+                dstFileSize.insert(d.name, d.size);
+        }
+    } catch (...) {
+        return false;   // Ziel nicht lesbar -> nicht verifizierbar
+    }
     for (const FileEntry &e : src->listDir(srcPath)) {
         if (e.type == EntryType::Parent || e.type == EntryType::Symlink)
             continue;
         const QString sp = src->join(srcPath, e.name);
         const QString dp = dst->join(dstPath, e.name);
         if (e.isDir()) {
-            if (!pathIsDir(dst, dp) || !verifyTree(src, sp, dst, dp))
+            const bool isDir =
+                dstDirs.contains(e.name) || (dstLinks.contains(e.name) && pathIsDir(dst, dp));
+            if (!isDir || !verifyTree(src, sp, dst, dp))
                 return false;
         } else {
             const qint64 ssize = e.size ? e.size : pathSize(src, sp);
-            if (pathSize(dst, dp) != ssize)
+            qint64 dsize = -1;
+            if (dstFileSize.contains(e.name))
+                dsize = dstFileSize.value(e.name);
+            else if (dstLinks.contains(e.name))
+                dsize = pathSize(dst, dp);
+            if (dsize != ssize)
                 return false;
         }
     }

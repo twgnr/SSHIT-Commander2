@@ -21,6 +21,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <chrono>
+#include <thread>
 
 namespace ncssh::gui {
 
@@ -98,6 +100,10 @@ core::Snapshot remoteScan(net::SFTPFileSystem &fs, const QString &path, bool rec
         if (out.size() >= limit)
             break;
         if (recursive && isDir && depth < 32) {
+            // Kurz durchatmen: der Scan teilt sich die SSH-Session mit der
+            // Bedienung — Nutzer-Listings sollen zwischen die Verzeichnisse
+            // dieses Hintergrund-Scans kommen (der Mutex ist nicht fair).
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
             const core::Snapshot sub =
                 remoteScan(fs, full, recursive, includeDirs, inc, exc, limit, depth + 1);
             for (auto it = sub.begin(); it != sub.end() && out.size() < limit; ++it)

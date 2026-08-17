@@ -200,6 +200,19 @@ QString LocalFileSystem::home()
     return QDir::toNativeSeparators(QDir::homePath());
 }
 
+QString LocalFileSystem::normalize(const QString &path) const
+{
+    if (path.isEmpty())
+        return path;
+    QString p = path;
+    // Blosser Laufwerksbuchstabe ("C:") ist laufwerks-RELATIV — als Root lesen.
+    if (p.length() == 2 && p[1] == QLatin1Char(':') && p[0].isLetter())
+        p += QLatin1Char('/');
+    // Absolut machen (loest "." und Relativpfade gegen das Arbeitsverzeichnis
+    // auf) und auf native Separatoren vereinheitlichen.
+    return QDir::toNativeSeparators(QDir::cleanPath(QFileInfo(p).absoluteFilePath()));
+}
+
 qint64 LocalFileSystem::size(const QString &path)
 {
     const QFileInfo info(path);

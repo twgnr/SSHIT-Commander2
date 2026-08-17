@@ -287,8 +287,20 @@ void MainWindow::restoreSession()
 
 MainWindow::~MainWindow()
 {
+    // Workspaces GEORDNET und JETZT abbauen, solange SessionManager und
+    // Bridge noch leben: ~QObject wuerde die Kinder erst NACH den Membern
+    // zerstoeren — Workspace::~Workspace arbeitete dann auf einem bereits
+    // freigegebenen SessionManager, und Terminal-/Tunnel-Threads liefen noch,
+    // waehrend closeAll() ihre libssh2-Sessions freigibt. Genau diese
+    // Reihenfolge liess den Prozess nach dem Schliessen des Fensters als
+    // fensterlosen Zombie weiterlaufen.
+    while (m_tabs && m_tabs->count() > 0) {
+        QWidget *w = m_tabs->widget(0);
+        m_tabs->removeTab(0);
+        delete w;
+    }
     if (m_sessions)
-        m_sessions->closeAll();
+        m_sessions->closeAll();   // Sicherheitsnetz fuer Sessions ohne Workspace
 }
 
 void MainWindow::buildMenus()
@@ -728,6 +740,13 @@ Workspace *MainWindow::addTab()
     });
     // Verzeichnis-Vergleich aus dem Pane-Kontextmenue.
     connect(ws, &Workspace::dirDiffRequested, this, &MainWindow::openDirDiff);
+    // Zweiter Server bei bestehender Verbindung: in einem frischen Tab oeffnen.
+    connect(ws, &Workspace::connectInNewTabRequested, this,
+            [this](const core::ServerProfile &profile) {
+                Workspace *fresh = addTab();
+                statusBar()->showMessage(_t("Verbinde zu %1 …").arg(profile.display()), 8000);
+                fresh->connectTo(profile, fresh->rightPanel());
+            });
     // Netzwerk-Modus: erneut scannen bzw. zu einem gefundenen Host verbinden.
     connect(ws, &Workspace::rescanRequested, this, &MainWindow::openNetscan);
     connect(ws, &Workspace::connectHostRequested, this, [this](const QString &host) {

@@ -53,6 +53,7 @@ private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
     std::atomic_bool m_alive{false};
+    std::atomic_bool m_closing{false};   // close() darf nur einmal abbauen
     std::thread m_thread;
 };
 

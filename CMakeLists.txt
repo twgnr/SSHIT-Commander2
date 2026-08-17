@@ -67,9 +67,11 @@ add_library(ncssh STATIC ${NCSSH_SOURCES})
 target_include_directories(ncssh PUBLIC src "${CMAKE_SOURCE_DIR}")
 # Version an den Code durchreichen — EINE Quelle der Wahrheit ist die
 # project()-Version oben; der Ueber-Dialog liest sie hierueber.
+# Stufe hochzaehlen, wenn ein neuer Stand veroeffentlicht wird — build.ps1
+# leitet daraus (kleingeschrieben) den Paketnamen ab: 1.0.0-beta.2.
 target_compile_definitions(ncssh PUBLIC
     SSHIT_VERSION="${PROJECT_VERSION}"
-    SSHIT_VERSION_STAGE="Beta")
+    SSHIT_VERSION_STAGE="Beta.2")
 target_link_libraries(ncssh PUBLIC
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg
     libssh2::libssh2_static

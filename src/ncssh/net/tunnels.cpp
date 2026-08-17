@@ -93,6 +93,10 @@ static void pump(int sock, LIBSSH2_CHANNEL *channel, SSHSession *session,
 #endif
     char buf[16384];
     while (!stop.load()) {
+        // Session schliesst (Trennen/App-Ende): sofort aussteigen, bevor auf
+        // freigegebene libssh2-Objekte zugegriffen wird.
+        if (session->closing)
+            break;
         // Socket -> Kanal
         const int r = ::recv(sock, buf, sizeof(buf), 0);
         if (r > 0) {
@@ -136,8 +140,10 @@ static void pump(int sock, LIBSSH2_CHANNEL *channel, SSHSession *session,
     }
     {
         std::lock_guard<std::recursive_mutex> lock(session->mutex());
-        libssh2_channel_close(channel);
-        libssh2_channel_free(channel);
+        if (!session->closing && session->raw()) {
+            libssh2_channel_close(channel);
+            libssh2_channel_free(channel);
+        }
     }
     closeSock(sock);
 }
@@ -267,7 +273,8 @@ void Tunnel::stop()
     m_listenSocket = -1;
     if (m_listener) {
         std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
-        libssh2_channel_forward_cancel(static_cast<LIBSSH2_LISTENER *>(m_listener));
+        if (!m_session->closing && m_session->raw())
+            libssh2_channel_forward_cancel(static_cast<LIBSSH2_LISTENER *>(m_listener));
         m_listener = nullptr;
     }
     if (m_thread.joinable())
@@ -298,6 +305,10 @@ void Tunnel::runLocalOrDynamic()
         LIBSSH2_CHANNEL *channel = nullptr;
         {
             std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
+            if (m_session->closing || !m_session->raw()) {
+                closeSock(client);
+                break;
+            }
             libssh2_session_set_blocking(m_session->raw(), 1);
             channel = libssh2_channel_direct_tcpip_ex(
                 m_session->raw(), destHost.toUtf8().constData(), destPort,
@@ -321,6 +332,8 @@ void Tunnel::runRemote()
         LIBSSH2_CHANNEL *channel = nullptr;
         {
             std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
+            if (m_session->closing || !m_session->raw())
+                break;
             libssh2_session_set_blocking(m_session->raw(), 0);
             channel = libssh2_channel_forward_accept(listener);
             libssh2_session_set_blocking(m_session->raw(), 1);

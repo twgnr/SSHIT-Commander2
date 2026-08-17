@@ -99,11 +99,18 @@ void PreviewPanel::preview(core::FileSystemProvider *provider, const QString &pa
     }
 
     if (isImageName(name)) {
+        // Remote deutlich knapper deckeln: ein 25-MB-Bild ueber SSH belegt die
+        // Session sonst minutenlang, nur fuer eine Vorschau.
+        const qint64 limit = provider->isRemote ? 8'000'000 : 25'000'000;
         m_task = m_bridge->run<QByteArray>(
-            [provider, path] { return provider->readBytes(path, 25'000'000); },
-            [this](const QByteArray &data) {
+            [provider, path, limit] { return provider->readBytes(path, limit); },
+            [this, limit](const QByteArray &data) {
                 QPixmap pixmap;
-                if (pixmap.loadFromData(data)) {
+                if (data.size() >= limit) {
+                    // Abgeschnitten gelesen -> gar nicht erst dekodieren.
+                    m_text->setPlainText(_t("(Datei zu groß für die Vorschau)"));
+                    m_stack->setCurrentWidget(m_text);
+                } else if (pixmap.loadFromData(data)) {
                     m_image->setPixmap(pixmap.scaled(m_image->size(), Qt::KeepAspectRatio,
                                                      Qt::SmoothTransformation));
                     m_stack->setCurrentWidget(m_image);

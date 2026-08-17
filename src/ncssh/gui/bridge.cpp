@@ -4,8 +4,11 @@ namespace ncssh::gui {
 
 AsyncBridge::AsyncBridge(QObject *parent) : QObject(parent)
 {
-    // Genug Threads fuer parallele Transfers + Listings + Streams.
-    m_pool.setMaxThreadCount(qMax(8, QThread::idealThreadCount() * 2));
+    // Genug Threads fuer parallele Transfers + Listings + Streams. Die
+    // Untergrenze ist bewusst grosszuegig: Konsolen-Streams und Transfers
+    // belegen ihren Thread fuer die gesamte Laufzeit — ist der Pool voll,
+    // reiht sich z. B. ein Verbinden-Klick still ein und "nichts passiert".
+    m_pool.setMaxThreadCount(qMax(16, QThread::idealThreadCount() * 2));
 }
 
 void AsyncBridge::start() {}

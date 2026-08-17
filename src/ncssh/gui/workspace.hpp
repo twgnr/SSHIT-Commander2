@@ -37,9 +37,13 @@ public:
               TransferManager *transfers, QWidget *parent = nullptr);
     ~Workspace() override;
 
-    // Verbindet die rechte Pane mit einem Server (asynchron).
-    void connectTo(const core::ServerProfile &profile);
-    // Trennt die Verbindung und stellt die rechte Seite auf lokal zurueck.
+    // Verbindet eine Pane mit einem Server (asynchron). target = Ziel-Pane
+    // (Standard: aktive Pane; solange der Nutzer nie eine Seite angeklickt
+    // hat, die rechte). quiet = Fehler nur als Statusmeldung, kein modaler
+    // Dialog — fuer die Sitzungswiederherstellung beim Programmstart.
+    void connectTo(const core::ServerProfile &profile, FilePanel *target = nullptr,
+                   bool quiet = false);
+    // Trennt die Verbindung und stellt die betroffene Pane auf lokal zurueck.
     void disconnectSession();
     bool isConnected() const { return static_cast<bool>(m_session); }
     QString connectionLabel() const;
@@ -100,6 +104,9 @@ signals:
     // Netzwerk-Modus: Scanner erneut oeffnen bzw. zu einem Host verbinden.
     void rescanRequested();
     void connectHostRequested(const QString &host);
+    // Nutzer will einen zweiten Server, waehrend dieser Tab schon verbunden
+    // ist — das Hauptfenster oeffnet dafuer einen neuen Tab.
+    void connectInNewTabRequested(const core::ServerProfile &profile);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -170,6 +177,8 @@ private:
     FilePanel *m_connectedPanel = nullptr;
     ConsolePanel *m_connectedConsole = nullptr;
     bool m_rightActive = false;  // zuletzt fokussierte Seite
+    bool m_sidePicked = false;   // hat der Nutzer je eine Seite angeklickt?
+    bool m_connecting = false;   // laeuft gerade ein Verbindungsaufbau?
     TunnelManager m_tunnels;     // offene Port-Weiterleitungen dieser Sitzung
     QTimer *m_healthTimer = nullptr;   // Keepalive-Wecker
     bool m_healthPending = false;      // laeuft gerade eine Pruefung?

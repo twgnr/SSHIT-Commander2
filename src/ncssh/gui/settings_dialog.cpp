@@ -153,12 +153,14 @@ QWidget *SettingsDialog::buildGeneralTab()
 
     m_autoConnect = new QCheckBox(_t("Beim Start automatisch zum letzten Server verbinden"),
                                   page);
-    m_autoConnect->setChecked(core::getSettingBool(QStringLiteral("auto_connect_last"), false));
+    // Default true — muss zum Default in Workspace::restoreFrom passen, sonst
+    // zeigt der Haken etwas anderes, als die App beim Start tatsaechlich tut.
+    m_autoConnect->setChecked(core::getSettingBool(QStringLiteral("auto_connect_last"), true));
     form->addRow(QString(), m_autoConnect);
 
     auto *pathRow = new QHBoxLayout();
     m_startPath = new QLineEdit(core::getSettingString(QStringLiteral("start_path")), page);
-    m_startPath->setPlaceholderText(_t("leer = aktuelles Verzeichnis"));
+    m_startPath->setPlaceholderText(_t("leer = Benutzerordner"));
     auto *browse = new QPushButton(QStringLiteral("…"), page);
     browse->setFixedWidth(34);
     connect(browse, &QPushButton::clicked, this, [this] {

@@ -166,6 +166,12 @@ void ConsolePanel::setSession(const net::SSHSessionPtr &session)
     }
 }
 
+void ConsolePanel::shutdownShell()
+{
+    m_session.reset();
+    m_terminal->stop();
+}
+
 void ConsolePanel::switchToTerminal()
 {
     m_stack->setCurrentWidget(m_terminal);

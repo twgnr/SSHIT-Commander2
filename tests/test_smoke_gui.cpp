@@ -47,6 +47,13 @@ bool pumpUntil(Predicate ready, int timeoutMs = 5000)
     return true;
 }
 
+// Die Pane fuehrt Pfade in kanonischer nativer Form (FilePanel::loadDir
+// normalisiert ueber den Provider) — Vergleiche muessen dieselbe Form nutzen.
+QString native(const QString &path)
+{
+    return QDir::toNativeSeparators(path);
+}
+
 // Temp-Verzeichnis mit vorhersagbarem Inhalt.
 void makeTree(const QString &dir)
 {
@@ -88,7 +95,7 @@ TEST(smoke_gui, file_panel_loads_and_marks)
     core::LocalFileSystem fs;
     gui::FilePanel panel(&bridge, QStringLiteral("Test"));
     panel.setProvider(&fs, tmp.path());
-    CHECK(pumpUntil([&] { return panel.currentPath() == tmp.path(); }));
+    CHECK(pumpUntil([&] { return panel.currentPath() == native(tmp.path()); }));
 
     auto *table = panel.findChild<QTableWidget *>();
     CHECK(table != nullptr);
@@ -122,7 +129,7 @@ TEST(smoke_gui, file_panel_natural_sort_and_columns)
     core::LocalFileSystem fs;
     gui::FilePanel panel(&bridge, QStringLiteral("Test"));
     panel.setProvider(&fs, tmp.path());
-    CHECK(pumpUntil([&] { return panel.currentPath() == tmp.path(); }));
+    CHECK(pumpUntil([&] { return panel.currentPath() == native(tmp.path()); }));
 
     auto *table = panel.findChild<QTableWidget *>();
     CHECK(table != nullptr);
@@ -151,7 +158,7 @@ TEST(smoke_gui, file_panel_filter_and_hidden)
     core::LocalFileSystem fs;
     gui::FilePanel panel(&bridge, QStringLiteral("Test"));
     panel.setProvider(&fs, tmp.path());
-    CHECK(pumpUntil([&] { return panel.currentPath() == tmp.path(); }));
+    CHECK(pumpUntil([&] { return panel.currentPath() == native(tmp.path()); }));
 
     auto *table = panel.findChild<QTableWidget *>();
     CHECK(table != nullptr);
@@ -187,20 +194,20 @@ TEST(smoke_gui, file_panel_history_navigation)
     core::LocalFileSystem fs;
     gui::FilePanel panel(&bridge, QStringLiteral("Test"));
     panel.setProvider(&fs, tmp.path());
-    CHECK(pumpUntil([&] { return panel.currentPath() == tmp.path(); }));
+    CHECK(pumpUntil([&] { return panel.currentPath() == native(tmp.path()); }));
     CHECK(!panel.canGoBack());
 
     panel.navigateTo(sub);
-    CHECK(pumpUntil([&] { return panel.currentPath() == sub; }));
+    CHECK(pumpUntil([&] { return panel.currentPath() == native(sub); }));
     CHECK(panel.canGoBack());
     CHECK(!panel.canGoForward());
 
     panel.goBack();
-    CHECK(pumpUntil([&] { return panel.currentPath() == tmp.path(); }));
+    CHECK(pumpUntil([&] { return panel.currentPath() == native(tmp.path()); }));
     CHECK(panel.canGoForward());
 
     panel.goForward();
-    CHECK(pumpUntil([&] { return panel.currentPath() == sub; }));
+    CHECK(pumpUntil([&] { return panel.currentPath() == native(sub); }));
     CHECK(!panel.canGoForward());
 }
 

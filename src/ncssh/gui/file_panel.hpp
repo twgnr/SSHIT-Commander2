@@ -127,6 +127,7 @@ signals:
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
@@ -174,6 +175,8 @@ private:
     void updateDriveCombo();
     void beginPathEdit();             // Breadcrumb -> Eingabefeld
     void endPathEdit();
+    // Rechtsklick auf die Pfadleiste: Pfad kopieren / bearbeiten.
+    void showBreadcrumbMenu(const QPoint &globalPos);
 
     // --- Ansicht: Detail (Tabelle) oder Kachel ---
     QAbstractItemView *activeView() const;
@@ -212,6 +215,7 @@ private:
     AsyncBridge *m_bridge;
     core::FileSystemProvider *m_provider = nullptr;
     QString m_path;
+    quint64 m_loadSeq = 0;   // verwirft Antworten veralteter Lade-Auftraege
     std::vector<core::FileEntry> m_entries;      // Rohdaten des Verzeichnisses
     std::vector<core::FileEntry> m_rows;         // sichtbare Zeilen (Index == Tabellenzeile)
     bool m_showHidden = true;

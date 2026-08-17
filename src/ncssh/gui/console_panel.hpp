@@ -43,6 +43,12 @@ public:
     // Session fuer den Terminal-Modus (leer = lokale Shell).
     void setSession(const net::SSHSessionPtr &session);
 
+    // Laufendes Terminal (PTY + Lesethread) synchron stoppen. Teil des
+    // geordneten Herunterfahrens: MUSS laufen, BEVOR die SSH-Session
+    // geschlossen wird — sonst liest der Terminal-Thread von einer
+    // freigegebenen libssh2-Session.
+    void shutdownShell();
+
     // Beschriftung des Abdock-Knopfes umschalten.
     void setDocked(bool docked);
 

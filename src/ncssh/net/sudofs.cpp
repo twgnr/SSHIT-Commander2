@@ -62,13 +62,23 @@ SudoFileSystem::SudoFileSystem(core::FileSystemProvider *pathFs, ExecFn exec,
 
 QByteArray SudoFileSystem::run(const QString &command, const QByteArray &stdinData)
 {
-    // Das Passwort teilt sich NIE einen stdin-Strom mit den Nutzdaten: erst per
-    // separatem "sudo -v" den Timestamp auffrischen, dann "sudo -n <command>".
-    const QString password = m_password ? m_password() : QString();
-    if (!password.isEmpty())
-        m_exec(QStringLiteral("sudo -S -p '' -v"), (password + QLatin1Char('\n')).toUtf8());
-
-    const ExecResult r = m_exec(QStringLiteral("sudo -n ") + command, stdinData);
+    // Optimistisch ohne Auffrischen starten: nach verifySudoPassword (beim
+    // Einschalten) bzw. dem letzten Refresh ist der sudo-Timestamp minutenlang
+    // gueltig. Das fruehere "sudo -v" vor JEDEM Befehl kostete einen ganzen
+    // Exec-Kanal (mehrere Netz-Roundtrips) pro Operation.
+    ExecResult r = m_exec(QStringLiteral("sudo -n ") + command, stdinData);
+    if (r.exitStatus != 0
+        && QString::fromUtf8(r.err).trimmed().startsWith(QLatin1String("sudo:"))) {
+        // sudo selbst hat abgelehnt (Timestamp abgelaufen) — der Befehl lief
+        // nie an, Wiederholen ist gefahrlos. Das Passwort teilt sich dabei NIE
+        // einen stdin-Strom mit den Nutzdaten: erst per separatem "sudo -v"
+        // auffrischen, dann erneut "sudo -n <command>".
+        const QString password = m_password ? m_password() : QString();
+        if (!password.isEmpty()) {
+            m_exec(QStringLiteral("sudo -S -p '' -v"), (password + QLatin1Char('\n')).toUtf8());
+            r = m_exec(QStringLiteral("sudo -n ") + command, stdinData);
+        }
+    }
     if (r.exitStatus != 0) {
         const QString err = QString::fromUtf8(r.err).trimmed();
         throw std::runtime_error(
