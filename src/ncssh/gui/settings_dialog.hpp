@@ -23,6 +23,7 @@ class SettingsDialog : public QDialog {
 public:
     // bridge darf null sein — dann ist der Modell-Download deaktiviert.
     explicit SettingsDialog(QWidget *parent = nullptr, AsyncBridge *bridge = nullptr);
+    ~SettingsDialog() override;
 
 private:
     QWidget *buildGeneralTab();

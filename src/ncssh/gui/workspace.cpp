@@ -31,6 +31,14 @@ namespace ncssh::gui {
 
 using core::_t;
 
+// Lesezeichen-Gruppe einer Verbindung (Profilname, sonst user@host).
+static QString bookmarkKeyFor(const net::SSHSessionPtr &session)
+{
+    if (!session)
+        return QStringLiteral("local");
+    return session->profile.name.isEmpty() ? session->label() : session->profile.name;
+}
+
 Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
                      TransferManager *transfers, QWidget *parent)
     : QWidget(parent), m_bridge(bridge), m_sessions(sessions), m_transfers(transfers)
@@ -49,20 +57,22 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     m_leftPanel = new FilePanel(bridge, _t("Lokal"), leftCol);
     m_leftPreview = new PreviewPanel(bridge, leftCol);
     m_leftPreview->setVisible(false);   // ueber Ansicht -> Vorschau einblendbar
-    m_leftConsole = new ConsolePanel(bridge, _t("Konsole (lokal)"), leftCol);
+    m_leftConsole = new ConsolePanel(bridge, _t("Konsole (links)"), leftCol);
     leftCol->addWidget(m_leftPanel);
     leftCol->addWidget(m_leftPreview);
     leftCol->addWidget(m_leftConsole);
     leftCol->setStretchFactor(0, 3);
     leftCol->setStretchFactor(2, 2);
 
-    // Rechte Spalte: remote Pane + Konsole (bis Connect ebenfalls lokal)
+    // Rechte Spalte: zweite Pane + Konsole. Beide Seiten starten lokal; die
+    // Verbindung landet spaeter in der Pane, die beim Verbinden aktiv ist —
+    // die Beschriftung darf deshalb keine Seite als "remote" festschreiben.
     auto *rightCol = new QSplitter(Qt::Vertical, columns);
     m_rightColumn = rightCol;
-    m_rightPanel = new FilePanel(bridge, _t("Remote (nicht verbunden)"), rightCol);
+    m_rightPanel = new FilePanel(bridge, _t("Lokal"), rightCol);
     m_rightPreview = new PreviewPanel(bridge, rightCol);
     m_rightPreview->setVisible(false);
-    m_rightConsole = new ConsolePanel(bridge, _t("Konsole (remote)"), rightCol);
+    m_rightConsole = new ConsolePanel(bridge, _t("Konsole (rechts)"), rightCol);
     rightCol->addWidget(m_rightPanel);
     rightCol->addWidget(m_rightPreview);
     rightCol->addWidget(m_rightConsole);
@@ -131,14 +141,15 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
 
     // Aktive Seite merken (bestimmt Ziel von Befehlspalette/Werkzeugen) und die
     // Pane/Konsole der aktiven Seite blau umranden.
-    connect(m_leftPanel, &FilePanel::activated, this, [this] { m_rightActive = false; m_sidePicked = true; highlightActive(); });
-    connect(m_rightPanel, &FilePanel::activated, this, [this] { m_rightActive = true; m_sidePicked = true; highlightActive(); });
-    connect(m_leftConsole, &ConsolePanel::activated, this, [this] { m_rightActive = false; m_sidePicked = true; highlightActive(); });
-    connect(m_rightConsole, &ConsolePanel::activated, this, [this] { m_rightActive = true; m_sidePicked = true; highlightActive(); });
+    connect(m_leftPanel, &FilePanel::activated, this, [this] { m_rightActive = false; highlightActive(); });
+    connect(m_rightPanel, &FilePanel::activated, this, [this] { m_rightActive = true; highlightActive(); });
+    connect(m_leftConsole, &ConsolePanel::activated, this, [this] { m_rightActive = false; highlightActive(); });
+    connect(m_rightConsole, &ConsolePanel::activated, this, [this] { m_rightActive = true; highlightActive(); });
 
-    // Solange nichts verbunden ist, liegt die (potenzielle) Verbindung rechts.
-    m_connectedPanel = m_rightPanel;
-    m_connectedConsole = m_rightConsole;
+    // Keine Verbindung -> keine verbundene Pane. connectTo() traegt sie ein;
+    // eine Vorbelegung auf "rechts" waere eine Annahme, die nicht mehr gilt.
+    m_connectedPanel = nullptr;
+    m_connectedConsole = nullptr;
 
     // sudo-/Trennen-Chip beider Panes: wirkt auf die Pane mit der Verbindung.
     for (FilePanel *p : {m_leftPanel, m_rightPanel}) {
@@ -225,16 +236,21 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
                     emit connectHostRequested(host);
                 });
         connect(p, &FilePanel::exitNetworkModeRequested, this, [this, p] {
-            // Zurueck auf das lokale Dateisystem der jeweiligen Seite.
-            p->setHeaderTitle(p == m_leftPanel ? _t("Lokal")
-                                               : (m_session ? m_session->label()
-                                                            : _t("Remote (nicht verbunden)")));
-            p->setBookmarkKey(p == m_leftPanel ? QStringLiteral("local")
-                                               : QStringLiteral("remote"));
-            core::FileSystemProvider *back =
-                (p == m_rightPanel && m_remoteFs) ? static_cast<core::FileSystemProvider *>(
-                                                        m_remoteFs.get())
-                                                  : m_localFs.get();
+            // Zurueck auf das Dateisystem, das diese Seite vor dem Netzwerk-
+            // Modus hatte: die verbundene Pane bekommt ihr Remote-/sudo-
+            // Dateisystem zurueck, jede andere das lokale. (Welche Seite
+            // verbunden ist, entscheidet m_connectedPanel — nicht die Lage.)
+            const bool connected = (p == m_connectedPanel && m_session && m_remoteFs);
+            p->setHeaderTitle(connected ? m_session->label() : _t("Lokal"));
+            p->setBookmarkKey(connected ? bookmarkKeyFor(m_session)
+                                        : QStringLiteral("local"));
+            // Chips wieder herstellen (showNetworkHosts hat sie abgeschaltet).
+            p->setConnected(connected);
+            p->setSudoAvailable(connected && m_session->osType == QLatin1String("posix"));
+            core::FileSystemProvider *back = m_localFs.get();
+            if (connected)
+                back = m_sudoFs ? static_cast<core::FileSystemProvider *>(m_sudoFs.get())
+                                : static_cast<core::FileSystemProvider *>(m_remoteFs.get());
             p->setProvider(back, back == m_localFs.get() ? QDir::homePath() : QString());
         });
     }
@@ -295,7 +311,9 @@ bool Workspace::previewVisible() const
 
 QString Workspace::activeOsType() const
 {
-    if (m_rightActive && m_session)
+    // Remote-OS nur melden, wenn die AKTIVE Seite auch die verbundene ist —
+    // die Verbindung kann in jeder der beiden Panes liegen.
+    if (m_session && activePanel() == m_connectedPanel)
         return m_session->osType;
 #ifdef Q_OS_WIN
     return QStringLiteral("windows");
@@ -357,25 +375,47 @@ void Workspace::disconnectSession()
     // Terminal, dessen Lesethread sonst waehrend des Schliessens auf die
     // freigegebene libssh2-Session zugreift —, DANN die Session schliessen
     // und zuletzt die Provider-Objekte freigeben.
-    FilePanel *panel = m_connectedPanel ? m_connectedPanel : m_rightPanel;
-    ConsolePanel *console = m_connectedConsole ? m_connectedConsole : m_rightConsole;
-    panel->setSudoAvailable(false);
-    panel->setConnected(false);
-    console->setSession({});      // stoppt ein laufendes Remote-Terminal
-    console->setRunner(m_localRunner.get(), QDir::homePath());
-    console->setCompletionProvider(m_localFs.get());
-    // Rechte Pane bekommt wieder ihren Remote-Platzhalter, die linke "Lokal".
-    panel->setHeaderTitle(panel == m_leftPanel ? _t("Lokal")
-                                               : _t("Remote (nicht verbunden)"));
-    panel->setProvider(m_localFs.get(), QDir::homePath());
+    // KEINE Seite raten: gibt es (wider Erwarten) keine verbundene Pane, wird
+    // nur die Sitzung abgebaut. Ein Fallback auf "rechts" wuerde sonst die
+    // falsche Seite zuruecksetzen und die echte auf einem toten Provider
+    // stehen lassen.
+    FilePanel *panel = m_connectedPanel;
+    ConsolePanel *console = m_connectedConsole;
+    if (panel) {
+        panel->setSudoAvailable(false);
+        panel->setConnected(false);
+        // Die Pane ist wieder lokal — samt lokaler Lesezeichen-Gruppe.
+        panel->setHeaderTitle(_t("Lokal"));
+        panel->setBookmarkKey(QStringLiteral("local"));
+        panel->setProvider(m_localFs.get(), QDir::homePath());
+    }
+    if (console) {
+        console->setSession({});      // stoppt ein laufendes Remote-Terminal
+        console->setRunner(m_localRunner.get(), QDir::homePath());
+        console->setCompletionProvider(m_localFs.get());
+    }
     m_sessions->close(m_session);
     m_session.reset();
-    m_connectedPanel = m_rightPanel;
-    m_connectedConsole = m_rightConsole;
-    m_sudoFs.reset();
-    m_remoteRunner.reset();
-    m_remoteFs.reset();
+    m_connectedPanel = nullptr;
+    m_connectedConsole = nullptr;
+    retireRemoteObjects();
     emit connectionChanged();
+}
+
+void Workspace::retireRemoteObjects()
+{
+    // Nicht zerstoeren, nur stilllegen — siehe m_retired in der Kopfdatei.
+    RetiredRemote old;
+    old.sudoFs = std::move(m_sudoFs);
+    old.remoteFs = std::move(m_remoteFs);
+    old.runner = std::move(m_remoteRunner);
+    if (old.sudoFs || old.remoteFs || old.runner)
+        m_retired.push_back(std::move(old));
+    // Nicht unbegrenzt wachsen lassen: nach so vielen Verbindungswechseln ist
+    // garantiert kein Dialog von damals mehr offen.
+    constexpr size_t kKeep = 8;
+    if (m_retired.size() > kKeep)
+        m_retired.erase(m_retired.begin(), m_retired.end() - kKeep);
 }
 
 void Workspace::explainActiveConsoleWithAi()
@@ -454,14 +494,29 @@ void Workspace::swapPanes()
         to->setConnected(true);
         to->setSudoAvailable(m_session->osType == QLatin1String("posix"));
         to->setSudoActive(from->sudoActive());
-        to->setBookmarkKey(m_session->profile.name.isEmpty() ? m_session->label()
-                                                             : m_session->profile.name);
-        from->setHeaderTitle(from == m_leftPanel ? _t("Lokal") : _t("Remote (nicht verbunden)"));
+        to->setBookmarkKey(bookmarkKeyFor(m_session));
+        from->setHeaderTitle(_t("Lokal"));
         from->setConnected(false);
         from->setSudoAvailable(false);
         from->setSudoActive(false);
         from->setBookmarkKey(QStringLiteral("local"));
         m_connectedPanel = to;
+        // Auch die Konsole der Verbindung wandert mit, sonst laeuft der
+        // Remote-Runner weiter auf der Seite, die jetzt lokal ist. Die Seite
+        // wird aus der verbundenen PANE abgeleitet (die den Zweig bewacht),
+        // nicht aus m_connectedConsole — sonst waere "rechts" wieder geraten.
+        ConsolePanel *fromConsole = (from == m_leftPanel) ? m_leftConsole : m_rightConsole;
+        ConsolePanel *toConsole =
+            (fromConsole == m_leftConsole) ? m_rightConsole : m_leftConsole;
+        if (m_remoteRunner) {
+            toConsole->setRunner(m_remoteRunner.get(), QStringLiteral("."));
+            toConsole->setCompletionProvider(m_remoteFs.get());
+            toConsole->setSession(m_session);
+            fromConsole->setSession({});
+            fromConsole->setRunner(m_localRunner.get(), QDir::homePath());
+            fromConsole->setCompletionProvider(m_localFs.get());
+            m_connectedConsole = toConsole;
+        }
     }
 }
 
@@ -472,6 +527,14 @@ void Workspace::syncPanes()
     FilePanel *to = (from == m_leftPanel) ? m_rightPanel : m_leftPanel;
     if (from->currentPath().isEmpty())
         return;
+    // Nur sinnvoll, wenn beide Seiten dasselbe Dateisystem zeigen: ein
+    // Remote-Pfad im lokalen Dateisystem (oder umgekehrt) erzeugt sonst nur
+    // eine Fehlermeldung.
+    if (from->provider() != to->provider()) {
+        emit statusMessage(
+            _t("Angleichen geht nur, wenn beide Seiten dasselbe Dateisystem zeigen."));
+        return;
+    }
     to->navigateTo(from->currentPath());
 }
 
@@ -519,6 +582,14 @@ void Workspace::showNetworkHosts(const std::vector<core::HostResult> &hosts,
     FilePanel *panel = side == QLatin1String("left")    ? m_leftPanel
                        : side == QLatin1String("right") ? m_rightPanel
                                                         : activePanel();
+    // Trifft es die verbundene Pane, ist deren Remote-Ansicht weg: Chips und
+    // Verbindungs-Zeiger duerfen dann nicht stehen bleiben, sonst wirkt der
+    // sudo-Chip auf eine Pane, die gerade die Hostliste zeigt.
+    if (panel == m_connectedPanel) {
+        panel->setConnected(false);
+        panel->setSudoAvailable(false);
+        panel->setSudoActive(false);
+    }
     panel->setHeaderTitle(_t("Netzwerk"));
     panel->setBookmarkKey(QStringLiteral("network"));
     panel->setProvider(m_netFs.get(), QStringLiteral("net://"));
@@ -532,8 +603,8 @@ void Workspace::undockConsole(ConsolePanel *console)
     // Eigenes Fenster als Container; die Pane fuellt danach die Spalte.
     auto *window = new QWidget(this, Qt::Window);
     window->setObjectName(QStringLiteral("FloatingConsole"));
-    window->setWindowTitle(console == m_leftConsole ? _t("Konsole (lokal)")
-                                                    : _t("Konsole (remote)"));
+    window->setWindowTitle(console == m_leftConsole ? _t("Konsole (links)")
+                                                    : _t("Konsole (rechts)"));
     auto *layout = new QVBoxLayout(window);
     layout->setContentsMargins(4, 4, 4, 4);
     console->setParent(window);
@@ -581,7 +652,10 @@ bool Workspace::eventFilter(QObject *obj, QEvent *event)
 
 void Workspace::setSudoMode(bool on)
 {
-    if (!m_session || !m_remoteFs)
+    // Ohne Verbindung gibt es keine verbundene Pane (m_connectedPanel ist dann
+    // nullptr) — die Rueckmeldungen unten laufen asynchron und koennen eine
+    // zwischenzeitliche Trennung erleben.
+    if (!m_session || !m_remoteFs || !m_connectedPanel)
         return;
     FilePanel *const panel = m_connectedPanel;  // Pane mit der Verbindung
     const QString keepPath = panel->currentPath();
@@ -598,6 +672,9 @@ void Workspace::setSudoMode(bool on)
     m_bridge->run<bool>(
         [session] { return net::sudoNeedsPassword(session); },
         [this, session, keepPath, host](bool needsPassword) {
+            // Zwischenzeitlich getrennt oder anderer Server -> nichts tun.
+            if (m_session != session)
+                return;
             if (!needsPassword || session->sudoPassword) {
                 enableSudoFilesystem(keepPath);
                 return;
@@ -607,7 +684,7 @@ void Workspace::setSudoMode(bool on)
                 this, _t("sudo-Passwort"), _t("sudo-Passwort für %1:").arg(host),
                 QLineEdit::Password, QString(), &ok);
             if (!ok || password.isEmpty()) {
-                m_connectedPanel->setSudoActive(false);   // Chip zurueckstellen
+                if (m_connectedPanel) m_connectedPanel->setSudoActive(false);   // Chip zurueckstellen
                 return;
             }
             // Pruefung geht ueber SSH — nicht im GUI-Thread, sonst haengt das
@@ -615,10 +692,12 @@ void Workspace::setSudoMode(bool on)
             m_bridge->run<bool>(
                 [session, password] { return net::verifySudoPassword(session, password); },
                 [this, session, password, keepPath](bool accepted) {
+                    if (m_session != session)
+                        return;
                     if (!accepted) {
                         QMessageBox::warning(this, _t("sudo"),
                                              _t("sudo-Authentifizierung fehlgeschlagen."));
-                        m_connectedPanel->setSudoActive(false);
+                        if (m_connectedPanel) m_connectedPanel->setSudoActive(false);
                         return;
                     }
                     session->sudoPassword = password;
@@ -626,17 +705,23 @@ void Workspace::setSudoMode(bool on)
                 },
                 [this](const QString &err) {
                     QMessageBox::warning(this, _t("sudo"), err);
-                    m_connectedPanel->setSudoActive(false);
+                    if (m_connectedPanel) m_connectedPanel->setSudoActive(false);
                 });
         },
         [this](const QString &err) {
             QMessageBox::warning(this, _t("sudo"), err);
-            m_connectedPanel->setSudoActive(false);
+            if (m_connectedPanel) m_connectedPanel->setSudoActive(false);
         });
 }
 
 void Workspace::enableSudoFilesystem(const QString &keepPath)
 {
+    // Der Weg hierher fuehrt ueber mehrere asynchrone Schritte (NOPASSWD-Test,
+    // Passwortabfrage, Verifikation). In dieser Zeit kann der Nutzer getrennt
+    // oder den Server gewechselt haben — dann gibt es keine verbundene Pane
+    // und kein Remote-Dateisystem mehr.
+    if (!m_session || !m_remoteFs || !m_connectedPanel)
+        return;
     m_sudoFs = std::make_unique<net::SudoFileSystem>(m_remoteFs.get(), m_session);
     m_connectedPanel->setProvider(m_sudoFs.get(), keepPath);
     emit statusMessage(_t("sudo-Modus aktiv — Operationen laufen als root."));
@@ -654,6 +739,11 @@ QJsonObject Workspace::toJson() const
          m_session ? QString(m_connectedPanel == m_leftPanel ? QStringLiteral("left")
                                                              : QStringLiteral("right"))
                    : QString()},
+        // Aktive Seite mitsichern: sonst steht der blaue Rahmen nach dem
+        // Neustart links, waehrend die Verbindung rechts wiederhergestellt
+        // wird — und der naechste Verbinden-Klick zielt auf die falsche Pane.
+        {QStringLiteral("active_side"),
+         m_rightActive ? QStringLiteral("right") : QStringLiteral("left")},
         {QStringLiteral("left_path"), m_leftPanel->currentPath()},
         {QStringLiteral("right_path"), m_rightPanel->currentPath()},
         {QStringLiteral("left_console_detached"), m_floatingConsoles.contains(m_leftConsole)},
@@ -696,6 +786,16 @@ void Workspace::restoreFrom(const QJsonObject &state)
     const QString connPath = (connPanel == m_leftPanel) ? leftPath : rightPath;
     const QString otherPath = (otherPanel == m_leftPanel) ? leftPath : rightPath;
 
+    // Aktive Seite wiederherstellen (aeltere Sitzungen kannten das Feld nicht:
+    // dann die verbundene Seite markieren, damit Markierung und Verbindung
+    // zusammenpassen).
+    const QString activeSide = state.value(QStringLiteral("active_side")).toString();
+    if (!activeSide.isEmpty())
+        m_rightActive = (activeSide == QLatin1String("right"));
+    else if (!profileName.isEmpty())
+        m_rightActive = (connPanel == m_rightPanel);
+    highlightActive();
+
     // Die nicht verbundene Seite ist immer lokal.
     otherPanel->navigateTo(safeLocalPath(otherPath));
 
@@ -721,9 +821,10 @@ void Workspace::restoreFrom(const QJsonObject &state)
 void Workspace::connectTo(const core::ServerProfile &profile, FilePanel *target, bool quiet)
 {
     // Zielpane JETZT festhalten — bis das Ergebnis eintrifft, kann sich der
-    // Fokus aendern. Ohne explizites Ziel: die aktive Pane; hat der Nutzer in
-    // diesem Tab noch nie eine Seite angeklickt, die rechte ("Remote").
-    FilePanel *panel = target ? target : (m_sidePicked ? activePanel() : m_rightPanel);
+    // Fokus aendern. Ohne explizites Ziel gilt ausnahmslos: die Verbindung
+    // landet in der AKTIVEN Pane, also der blau umrandeten. Jede Sonderregel
+    // ("beim ersten Mal rechts") widerspricht der Markierung und ueberrascht.
+    FilePanel *panel = target ? target : activePanel();
     if (m_connecting) {
         emit statusMessage(_t("Es läuft bereits ein Verbindungsversuch."));
         return;
@@ -770,8 +871,7 @@ void Workspace::connectTo(const core::ServerProfile &profile, FilePanel *target,
             m_remoteRunner = session->runner();
             panel->setHeaderTitle(session->label());
             // Lesezeichen getrennt je Verbindung (Profilname).
-            panel->setBookmarkKey(profile.name.isEmpty() ? session->label()
-                                                          : profile.name);
+            panel->setBookmarkKey(bookmarkKeyFor(session));
             // Startpfad des Profils respektieren (auch von der Sitzungs-
             // wiederherstellung gesetzt); leer -> Home des Servers.
             panel->setProvider(m_remoteFs.get(), profile.startPath);
@@ -986,9 +1086,12 @@ void Workspace::startTransfer(core::FileSystemProvider *src, const QString &srcP
     // Ueber die Transfer-Queue: Fortschritt/Abbruch/Wiederholen im Dialog.
     const int jobId = m_transfers->enqueue(name, src, srcPath, dst, dstPath);
     emit statusMessage(QStringLiteral("Übertrage %1 …").arg(name));
-    // Ziel-Pane nach Abschluss aktualisieren.
-    connect(m_transfers, &TransferManager::jobUpdated, this,
-            [this, jobId, src, srcPath, dst, moveSource](int id) {
+    // Ziel-Pane nach Abschluss aktualisieren. Die Verbindung wird beim ersten
+    // Endzustand wieder getrennt — sonst sammeln sich ueber die Laufzeit
+    // beliebig viele Handler an, die bei JEDEM Job-Update mitlaufen.
+    auto conn = std::make_shared<QMetaObject::Connection>();
+    *conn = connect(m_transfers, &TransferManager::jobUpdated, this,
+            [this, jobId, src, srcPath, dst, moveSource, conn](int id) {
                 if (id != jobId)
                     return;
                 const auto &jobs = m_transfers->jobs();
@@ -996,6 +1099,11 @@ void Workspace::startTransfer(core::FileSystemProvider *src, const QString &srcP
                                        [jobId](const net::TransferJob &j) { return j.id == jobId; });
                 if (it == jobs.end() || it->status == QLatin1String("running"))
                     return;
+                // Endzustand erreicht (fertig/Fehler/abgebrochen/pausiert):
+                // Handler abmelden. Ein spaeterer Wiederholungslauf meldet
+                // sich ueber startTransfer neu an.
+                if (it->status != QLatin1String("paused"))
+                    disconnect(*conn);
                 if (it->status == QLatin1String("done")) {
                     emit statusMessage(QStringLiteral("Übertragen: %1").arg(it->name));
                     // Beim Verschieben die Quelle erst nach erfolgreicher
@@ -1041,8 +1149,15 @@ void Workspace::confirmAndMove(core::FileSystemProvider *src,
         {}, this);
     if (dlg.exec() != QDialog::Accepted)
         return;
-    for (const auto &[from, to] : dlg.results())
-        startTransfer(src, from, dst, dst->parent(to), dst->basename(to), /*moveSource=*/true);
+    // Wie beim Kopieren erst die Namenskonflikte klaeren. Ohne diese Pruefung
+    // wuerde das Verschieben Zieldateien wortlos ersetzen — und anschliessend
+    // auch noch die Quelle loeschen.
+    withConflictCheck(dst, dstDir, dlg.results(),
+                      [this, src, dst](const std::vector<std::pair<QString, QString>> &todo) {
+                          for (const auto &[from, to] : todo)
+                              startTransfer(src, from, dst, dst->parent(to), dst->basename(to),
+                                            /*moveSource=*/true);
+                      });
 }
 
 } // namespace ncssh::gui

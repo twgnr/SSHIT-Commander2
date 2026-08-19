@@ -1620,12 +1620,21 @@ void FilePanel::opChecksum()
 
     core::FileSystemProvider *provider = m_provider;
     const bool remote = provider->isRemote;
+    // Remote wird ueber die Provider-Bytes gehasht und dabei gedeckelt. Ein
+    // Byte ueber dem Limit lesen, um eine Kuerzung zu ERKENNEN: sonst zeigt
+    // die App eine Pruefsumme, die nicht zur Datei passt (und nie mit
+    // sha256sum auf dem Server uebereinstimmt).
+    constexpr qint64 kRemoteLimit = 100'000'000;
     m_bridge->run<QString>(
         [provider, path, algo, remote]() -> QString {
-            // Lokal gestreamt; remote ueber die Provider-Bytes (gedeckelt).
             if (!remote)
                 return core::hashFile(path, algo);
-            return core::hashBytes(provider->readBytes(path, 100'000'000), algo);
+            const QByteArray data = provider->readBytes(path, kRemoteLimit + 1);
+            if (data.size() > kRemoteLimit)
+                throw std::runtime_error(
+                    _t("Datei größer als 100 MB — Prüfsumme bitte auf dem Server bilden "
+                       "(z. B. sha256sum).").toStdString());
+            return core::hashBytes(data, algo);
         },
         [this, algo, path](const QString &digest) {
             auto *box = new QMessageBox(QMessageBox::Information, _t("Prüfsumme"),

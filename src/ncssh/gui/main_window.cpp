@@ -337,6 +337,13 @@ void MainWindow::buildMenus()
     actions->addSeparator();
     reg(QStringLiteral("rename_tab"),
         actions->addAction(_t("Tab umbenennen …"), this, &MainWindow::renameCurrentTab));
+    // "Tab schliessen" (Strg+W) stand in den Einstellungen und in der Hilfe,
+    // war aber an keine Aktion gebunden und tat nichts.
+    reg(QStringLiteral("close_tab"),
+        actions->addAction(_t("Tab schließen"), this, [this] {
+            if (m_tabs && m_tabs->count() > 1)
+                emit m_tabs->tabCloseRequested(m_tabs->currentIndex());
+        }));
     reg(QStringLiteral("disconnect"),
         actions->addAction(_t("Verbindung trennen"), this,
                            &MainWindow::disconnectCurrentTab));
@@ -446,9 +453,12 @@ void MainWindow::buildMenus()
     reg(QStringLiteral("pane_status"),
         panes->addAction(_t("Status anzeigen"), this, &MainWindow::paneStatusCycle));
     panes->addSeparator();
+    // Kein Ctrl+Shift+B: das gehoert dem SFTP-Batch (core/shortcuts.cpp).
+    // Zwei Aktionen desselben Fensters mit gleichem Kuerzel sind "ambiguous"
+    // — dann loest KEINE von beiden aus.
     QAction *broadcastAct = panes->addAction(_t("Befehl an beide Konsolen …"), this,
                                              &MainWindow::broadcastCommand);
-    broadcastAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+B")));
+    broadcastAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+K")));
 
     // --- Ansicht: Theme ---
     QMenu *view = menuBar()->addMenu(_t("&Ansicht"));
@@ -745,7 +755,10 @@ Workspace *MainWindow::addTab()
             [this](const core::ServerProfile &profile) {
                 Workspace *fresh = addTab();
                 statusBar()->showMessage(_t("Verbinde zu %1 …").arg(profile.display()), 8000);
-                fresh->connectTo(profile, fresh->rightPanel());
+                // Ohne Zielangabe: aktive Pane des neuen Tabs — dieselbe Regel
+                // wie ueberall, damit die Verbindung dort landet, wo die blaue
+                // Markierung steht.
+                fresh->connectTo(profile);
             });
     // Netzwerk-Modus: erneut scannen bzw. zu einem gefundenen Host verbinden.
     connect(ws, &Workspace::rescanRequested, this, &MainWindow::openNetscan);
@@ -769,10 +782,10 @@ Workspace *MainWindow::addTab()
         }
         if (!prepareCredentials(profile))
             return;
-        if (Workspace *target = currentWorkspace()) {
-            statusBar()->showMessage(_t("Verbinde zu %1 …").arg(profile.display()), 8000);
-            target->connectTo(profile);
-        }
+        // In DEN Tab verbinden, aus dem der Wunsch kam — waehrend der
+        // Passwortabfrage kann ein anderer Tab nach vorn geholt worden sein.
+        statusBar()->showMessage(_t("Verbinde zu %1 …").arg(profile.display()), 8000);
+        ws->connectTo(profile);
     });
     m_tabs->setCurrentIndex(index);
     QTimer::singleShot(0, this, &MainWindow::moveTabPlus);  // nach dem Layout platzieren
@@ -1003,16 +1016,20 @@ void MainWindow::openSearch(const QString &mode)
     Workspace *ws = currentWorkspace();
     if (!ws)
         return;
+    // Die Suchmaschine arbeitet ausschliesslich LOKAL. Ist die aktive Pane
+    // remote, wird die andere Seite zum Ziel — sonst bekaeme der SFTP-Provider
+    // einen Windows-Pfad vorgesetzt. Das Ziel wird JETZT festgehalten: der
+    // Dialog ist nicht-modal, die aktive Seite kann bis zum Treffer wechseln.
     FilePanel *panel = ws->activePanel();
-    // Die Suchmaschine arbeitet lokal; bei Remote-Panes den lokalen Pfad nehmen.
-    const QString root = (panel->provider() && !panel->provider()->isRemote)
-                             ? panel->currentPath()
-                             : QDir::homePath();
+    if (panel->provider() && panel->provider()->isRemote)
+        panel = (panel == ws->leftPanel()) ? ws->rightPanel() : ws->leftPanel();
+    const bool usable = panel->provider() && !panel->provider()->isRemote;
+    const QString root = usable ? panel->currentPath() : QDir::homePath();
     auto *dlg = new SearchDialog(m_bridge, mode, root, this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
-    connect(dlg, &QDialog::accepted, this, [dlg, ws] {
+    connect(dlg, &QDialog::accepted, this, [dlg, panel] {
         if (!dlg->chosenPath().isEmpty())
-            ws->activePanel()->navigateTo(QFileInfo(dlg->chosenPath()).path());
+            panel->navigateTo(QFileInfo(dlg->chosenPath()).path());
     });
     dlg->show();
 }

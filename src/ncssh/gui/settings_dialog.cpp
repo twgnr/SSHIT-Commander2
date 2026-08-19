@@ -14,6 +14,7 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QJsonObject>
+#include <QPointer>
 #include <QProgressBar>
 #include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
@@ -65,6 +66,15 @@ SettingsDialog::SettingsDialog(QWidget *parent, AsyncBridge *bridge)
     layout->addWidget(box);
 }
 
+SettingsDialog::~SettingsDialog()
+{
+    // Ein laufender Modell-Download haelt Zeiger auf Widgets dieses Dialogs.
+    // Ohne Abbruch schreiben seine Rueckmeldungen in bereits zerstoerte
+    // Objekte, sobald der Nutzer das Fenster schliesst.
+    if (m_pullTask && m_bridge)
+        m_bridge->cancel(m_pullTask);
+}
+
 QWidget *SettingsDialog::buildGeneralTab()
 {
     auto *page = new QWidget(this);
@@ -96,7 +106,9 @@ QWidget *SettingsDialog::buildGeneralTab()
     };
     m_editorFont = makeFontSpin("editor_font_size", 11);
     m_terminalFont = makeFontSpin("terminal_font_size", 10);
-    m_paneFont = makeFontSpin("pane_font_size", 10);
+    // Default muss zu FilePanel::applyPaneStyle passen (11) — sonst
+    // verkleinert schon das blosse Oeffnen+Speichern die Pane-Schrift.
+    m_paneFont = makeFontSpin("pane_font_size", 11);
     form->addRow(_t("Editor-Schriftgröße"), m_editorFont);
     form->addRow(_t("Terminal-Schriftgröße"), m_terminalFont);
     form->addRow(_t("Pane-Schriftgröße (Dateiliste)"), m_paneFont);
@@ -269,31 +281,41 @@ void SettingsDialog::startPull()
     m_pullProgress->setRange(0, 0);   // unbestimmt, bis Groessen bekannt sind
     m_aiStatus->setText(_t("Lade %1 …").arg(model));
 
+    // Die Rueckmeldungen laufen ueber die Bridge (Kontext ist NICHT dieser
+    // Dialog). Schliesst der Nutzer das Fenster waehrend des Downloads, muss
+    // jeder Rueckweg pruefen, ob es den Dialog ueberhaupt noch gibt.
+    QPointer<SettingsDialog> self(this);
     m_pullTask = m_bridge->stream(
         [baseUrl, model](const AsyncBridge::EmitLine &emitLine, const CancelTokenPtr &cancel) {
             core::pullStream(baseUrl, model, emitLine, cancel);
         },
-        [this](const QString &line) {
+        [self](const QString &line) {
+            if (!self)
+                return;
             const core::PullProgress p = core::parsePullLine(line);
             if (p.total > 0) {
-                m_pullProgress->setRange(0, 100);
-                m_pullProgress->setValue(int(p.completed * 100 / p.total));
+                self->m_pullProgress->setRange(0, 100);
+                self->m_pullProgress->setValue(int(p.completed * 100 / p.total));
             }
             if (!p.status.isEmpty())
-                m_aiStatus->setText(p.status);
+                self->m_aiStatus->setText(p.status);
         },
-        [this, model] {
-            m_pullTask = nullptr;
-            m_pullProgress->setVisible(false);
-            m_pullButton->setEnabled(true);
-            m_aiStatus->setText(_t("✓ %1 geladen.").arg(model));
-            loadOllamaModels();       // frisch geladenes Modell in die Auswahl
+        [self, model] {
+            if (!self)
+                return;
+            self->m_pullTask = nullptr;
+            self->m_pullProgress->setVisible(false);
+            self->m_pullButton->setEnabled(true);
+            self->m_aiStatus->setText(_t("✓ %1 geladen.").arg(model));
+            self->loadOllamaModels();       // frisch geladenes Modell in die Auswahl
         },
-        [this](const QString &err) {
-            m_pullTask = nullptr;
-            m_pullProgress->setVisible(false);
-            m_pullButton->setEnabled(true);
-            m_aiStatus->setText(QStringLiteral("✗ %1").arg(err));
+        [self](const QString &err) {
+            if (!self)
+                return;
+            self->m_pullTask = nullptr;
+            self->m_pullProgress->setVisible(false);
+            self->m_pullButton->setEnabled(true);
+            self->m_aiStatus->setText(QStringLiteral("✗ %1").arg(err));
         });
 }
 

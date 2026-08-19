@@ -113,8 +113,17 @@ BridgeTask *AsyncBridge::stream(StreamJob job,
                 return;
             }
         }
-        QMetaObject::invokeMethod(this, [this, guard] {
-            if (guard) emit guard->finished();
+        // Ein abgebrochener Lauf ist NICHT "fertig": sonst meldet die
+        // Oberflaeche Erfolg (Transfer "fertig ✓", Konsole "✓ fertig (Exit 0)",
+        // SFTP-Batch "Fertig"), obwohl mitten in der Arbeit gestoppt wurde —
+        // und Pause/Fortsetzen/Wiederholen finden nie den passenden Zustand.
+        QMetaObject::invokeMethod(this, [this, guard, cancelled = token->isCancelled()] {
+            if (guard) {
+                if (cancelled)
+                    emit guard->failed(QStringLiteral("cancelled"));
+                else
+                    emit guard->finished();
+            }
             releaseTask(guard.data());
         }, Qt::QueuedConnection);
     });

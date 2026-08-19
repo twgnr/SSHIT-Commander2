@@ -34,6 +34,9 @@ private:
     core::FileSystemProvider *m_provider;
     QString m_path;
     QByteArray m_raw;
+    // Quelle war groesser als das Lese-Limit: dann darf NICHT geschrieben
+    // werden — sonst kuerzt das "Konvertieren" die Datei stillschweigend.
+    bool m_truncated = false;
 
     QComboBox *m_srcCodec = nullptr;
     QComboBox *m_dstCodec = nullptr;

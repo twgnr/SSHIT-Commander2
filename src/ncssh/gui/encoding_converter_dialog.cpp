@@ -156,17 +156,24 @@ void EncodingConverterDialog::loadSource()
 {
     core::FileSystemProvider *provider = m_provider;
     const QString path = m_path;
+    // Ein Byte mehr als das Limit lesen: kommt es zurueck, ist die Datei
+    // groesser und darf nicht konvertiert (= gekuerzt) werden.
+    constexpr qint64 kLimit = 5'000'000;
     m_bridge->run<QByteArray>(
-        [provider, path] { return provider->readBytes(path, 5'000'000); },
+        [provider, path] { return provider->readBytes(path, kLimit + 1); },
         [this](const QByteArray &data) {
-            m_raw = data;
+            m_truncated = data.size() > kLimit;
+            m_raw = m_truncated ? data.left(kLimit) : data;
             // Quell-Encoding automatisch erkennen und vorwaehlen.
-            const QString detected = core::detectEncoding(data);
+            const QString detected = core::detectEncoding(m_raw);
             const int idx = m_srcCodec->findData(detected);
             if (idx >= 0)
                 m_srcCodec->setCurrentIndex(idx);
             m_status->setText(QStringLiteral("%1 Bytes · erkannt: %2")
-                                  .arg(data.size()).arg(detected));
+                                  .arg(m_raw.size()).arg(detected));
+            if (m_truncated)
+                m_status->setText(
+                    _t("Datei größer als 5 MB — nur Vorschau möglich, kein Konvertieren."));
             updatePreview();
         },
         [this](const QString &err) { m_status->setText(err); });
@@ -188,6 +195,15 @@ void EncodingConverterDialog::convert()
 {
     if (m_raw.isEmpty())
         return;
+    // Nur ein Ausschnitt gelesen -> Schreiben wuerde den Rest der Datei
+    // abschneiden. Lieber gar nicht schreiben als stumm Daten verlieren.
+    if (m_truncated) {
+        QMessageBox::warning(
+            this, _t("Konvertierung"),
+            _t("Die Datei ist größer als 5 MB. Sie kann hier nur angesehen, "
+               "nicht konvertiert werden — sonst ginge der Rest verloren."));
+        return;
+    }
     if (!m_overwrite->isChecked() && m_targetName->text().trimmed().isEmpty()) {
         QMessageBox::warning(this, _t("Konvertierung"), _t("Bitte einen Zielpfad angeben."));
         return;
@@ -195,9 +211,19 @@ void EncodingConverterDialog::convert()
     QByteArray converted;
     try {
         // Liegt eine KI-Reparatur vor, wird sie geschrieben — sonst die Quelle.
+        // Die Reparatur-Vorschau umfasst nur den Anfang der Datei; sie darf
+        // deshalb NUR in eine neue Datei geschrieben werden, niemals ueber die
+        // Quelle (das wuerde den Rest verwerfen).
         const QString repaired = m_repairPreview->isVisible()
                                      ? m_repairPreview->toPlainText()
                                      : QString();
+        if (!repaired.trimmed().isEmpty() && m_overwrite->isChecked()) {
+            QMessageBox::warning(
+                this, _t("Konvertierung"),
+                _t("Die KI-Reparatur zeigt nur den Anfang der Datei. Bitte in eine "
+                   "NEUE Datei schreiben (Häkchen „Quelldatei überschreiben“ entfernen)."));
+            return;
+        }
         if (!repaired.trimmed().isEmpty()) {
             converted = core::encodeText(repaired, m_dstCodec->currentData().toString(),
                                          m_errorMode->currentData().toString());

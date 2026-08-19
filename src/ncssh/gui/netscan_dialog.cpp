@@ -116,6 +116,10 @@ NetscanDialog::NetscanDialog(AsyncBridge *bridge, QWidget *parent)
 
     // Zielpane fuer die Uebernahme der Ergebnisse.
     m_targetPane = new QComboBox(this);
+    // Vorgabe ist die aktive (blau umrandete) Pane — dieselbe Regel wie beim
+    // Verbinden. Ohne diesen Eintrag landeten die Hosts immer links, egal was
+    // markiert war.
+    m_targetPane->addItem(_t("Aktive Pane"), QString());
     m_targetPane->addItem(_t("Linke Pane"), QStringLiteral("left"));
     m_targetPane->addItem(_t("Rechte Pane"), QStringLiteral("right"));
     form->addRow(_t("Ergebnisse in"), m_targetPane);

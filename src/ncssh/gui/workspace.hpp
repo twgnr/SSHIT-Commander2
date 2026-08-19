@@ -18,6 +18,7 @@
 #include <functional>
 #include <memory>
 #include <utility>
+#include <vector>
 
 class QSplitter;
 class QTimer;
@@ -166,6 +167,18 @@ private:
     std::unique_ptr<net::SudoFileSystem> m_sudoFs;   // aktiv bei sudo-Chip
     std::unique_ptr<net::RemoteCommandRunner> m_remoteRunner;
 
+    // Beim Trennen werden die Remote-Objekte NICHT zerstoert, sondern hier
+    // abgelegt: offene Dialoge (Editor, Vergleich, Transfer-Queue) halten rohe
+    // Provider-Zeiger. Die Sitzung ist geschlossen, jeder Zugriff wirft dann
+    // eine saubere Fehlermeldung statt auf freigegebenen Speicher zu greifen.
+    struct RetiredRemote {
+        std::unique_ptr<net::RemoteCommandRunner> runner;
+        std::unique_ptr<net::SFTPFileSystem> remoteFs;
+        std::unique_ptr<net::SudoFileSystem> sudoFs;   // zeigt auf remoteFs
+    };
+    std::vector<RetiredRemote> m_retired;
+    void retireRemoteObjects();
+
     FilePanel *m_leftPanel = nullptr;
     FilePanel *m_rightPanel = nullptr;
     PreviewPanel *m_leftPreview = nullptr;
@@ -176,8 +189,7 @@ private:
     // aktive Seite gesetzt; solange nichts verbunden ist, zeigt es auf rechts.
     FilePanel *m_connectedPanel = nullptr;
     ConsolePanel *m_connectedConsole = nullptr;
-    bool m_rightActive = false;  // zuletzt fokussierte Seite
-    bool m_sidePicked = false;   // hat der Nutzer je eine Seite angeklickt?
+    bool m_rightActive = false;  // zuletzt fokussierte Seite (Start: links)
     bool m_connecting = false;   // laeuft gerade ein Verbindungsaufbau?
     TunnelManager m_tunnels;     // offene Port-Weiterleitungen dieser Sitzung
     QTimer *m_healthTimer = nullptr;   // Keepalive-Wecker

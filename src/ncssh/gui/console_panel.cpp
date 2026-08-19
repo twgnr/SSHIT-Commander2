@@ -197,7 +197,12 @@ void ConsolePanel::explainWithAi()
                                  _t("Die KI ist nicht aktiviert (Einstellungen → KI)."));
         return;
     }
-    const QString output = m_output->toPlainText();
+    // Die sichtbare Seite zaehlt: im Terminal-Modus steht die Ausgabe im
+    // Terminal-Widget, nicht im Befehlsfenster (das dann leer ist und zur
+    // Meldung "Es gibt noch keine Ausgabe" trotz vollem Bildschirm fuehrte).
+    const QString output = (m_stack && m_stack->currentWidget() == m_terminal)
+                               ? m_terminal->toPlainText()
+                               : m_output->toPlainText();
     if (output.trimmed().isEmpty()) {
         QMessageBox::information(this, _t("KI"), _t("Es gibt noch keine Ausgabe."));
         return;
@@ -270,9 +275,15 @@ void ConsolePanel::runCommand(const QString &command, bool execute)
                 m_status->setText(_t("✓ fertig"));
         },
         [this](const QString &err) {
-            appendOutput(_t("[Fehler] %1").arg(err));
             m_running = nullptr;
             setBusy(false);
+            // Vom Nutzer gestoppt ist kein Fehler — die Meldung aus
+            // cancelRunning() bleibt stehen.
+            if (err == QLatin1String("cancelled")) {
+                m_status->setText(_t("■ abgebrochen"));
+                return;
+            }
+            appendOutput(_t("[Fehler] %1").arg(err));
             m_status->setText(_t("✗ Fehler"));
         });
 }
