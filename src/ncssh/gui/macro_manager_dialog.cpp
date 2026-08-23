@@ -625,7 +625,7 @@ void MacroManagerDialog::runKey(const QJsonObject &config, int index)
             if (!error.isEmpty())
                 m_status->setText(error);
         },
-        [this](const QString &err) { m_status->setText(err); });
+        [this](const QString &err) { m_status->setText(err); }, this);
 }
 
 void MacroManagerDialog::runSteps(std::vector<QJsonObject> steps, const QString &keyId)
@@ -653,7 +653,7 @@ void MacroManagerDialog::runSteps(std::vector<QJsonObject> steps, const QString 
             }
             runSteps(std::move(steps), keyId);
         },
-        [this](const QString &err) { m_status->setText(err); });
+        [this](const QString &err) { m_status->setText(err); }, this);
 }
 
 void MacroManagerDialog::exportLayers()

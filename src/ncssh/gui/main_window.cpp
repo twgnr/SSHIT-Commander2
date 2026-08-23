@@ -121,10 +121,24 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
     m_clipboard = new ClipboardManager(this);
     // Alarme laufen im Hintergrund und melden sich in der Statusleiste.
     m_fileAlarms = new FileAlarmManager(bridge, this);
-    // Remote-Alarme ueberwachen den Pfad auf der gerade aktiven Verbindung.
-    m_fileAlarms->setSessionProvider([this]() -> net::SSHSessionPtr {
-        Workspace *ws = currentWorkspace();
-        return ws ? ws->session() : net::SSHSessionPtr();
+    // Remote-Alarme haengen an IHREM Server (Profilname), nicht am gerade
+    // sichtbaren Tab — sonst ueberwachte ein Alarm nach einem Tab-Wechsel
+    // ploetzlich einen anderen Rechner.
+    m_fileAlarms->setSessionProvider([this](const QString &profile) -> net::SSHSessionPtr {
+        net::SSHSessionPtr any;
+        for (int i = 0; i < m_tabs->count(); ++i) {
+            auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i));
+            const net::SSHSessionPtr session = ws ? ws->session() : net::SSHSessionPtr();
+            if (!session)
+                continue;
+            if (!profile.isEmpty() && session->profile.name == profile)
+                return session;
+            if (!any)
+                any = session;
+        }
+        // Gebundener Server nicht verbunden -> Alarm pausiert. Ohne Bindung
+        // (Alarme aus aelteren Fassungen) irgendeine aktive Verbindung.
+        return profile.isEmpty() ? any : net::SSHSessionPtr();
     });
     connect(m_fileAlarms, &FileAlarmManager::event, this,
             [this](const QString &kind, const QString &path, const QString &name) {
@@ -393,7 +407,7 @@ void MainWindow::buildMenus()
                   [this] { askAiAboutFile(true); });
     tools->addSeparator();
 
-    tools->addAction(_t("Alarm Trigger …"), this, &MainWindow::openFileAlarms);
+    tools->addAction(_t("Alarm Trigger …"), this, [this] { openFileAlarms(); });
     tools->addAction(_t("GitHub Repo Alarm …"), this, &MainWindow::openGithubAlarms);
     tools->addAction(_t("Makro-Manager"), this, &MainWindow::openMacroManager);
     tools->addSeparator();
@@ -469,16 +483,19 @@ void MainWindow::buildMenus()
     view->addAction(_t("Theme-Editor …"), this, &MainWindow::openThemeEditor);
     view->addSeparator();
     // Versteckte Dateien der aktiven Pane umschalten (auch im Menue).
-    view->addAction(_t("Versteckte Dateien"), this, [this] {
+    // Umschalter — also auch als solcher darstellen (wie im Pane-Kontextmenue).
+    m_hiddenAction = view->addAction(_t("Versteckte Dateien"), this, [this] {
         if (Workspace *ws = currentWorkspace())
             if (FilePanel *panel = ws->activePanel())
                 panel->toggleHidden();
+        syncViewActions();
     });
+    m_hiddenAction->setCheckable(true);
     // Kachelansicht global fuer alle Panes umschalten (Einstellung pane_grid).
-    QAction *gridAct = view->addAction(_t("Kachelansicht"));
-    gridAct->setCheckable(true);
-    gridAct->setChecked(core::getSettingBool(QStringLiteral("pane_grid"), false));
-    connect(gridAct, &QAction::toggled, this, [this](bool on) {
+    m_gridAction = view->addAction(_t("Kachelansicht"));
+    m_gridAction->setCheckable(true);
+    m_gridAction->setChecked(core::getSettingBool(QStringLiteral("pane_grid"), false));
+    connect(m_gridAction, &QAction::toggled, this, [this](bool on) {
         for (int i = 0; i < m_tabs->count(); ++i) {
             if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i))) {
                 ws->leftPanel()->setViewMode(on);
@@ -486,10 +503,10 @@ void MainWindow::buildMenus()
             }
         }
     });
-    QAction *previewAct = view->addAction(_t("Vorschau-Panel"));
-    previewAct->setCheckable(true);
-    previewAct->setShortcut(QKeySequence(Qt::Key_F2 | Qt::CTRL));
-    connect(previewAct, &QAction::toggled, this, [this](bool on) {
+    m_previewAction = view->addAction(_t("Vorschau-Panel"));
+    m_previewAction->setCheckable(true);
+    m_previewAction->setShortcut(QKeySequence(Qt::Key_F2 | Qt::CTRL));
+    connect(m_previewAction, &QAction::toggled, this, [this](bool on) {
         for (int i = 0; i < m_tabs->count(); ++i) {
             if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i)))
                 ws->setPreviewVisible(on);
@@ -625,7 +642,7 @@ void MainWindow::askAiAboutFile(bool codecheck)
             panel->setAttribute(Qt::WA_DeleteOnClose);
             panel->show();
         },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
 
 void MainWindow::applyShortcuts()
@@ -744,12 +761,22 @@ Workspace *MainWindow::addTab()
     const int index = m_tabs->addTab(ws, _t("Sitzung"));
     connect(ws, &Workspace::connectionChanged, this, [this, ws] {
         const int i = m_tabs->indexOf(ws);
-        if (i >= 0)
+        if (i >= 0) {
             m_tabs->setTabText(i, ws->connectionLabel());
+            // Die im Server-Manager gewaehlte Tab-Farbe wurde bisher zwar
+            // gespeichert, aber nirgends angewendet.
+            const net::SSHSessionPtr session = ws->session();
+            const QColor color(session ? session->profile.color : QString());
+            m_tabs->tabBar()->setTabTextColor(i, color.isValid() ? color : QColor());
+        }
         updateConnectionStatus();
     });
     // Verzeichnis-Vergleich aus dem Pane-Kontextmenue.
     connect(ws, &Workspace::dirDiffRequested, this, &MainWindow::openDirDiff);
+    // "Alarm Trigger fuer Verzeichnis setzen …" aus dem Pane-Kontextmenue —
+    // das Signal endete bisher im Nichts, der Menuepunkt tat nichts.
+    connect(ws, &Workspace::dirAlarmRequested, this,
+            [this](const QString &path, bool remote) { openFileAlarms(path, remote); });
     // Zweiter Server bei bestehender Verbindung: in einem frischen Tab oeffnen.
     connect(ws, &Workspace::connectInNewTabRequested, this,
             [this](const core::ServerProfile &profile) {
@@ -762,7 +789,7 @@ Workspace *MainWindow::addTab()
             });
     // Netzwerk-Modus: erneut scannen bzw. zu einem gefundenen Host verbinden.
     connect(ws, &Workspace::rescanRequested, this, &MainWindow::openNetscan);
-    connect(ws, &Workspace::connectHostRequested, this, [this](const QString &host) {
+    connect(ws, &Workspace::connectHostRequested, this, [this, ws](const QString &host) {
         // Vorhandenes Profil bevorzugen, sonst eines aus der Adresse bauen.
         core::ProfileStore store;
         store.load();
@@ -901,12 +928,18 @@ void MainWindow::updateConnectionStatus()
 void MainWindow::syncViewActions()
 {
     Workspace *ws = currentWorkspace();
-    if (!ws)
+    // Kann vor buildMenus() feuern (Tab-Wechsel waehrend des Aufbaus).
+    if (!ws || !m_onlyFsAction || !m_gridAction || !m_previewAction || !m_hiddenAction)
         return;
     // Nur die Haken nachziehen — ohne die Umschalt-Aktion erneut auszuloesen.
+    // Kachel-/Vorschau-Haken gehoeren dazu: sie koennen ueber das
+    // Pane-Kontextmenue bzw. in einem anderen Tab umgeschaltet worden sein.
     for (auto [action, value] : {std::pair{m_onlyFsAction, ws->onlyFilesystem()},
                                  std::pair{m_onlyTermAction, ws->onlyTerminal()},
-                                 std::pair{m_vertPanesAction, ws->panesVertical()}}) {
+                                 std::pair{m_vertPanesAction, ws->panesVertical()},
+                                 std::pair{m_gridAction, ws->activePanel()->gridMode()},
+                                 std::pair{m_previewAction, ws->previewVisible()},
+                                 std::pair{m_hiddenAction, ws->activePanel()->showHidden()}}) {
         QSignalBlocker blocker(action);
         action->setChecked(value);
     }
@@ -1097,16 +1130,19 @@ void MainWindow::openSettings()
         // Neustart.
         applyTheme(qApp, core::getSettingString(QStringLiteral("theme"), defaultTheme()));
         applyShortcuts();
-        // Auch die Pane-Kuerzel (view/edit/…) neu belegen.
+        // Pane-Kuerzel (view/edit/…) neu belegen UND die Anzeige nachziehen:
+        // Schriftgroesse, Spalten, versteckte Dateien, Datumsformat wirkten
+        // frueher erst nach dem naechsten Verzeichniswechsel.
         for (int i = 0; i < m_tabs->count(); ++i) {
             if (auto *ws = qobject_cast<Workspace *>(m_tabs->widget(i))) {
-                ws->leftPanel()->applyShortcuts();
-                ws->rightPanel()->applyShortcuts();
+                for (FilePanel *panel : {ws->leftPanel(), ws->rightPanel()}) {
+                    panel->applyShortcuts();
+                    panel->applyDisplaySettings();
+                }
             }
         }
         statusBar()->showMessage(
-            _t("Einstellungen gespeichert (Pane-Schrift sofort; Terminal/Editor ab nächstem "
-               "Öffnen)."),
+            _t("Einstellungen gespeichert (Terminal- und Editor-Schrift ab nächstem Öffnen)."),
             8000);
     }
 }
@@ -1127,6 +1163,14 @@ void MainWindow::openDirDiff()
                                ws->rightPanel()->provider(), ws->rightPanel()->currentPath(),
                                this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
+    // Nach dem Kopieren aus dem Vergleich die Panes auffrischen — dieser Weg
+    // laeuft an Workspace::startTransfer vorbei, das das sonst erledigt.
+    connect(dlg, &DiffDialog::transfersQueued, this, [ws] {
+        QTimer::singleShot(1500, ws, [ws] {
+            ws->leftPanel()->refresh();
+            ws->rightPanel()->refresh();
+        });
+    });
     dlg->show();
 }
 
@@ -1484,7 +1528,7 @@ void MainWindow::showPaneStatus()
             [other, title, target](const std::vector<core::FileEntry> &entries) {
                 other->showStatus(statusHtml(title, target, shallowStats(entries), false));
             },
-            [other, title](const QString &m) { other->showStatus(statusErrorHtml(title, m)); });
+            [other, title](const QString &m) { other->showStatus(statusErrorHtml(title, m)); }, this);
         return;
     }
     m_bridge->run<core::DirStats>(
@@ -1492,7 +1536,7 @@ void MainWindow::showPaneStatus()
         [other, title, target](const core::DirStats &d) {
             other->showStatus(statusHtml(title, target, d, true));
         },
-        [other, title](const QString &m) { other->showStatus(statusErrorHtml(title, m)); });
+        [other, title](const QString &m) { other->showStatus(statusErrorHtml(title, m)); }, this);
 }
 
 void MainWindow::openThemeEditor()
@@ -1516,9 +1560,13 @@ void MainWindow::openClipboard()
     }
 }
 
-void MainWindow::openFileAlarms()
+void MainWindow::openFileAlarms(const QString &presetPath, bool presetRemote)
 {
-    FileAlarmDialog dlg(m_fileAlarms, this);
+    // Neue Remote-Alarme an den Server des aktuellen Tabs binden.
+    Workspace *ws = currentWorkspace();
+    const net::SSHSessionPtr session = ws ? ws->session() : net::SSHSessionPtr();
+    FileAlarmDialog dlg(m_fileAlarms, this, presetPath, presetRemote,
+                        session ? session->profile.name : QString());
     dlg.exec();
 }
 
@@ -1606,7 +1654,22 @@ void MainWindow::openSftpBatch()
     }
     // Nicht-modal, damit geplante Wiederholungen laufen koennen, waehrend man
     // weiterarbeitet. Der Dialog haelt die Sitzung ueber einen shared_ptr.
-    auto *dlg = new SftpBatchDialog(m_bridge, ws->session(), this);
+    // Startverzeichnisse aus den Panes: relative Pfade im Skript beziehen sich
+    // damit auf das, was der Nutzer sieht (die Provider-Getter des Workspace
+    // waren dafuer gedacht, wurden aber nie benutzt).
+    FilePanel *remotePanel = ws->leftPanel()->provider() == ws->remoteFs()
+                                 ? ws->leftPanel()
+                                 : ws->rightPanel();
+    FilePanel *localPanel = (remotePanel == ws->leftPanel()) ? ws->rightPanel()
+                                                             : ws->leftPanel();
+    const QString localCwd =
+        (localPanel->provider() && !localPanel->provider()->isRemote) ? localPanel->currentPath()
+                                                                      : QString();
+    const QString remoteCwd =
+        (remotePanel->provider() && remotePanel->provider()->isRemote)
+            ? remotePanel->currentPath()
+            : QString();
+    auto *dlg = new SftpBatchDialog(m_bridge, ws->session(), this, localCwd, remoteCwd);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->show();
 }

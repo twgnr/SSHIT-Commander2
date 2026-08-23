@@ -124,7 +124,7 @@ void PreviewPanel::preview(core::FileSystemProvider *provider, const QString &pa
                 m_text->setPlainText(_t("(Vorschau nicht verfügbar)"));
                 m_stack->setCurrentWidget(m_text);
                 m_task = nullptr;
-            });
+            }, this);
         return;
     }
 
@@ -141,7 +141,7 @@ void PreviewPanel::preview(core::FileSystemProvider *provider, const QString &pa
             m_text->setPlainText(_t("(Vorschau nicht verfügbar)"));
             m_stack->setCurrentWidget(m_text);
             m_task = nullptr;
-        });
+        }, this);
 }
 
 } // namespace ncssh::gui

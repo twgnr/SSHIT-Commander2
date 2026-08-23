@@ -19,7 +19,10 @@ namespace ncssh::gui {
 class SftpBatchDialog : public QDialog {
     Q_OBJECT
 public:
-    SftpBatchDialog(AsyncBridge *bridge, net::SSHSessionPtr session, QWidget *parent = nullptr);
+    // localCwd/remoteCwd: Startverzeichnisse fuer relative Pfade im Skript —
+    // die Verzeichnisse, die der Nutzer in den Panes sieht.
+    SftpBatchDialog(AsyncBridge *bridge, net::SSHSessionPtr session, QWidget *parent = nullptr,
+                    const QString &localCwd = {}, const QString &remoteCwd = {});
 
 private:
     void runBatch();
@@ -32,6 +35,8 @@ private:
 
     AsyncBridge *m_bridge;
     net::SSHSessionPtr m_session;  // haelt die Sitzung waehrend des Laufs am Leben
+    QString m_localCwd;            // Startverzeichnisse fuer relative Pfade
+    QString m_remoteCwd;
 
     QPlainTextEdit *m_editor = nullptr;
     QPlainTextEdit *m_log = nullptr;

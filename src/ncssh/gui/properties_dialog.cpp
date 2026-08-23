@@ -69,10 +69,14 @@ PropertiesDialog::PropertiesDialog(AsyncBridge *bridge, core::FileSystemProvider
                 m_sizeLabel->setText(humanSize(result.first)
                                      + (result.second ? QStringLiteral(" (gekürzt)") : QString()));
             },
-            [this](const QString &) { m_sizeLabel->setText(_t("nicht ermittelbar")); });
+            [this](const QString &) { m_sizeLabel->setText(_t("nicht ermittelbar")); }, this);
     }
 
     // --- chmod-Editor ---
+    // Windows kennt keine POSIX-Rechte: QFile::setPermissions setzt dort
+    // hoechstens das Schreibschutz-Attribut und meldet trotzdem Erfolg. Statt
+    // eine Wirkung vorzutaeuschen, wird der Editor lokal deaktiviert.
+    const bool chmodWorks = provider->isRemote;
     auto *permBox = new QGroupBox(_t("Rechte"), this);
     auto *grid = new QGridLayout(permBox);
     const QStringList whoLabels = {_t("Eigner"), _t("Gruppe"), _t("Andere")};
@@ -106,8 +110,18 @@ PropertiesDialog::PropertiesDialog(AsyncBridge *bridge, core::FileSystemProvider
     layout->addWidget(permBox);
     syncFromChecks();
 
+    if (!chmodWorks) {
+        permBox->setEnabled(false);
+        permBox->setToolTip(_t("Windows kennt keine POSIX-Rechte — nur auf Servern änderbar."));
+        auto *note = new QLabel(_t("Auf lokalen Windows-Dateien nicht änderbar."), permBox);
+        note->setObjectName(QStringLiteral("Muted"));
+        note->setWordWrap(true);
+        grid->addWidget(note, 5, 0, 1, 4);
+    }
+
     auto *box = new QDialogButtonBox(QDialogButtonBox::Apply | QDialogButtonBox::Close, this);
     box->button(QDialogButtonBox::Apply)->setText(_t("Rechte anwenden"));
+    box->button(QDialogButtonBox::Apply)->setEnabled(chmodWorks);
     connect(box->button(QDialogButtonBox::Apply), &QPushButton::clicked, this,
             &PropertiesDialog::applyChmod);
     connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -159,7 +173,7 @@ void PropertiesDialog::applyChmod()
         [this] { accept(); },
         [this](const QString &err) {
             QMessageBox::warning(this, _t("Rechte ändern fehlgeschlagen"), err);
-        });
+        }, this);
 }
 
 } // namespace ncssh::gui

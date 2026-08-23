@@ -124,9 +124,16 @@ void AiChatPanel::streamAnswer()
             m_task = nullptr;
         },
         [this](const QString &err) {
-            m_status->setText(err);
+            // Vom Nutzer gestoppt: Meldung aus dem Stop-Knopf behalten. Die
+            // bereits empfangene Teilantwort nicht wegwerfen.
+            if (err == QLatin1String("cancelled")) {
+                if (!m_pending.isEmpty())
+                    appendMarkdown(_t("Antwort (abgebrochen)"), m_pending);
+            } else {
+                m_status->setText(err);
+            }
             m_task = nullptr;
-        });
+        }, this);
 }
 
 } // namespace ncssh::gui

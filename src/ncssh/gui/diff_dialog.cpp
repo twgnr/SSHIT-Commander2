@@ -145,7 +145,7 @@ void DiffDialog::compare()
             m_status->setText(QStringLiteral("%1 Einträge · %2 Unterschiede")
                                   .arg(entries.size()).arg(diffs));
         },
-        [this](const QString &err) { m_status->setText(err); });
+        [this](const QString &err) { m_status->setText(err); }, this);
 }
 
 void DiffDialog::copySelected(bool toRight)
@@ -175,6 +175,8 @@ void DiffDialog::copySelected(bool toRight)
         ++queued;
     }
     m_status->setText(_t("%1 Objekt(e) in die Transfer-Queue gestellt.").arg(queued));
+    if (queued > 0)
+        emit transfersQueued();
 }
 
 } // namespace ncssh::gui

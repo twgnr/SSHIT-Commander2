@@ -81,6 +81,9 @@ TransferDialog::TransferDialog(TransferManager *manager, QWidget *parent)
     auto *cancelBtn = new QPushButton(_t("Abbrechen"), this);
     auto *retryBtn = new QPushButton(_t("Wiederaufnehmen"), this);
     retryBtn->setToolTip(_t("Fehlgeschlagene oder abgebrochene Übertragung erneut starten"));
+    m_pauseBtn = pauseBtn;
+    m_cancelBtn = cancelBtn;
+    m_retryBtn = retryBtn;
     auto *clearBtn = new QPushButton(_t("Abgeschlossene entfernen"), this);
     auto *closeBtn = new QPushButton(_t("Schließen"), this);
     closeBtn->setDefault(true);
@@ -145,7 +148,33 @@ TransferDialog::TransferDialog(TransferManager *manager, QWidget *parent)
 
     connect(manager, &TransferManager::jobAdded, this, [this](int) { rebuild(); });
     connect(manager, &TransferManager::jobUpdated, this, &TransferDialog::updateRow);
+    // Knoepfe folgen der Auswahl bzw. dem Zustand: ein Klick, der nichts tun
+    // kann, soll auch nicht anklickbar aussehen.
+    connect(m_table, &QTableWidget::itemSelectionChanged, this,
+            &TransferDialog::updateButtons);
     rebuild();
+    updateButtons();
+}
+
+void TransferDialog::updateButtons()
+{
+    const int row = m_table->currentRow();
+    QString status;
+    if (row >= 0 && m_table->item(row, 0)) {
+        const int id = m_table->item(row, 0)->data(Qt::UserRole).toInt();
+        for (const TransferJob &job : m_manager->jobs()) {
+            if (job.id == id) {
+                status = job.status;
+                break;
+            }
+        }
+    }
+    const bool running = status == QLatin1String("running");
+    const bool paused = status == QLatin1String("paused");
+    const bool failed = status == QLatin1String("error") || status == QLatin1String("cancelled");
+    m_pauseBtn->setEnabled(running || paused);
+    m_cancelBtn->setEnabled(running || paused);
+    m_retryBtn->setEnabled(failed);
 }
 
 int TransferDialog::rowForJob(int jobId) const
@@ -182,6 +211,7 @@ void TransferDialog::rebuild()
 
 void TransferDialog::updateRow(int jobId)
 {
+    updateButtons();   // Status kann sich geaendert haben (laeuft -> fertig …)
     const int row = rowForJob(jobId);
     if (row < 0)
         return;

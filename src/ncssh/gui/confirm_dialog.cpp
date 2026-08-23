@@ -152,8 +152,10 @@ TransferConfirmDialog::TransferConfirmDialog(const QString &title, const QString
     // bevor der Transfer startet.
     auto *notify = new QCheckBox(_t("Bei fertiger Übertragung benachrichtigen"), this);
     notify->setChecked(core::getSettingBool(QStringLiteral("notify_transfer_done"), true));
-    connect(notify, &QCheckBox::toggled, this, [](bool on) {
-        core::setSetting(QStringLiteral("notify_transfer_done"), on);
+    // Erst beim Bestaetigen speichern: wer den Dialog abbricht, will auch
+    // diese Aenderung nicht behalten.
+    connect(this, &QDialog::accepted, this, [notify] {
+        core::setSetting(QStringLiteral("notify_transfer_done"), notify->isChecked());
     });
     layout->addWidget(notify);
 

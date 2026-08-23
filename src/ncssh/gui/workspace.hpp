@@ -102,6 +102,8 @@ signals:
     void connectionChanged();
     // Aus dem Pane-Kontextmenue: Verzeichnis-Vergleich beider Seiten oeffnen.
     void dirDiffRequested();
+    // Alarm fuer ein Verzeichnis der Pane anlegen (remote = SFTP-Pfad).
+    void dirAlarmRequested(const QString &path, bool remote);
     // Netzwerk-Modus: Scanner erneut oeffnen bzw. zu einem Host verbinden.
     void rescanRequested();
     void connectHostRequested(const QString &host);

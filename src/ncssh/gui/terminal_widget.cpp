@@ -28,6 +28,7 @@
 #include <QRegularExpression>
 #include <QResizeEvent>
 #include <QScrollBar>
+#include <QShortcut>
 #include <QTextEdit>
 #include <QUrl>
 
@@ -58,6 +59,13 @@ TerminalWidget::TerminalWidget(AsyncBridge *bridge, QWidget *parent)
         viewport()->update();
     });
     m_blinkTimer->start();
+
+    // Puffersuche als WIDGET-Kuerzel: das gleichnamige Fenster-Kuerzel der
+    // Datei-Suche (Ctrl+Shift+F) gewinnt sonst immer, und die Puffersuche im
+    // Terminal war ueber die Tastatur gar nicht erreichbar.
+    auto *searchShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), this);
+    searchShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(searchShortcut, &QShortcut::activated, this, &TerminalWidget::showSearchBar);
 }
 
 TerminalWidget::~TerminalWidget()
@@ -483,7 +491,7 @@ void TerminalWidget::contextMenuEvent(QContextMenuEvent *event)
     QAction *pasteAct = menu.addAction(_t("Einfügen"));
     QAction *copyAllAct = menu.addAction(_t("Alles kopieren"));
     menu.addSeparator();
-    QAction *searchAct = menu.addAction(_t("Im Puffer suchen (Strg+F)"));
+    QAction *searchAct = menu.addAction(_t("Im Puffer suchen (Strg+Shift+F)"));
     const QString url = urlAt(event->pos());
     QAction *urlAct = url.isEmpty() ? nullptr
                                     : menu.addAction(_t("Link öffnen: %1").arg(url));

@@ -65,7 +65,8 @@ private:
     void openClipboard();
     void openHelp(int tab);
     void openTabFavorites();
-    void openFileAlarms();
+    // presetPath: Alarm gleich fuer dieses Verzeichnis anlegen (Kontextmenue).
+    void openFileAlarms(const QString &presetPath = {}, bool presetRemote = false);
     void openGithubAlarms();
     void openMacroManager();
     void ensureMacroDialog();     // legt m_macroDialog bei Bedarf an
@@ -108,6 +109,9 @@ private:
     QAction *m_onlyFsAction = nullptr;
     QAction *m_onlyTermAction = nullptr;
     QAction *m_vertPanesAction = nullptr;
+    QAction *m_gridAction = nullptr;      // Haken folgt der Pane-Ansicht
+    QAction *m_previewAction = nullptr;   // Haken folgt dem Vorschau-Panel
+    QAction *m_hiddenAction = nullptr;    // Haken folgt "versteckte Dateien"
     QLabel *m_connectionLabel = nullptr;
     QLabel *m_hostKeyLabel = nullptr;
     QLabel *m_tunnelLabel = nullptr;

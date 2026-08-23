@@ -171,7 +171,7 @@ void TransferManager::run(int jobId, bool resume)
                 emit jobUpdated(jobId);
             }
             m_tasks.remove(jobId);
-        });
+        }, this);
     m_tasks.insert(jobId, task);  // Handle merken, damit cancel()/pause() greifen
 }
 

@@ -40,6 +40,8 @@ const std::vector<ShortcutDef> &shortcutDefs()
         {QStringLiteral("swap_panes"), _t("Werkzeuge"), _t("Panes tauschen"), QStringLiteral("Ctrl+U")},
         {QStringLiteral("pane_status"), _t("Werkzeuge"), _t("Status / Lesezeichen (Auswahl)"), QStringLiteral("Ctrl+F9")},
 
+        {QStringLiteral("disconnect"), _t("Aktionen"), _t("Verbindung trennen"), QString()},
+        {QStringLiteral("tab_favorites"), _t("Tabs & App"), _t("Tab-Favoriten"), QString()},
         {QStringLiteral("new_tab"), _t("Tabs & App"), _t("Neuer Tab"), QStringLiteral("Ctrl+Shift+N")},
         {QStringLiteral("rename_tab"), _t("Tabs & App"), _t("Tab umbenennen"), QStringLiteral("Ctrl+Shift+E")},
         {QStringLiteral("close_tab"), _t("Tabs & App"), _t("Tab schließen"), QStringLiteral("Ctrl+W")},

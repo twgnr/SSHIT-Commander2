@@ -242,7 +242,10 @@ void NetscanDialog::loadLastScan()
         core::getSettingString(QStringLiteral("netscan_last_targets"));
     if (!targets.isEmpty())
         m_targets->setText(targets);
-    m_status->setText(_t("%1 Host(s) gefunden.").arg(m_hosts.size()));
+    // Kein Scan gelaufen — die Hosts kommen aus dem Speicher und koennen
+    // laengst offline sein. Das muss die Meldung sagen.
+    m_status->setText(_t("%1 Host(s) aus dem letzten Scan geladen (nicht neu geprüft).")
+                          .arg(m_hosts.size()));
 }
 
 void NetscanDialog::addHostRow(const HostResult &host)
@@ -360,10 +363,16 @@ void NetscanDialog::startScan()
             saveLastScan();   // damit "Letzten Scan laden" etwas findet
         },
         [this](const QString &err) {
-            m_status->setText(err);
+            if (err == QLatin1String("cancelled")) {
+                // Abbruch: Meldung aus stopScan() behalten, gefundene Hosts
+                // trotzdem sichern — sonst ist die halbe Arbeit verloren.
+                saveLastScan();
+            } else {
+                m_status->setText(err);
+            }
             m_startBtn->setEnabled(true);
             m_task = nullptr;
-        });
+        }, this);
 }
 
 void NetscanDialog::stopScan()

@@ -122,10 +122,18 @@ void FileAlarmManager::poll()
     const std::vector<AlarmSpec> alarms = m_alarms;
     const QHash<int, core::Snapshot> previous = m_snapshots;
     const QHash<int, QString> previousOrigin = m_snapshotOrigin;
-    // Aktive Sitzung im GUI-Thread holen (fuer Remote-Alarme); der shared_ptr
-    // haelt sie waehrend des Scans am Leben.
-    const net::SSHSessionPtr session = m_sessionProvider ? m_sessionProvider() : nullptr;
-    const QString sessLabel = session ? session->label() : QString();
+    // Sitzungen im GUI-Thread holen — je Alarm die des GEBUNDENEN Servers,
+    // nicht die des gerade sichtbaren Tabs. Die shared_ptr halten sie waehrend
+    // des Scans am Leben.
+    QHash<QString, net::SSHSessionPtr> sessions;   // Profil -> Sitzung
+    QHash<QString, QString> sessionLabels;
+    for (const AlarmSpec &a : m_alarms) {
+        if (!a.enabled || !a.remote || sessions.contains(a.profile))
+            continue;
+        net::SSHSessionPtr s = m_sessionProvider ? m_sessionProvider(a.profile) : nullptr;
+        sessions.insert(a.profile, s);
+        sessionLabels.insert(a.profile, s ? s->label() : QString());
+    }
 
     // Scannen laeuft im Worker; Ergebnis (neue Schnappschuesse + Herkunft +
     // Events + Firings pro Alarm) kommt im GUI-Thread an.
@@ -141,16 +149,18 @@ void FileAlarmManager::poll()
         QHash<int, Firing> firings;  // Alarm-ID -> erstes Ereignis + Anzahl
     };
     m_bridge->run<Result>(
-        [alarms, previous, previousOrigin, session, sessLabel]() -> Result {
+        [alarms, previous, previousOrigin, sessions, sessionLabels]() -> Result {
             Result r;
             for (const AlarmSpec &a : alarms) {
                 if (!a.enabled)
                     continue;
-                const QString origin = a.remote ? sessLabel : QStringLiteral("local");
+                const net::SSHSessionPtr session = sessions.value(a.profile);
+                const QString origin =
+                    a.remote ? sessionLabels.value(a.profile) : QStringLiteral("local");
                 core::Snapshot now;
                 if (a.remote) {
                     if (!session)
-                        continue;  // nicht verbunden -> diesen Alarm ueberspringen
+                        continue;  // Server nicht verbunden -> Alarm pausiert
                     try {
                         net::SFTPFileSystem fs(session);
                         now = remoteScan(fs, a.path, a.recursive, a.includeDirs, a.includeGlob,
@@ -197,7 +207,7 @@ void FileAlarmManager::poll()
             }
             m_busy = false;
         },
-        [this](const QString &) { m_busy = false; });
+        [this](const QString &) { m_busy = false; }, this);
 }
 
 void FileAlarmManager::runAction(const core::AlarmSpec &spec, const QString &kind,
@@ -236,7 +246,7 @@ void FileAlarmManager::runAction(const core::AlarmSpec &spec, const QString &kin
 // ---------------------------------------------------------------------------
 
 namespace {
-bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
+bool editAlarmSpec(AlarmSpec &spec, QWidget *parent, const QString &currentProfile)
 {
     QDialog dlg(parent);
     // Titel sagt, ob angelegt oder bearbeitet wird.
@@ -269,10 +279,20 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
     eventRow->addWidget(onModified);
     eventRow->addWidget(onDeleted);
 
-    auto *remote = new QCheckBox(_t("Remote (aktive SSH-Verbindung)"), &dlg);
+    // Ein Remote-Alarm gehoert zu EINEM Server. Ohne Bindung wechselte er den
+    // ueberwachten Rechner, sobald der Nutzer den Tab wechselte.
+    const QString boundProfile = spec.profile.isEmpty() ? currentProfile : spec.profile;
+    auto *remote = new QCheckBox(
+        boundProfile.isEmpty() ? _t("Remote (SSH-Verbindung)")
+                               : _t("Remote — Server „%1“").arg(boundProfile),
+        &dlg);
     remote->setChecked(spec.remote);
     remote->setToolTip(
-        _t("Statt lokal den Pfad auf der gerade aktiven Verbindung per SFTP überwachen."));
+        boundProfile.isEmpty()
+            ? _t("Pfad per SFTP überwachen. Ohne Serverbindung gilt der Alarm für "
+                 "irgendeine aktive Verbindung.")
+            : _t("Pfad per SFTP auf diesem Server überwachen. Ist er nicht verbunden, "
+                 "pausiert der Alarm."));
     // Bei Remote den lokalen Ordner-Dialog abschalten (Pfad wird getippt).
     QObject::connect(remote, &QCheckBox::toggled, browse, &QPushButton::setDisabled);
     browse->setDisabled(remote->isChecked());
@@ -336,6 +356,7 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
     spec.onModified = onModified->isChecked();
     spec.onDeleted = onDeleted->isChecked();
     spec.remote = remote->isChecked();
+    spec.profile = remote->isChecked() ? boundProfile : QString();
     spec.recursive = recursive->isChecked();
     spec.includeDirs = includeDirs->isChecked();
     spec.enabled = enabled->isChecked();
@@ -350,9 +371,18 @@ bool editAlarmSpec(AlarmSpec &spec, QWidget *parent)
 // FileAlarmDialog
 // ---------------------------------------------------------------------------
 
-FileAlarmDialog::FileAlarmDialog(FileAlarmManager *manager, QWidget *parent)
-    : QDialog(parent), m_manager(manager)
+FileAlarmDialog::FileAlarmDialog(FileAlarmManager *manager, QWidget *parent,
+                                 const QString &presetPath, bool presetRemote,
+                                 const QString &currentProfile)
+    : QDialog(parent), m_manager(manager), m_currentProfile(currentProfile)
 {
+    // Mit Startpfad (aus dem Pane-Kontextmenue) gleich den Anlege-Dialog
+    // zeigen — nach dem Aufbau, damit die Liste dahinter schon steht.
+    if (!presetPath.isEmpty()) {
+        QTimer::singleShot(0, this, [this, presetPath, presetRemote] {
+            addAlarm(presetPath, presetRemote);
+        });
+    }
     setWindowTitle(_t("Alarm Trigger"));
     resize(820, 560);
 
@@ -368,8 +398,10 @@ FileAlarmDialog::FileAlarmDialog(FileAlarmManager *manager, QWidget *parent)
             [this](int, int) { editAlarm(); });
     layout->addWidget(m_table, 2);
 
-    layout->addWidget(new QLabel(
-        _t("Überwachte Ordner — Häkchen schaltet einen Alarm an/aus:"), this));
+    // Diese Beschriftung gehoert zur Ereignisliste darunter, nicht zur
+    // Alarm-Tabelle darueber (dort gibt es auch keine Haekchen — umgeschaltet
+    // wird ueber den Knopf "Aktiv/Inaktiv").
+    layout->addWidget(new QLabel(_t("Ausgelöste Ereignisse:"), this));
     m_events = new QListWidget(this);
     layout->addWidget(m_events, 1);
     connect(manager, &FileAlarmManager::event, this,
@@ -409,7 +441,7 @@ FileAlarmDialog::FileAlarmDialog(FileAlarmManager *manager, QWidget *parent)
     auto *removeBtn = new QPushButton(_t("Löschen"), this);
     auto *closeBtn = new QPushButton(_t("Schließen"), this);
     closeBtn->setDefault(true);
-    connect(addBtn, &QPushButton::clicked, this, &FileAlarmDialog::addAlarm);
+    connect(addBtn, &QPushButton::clicked, this, [this] { addAlarm(); });
     connect(editBtn, &QPushButton::clicked, this, &FileAlarmDialog::editAlarm);
     connect(toggleBtn, &QPushButton::clicked, this, &FileAlarmDialog::toggleAlarm);
     connect(removeBtn, &QPushButton::clicked, this, &FileAlarmDialog::removeAlarm);
@@ -446,14 +478,27 @@ void FileAlarmDialog::reload()
     m_status->setText(QStringLiteral("%1 Alarm(e)").arg(m_alarms.size()));
 }
 
-void FileAlarmDialog::addAlarm()
+void FileAlarmDialog::addAlarm(const QString &presetPath, bool presetRemote)
 {
     AlarmSpec spec;
     int maxId = 0;
     for (const AlarmSpec &a : m_alarms)
         maxId = qMax(maxId, a.id);
     spec.id = maxId + 1;
-    if (!editAlarmSpec(spec, this))
+    if (!presetPath.isEmpty()) {
+        spec.path = presetPath;
+        spec.remote = presetRemote;
+        if (presetRemote)
+            spec.profile = m_currentProfile;
+        // Name vorbelegen: letzter Pfadbestandteil (POSIX wie Windows).
+        QString base = presetPath;
+        while (base.endsWith(QLatin1Char('/')) || base.endsWith(QChar(0x5C)))
+            base.chop(1);
+        const int cut = qMax(base.lastIndexOf(QLatin1Char('/')),
+                             base.lastIndexOf(QChar(0x5C)));
+        spec.name = cut >= 0 ? base.mid(cut + 1) : base;
+    }
+    if (!editAlarmSpec(spec, this, m_currentProfile))
         return;
     m_alarms.push_back(spec);
     core::saveAlarms(m_alarms);
@@ -467,7 +512,7 @@ void FileAlarmDialog::editAlarm()
     if (row < 0 || row >= int(m_alarms.size()))
         return;
     AlarmSpec spec = m_alarms[row];
-    if (!editAlarmSpec(spec, this))
+    if (!editAlarmSpec(spec, this, m_currentProfile))
         return;
     m_alarms[row] = spec;
     core::saveAlarms(m_alarms);

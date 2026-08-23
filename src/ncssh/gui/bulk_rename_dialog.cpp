@@ -414,7 +414,7 @@ void BulkRenameDialog::runRenames(const std::vector<RenamePair> &steps, int coun
         [this, button](const QString &err) {
             button->setEnabled(true);
             QMessageBox::critical(this, _t("Umbenennen fehlgeschlagen"), err);
-        });
+        }, this);
 }
 
 } // namespace ncssh::gui

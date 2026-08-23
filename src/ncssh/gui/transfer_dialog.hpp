@@ -5,6 +5,7 @@
 #include <QDialog>
 
 class QTableWidget;
+class QPushButton;
 
 namespace ncssh::gui {
 
@@ -19,9 +20,14 @@ private:
     void rebuild();
     void updateRow(int jobId);
     int rowForJob(int jobId) const;
+    // Knoepfe passend zum Zustand des markierten Auftrags freigeben.
+    void updateButtons();
 
     TransferManager *m_manager;
     QTableWidget *m_table = nullptr;
+    QPushButton *m_pauseBtn = nullptr;
+    QPushButton *m_cancelBtn = nullptr;
+    QPushButton *m_retryBtn = nullptr;
 };
 
 } // namespace ncssh::gui

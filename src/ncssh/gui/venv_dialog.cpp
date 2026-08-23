@@ -192,7 +192,7 @@ void VenvDialog::reloadEnvs()
             m_status->setText(QStringLiteral("%1 Umgebung(en) gefunden · Doppelklick aktiviert")
                                   .arg(envs.size()));
         },
-        [this](const QString &err) { m_status->setText(err); });
+        [this](const QString &err) { m_status->setText(err); }, this);
 }
 
 void VenvDialog::deleteSelected()
@@ -212,7 +212,7 @@ void VenvDialog::deleteSelected()
             QDir(path).removeRecursively();
         },
         [this] { reloadEnvs(); },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
 
 void VenvDialog::activateSelected()

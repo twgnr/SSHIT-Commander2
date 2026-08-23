@@ -36,6 +36,7 @@ class FilePanel : public QWidget {
     Q_OBJECT
 public:
     explicit FilePanel(AsyncBridge *bridge, const QString &title, QWidget *parent = nullptr);
+    ~FilePanel() override;
 
     // Provider setzen (Eigentum bleibt beim Aufrufer/Workspace).
     void setProvider(core::FileSystemProvider *provider, const QString &startPath = {});
@@ -60,15 +61,21 @@ public:
     // Markierter Eintrag oder nullptr (auch bei ".."); zeigt in m_rows.
     const core::FileEntry *selectedEntry() const;
     void setHeaderTitle(const QString &title);
+    // Fokus auf die Dateiliste (bzw. Kacheln) setzen — fuer den Pane-Wechsel.
+    void focusView();
     void refresh();
     void navigateTo(const QString &path);
     // Konfigurierte Kuerzel der Datei-Operationen uebernehmen (view/edit/…).
     void applyShortcuts();
+    // Anzeige-Einstellungen neu einlesen und die Ansicht auffrischen
+    // (versteckte Dateien, Spalten, Schriftgroesse, Datumsformat …).
+    void applyDisplaySettings();
     // Fuehrt die Datei-Operation zur Kuerzel-ID aus (view/edit/copy/…).
     // Public, damit die Haupt-Toolbar auf die aktive Pane wirken kann.
     void triggerOp(const QString &id);
     // Ansicht der Pane umschalten (fuer das Ansicht-Menue des Hauptfensters).
     void toggleHidden();
+    bool showHidden() const { return m_showHidden; }
     void setViewMode(bool grid);
     bool gridMode() const { return m_gridMode; }
 
@@ -108,8 +115,9 @@ signals:
     void sudoToggled(bool on);                    // sudo-Chip umgeschaltet
     // Auswahl geaendert (fuer das Vorschau-Panel); leer = nichts markiert.
     void selectionChanged(const QString &path);
-    // Drop aus der anderen Pane bzw. aus dem Explorer (lokale Pfade).
-    void filesDropped(const QStringList &paths, bool fromExplorer);
+    // Drop aus einer anderen Pane (source) bzw. aus dem Explorer
+    // (source == nullptr -> lokale Pfade).
+    void filesDropped(const QStringList &paths, FilePanel *source);
     // Verschieben in die andere Pane (wie transferRequested, aber mit Loeschen).
     void moveRequested(const QString &srcPath);
     // Einfuegen aus der internen Zwischenablage; move = ausschneiden.
@@ -120,6 +128,8 @@ signals:
     void dirAlarmRequested(const QString &path);
     // Trennen-Chip im Pane-Header geklickt.
     void disconnectRequested();
+    // Tab-Taste: zur anderen Pane wechseln (Norton-Commander-Bedienung).
+    void switchPaneRequested();
     // --- Netzwerk-Modus (net://) ---
     void connectToHostRequested(const QString &host);  // SSH zu diesem Host
     void rescanRequested();                            // Scanner erneut starten
@@ -239,6 +249,10 @@ private:
     static core::FileSystemProvider *s_clipProvider;
     static QStringList s_clipPaths;
     static bool s_clipMove;
+
+    // Alle lebenden Panes, damit ein Drop die Quell-Pane aufloesen kann —
+    // auch ueber Tab-Grenzen hinweg.
+    static QHash<quintptr, FilePanel *> s_panels;
 
     core::BookmarkStore m_bookmarks;
     QString m_bookmarkKey = QStringLiteral("local");

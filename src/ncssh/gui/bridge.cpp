@@ -36,10 +36,13 @@ void AsyncBridge::releaseTask(BridgeTask *task)
 }
 
 void AsyncBridge::deliverError(QPointer<BridgeTask> guard, const QString &msg,
-                               const std::function<void(const QString &)> &onError)
+                               const std::function<void(const QString &)> &onError,
+                               bool hasOwner, QPointer<QObject> ownerGuard)
 {
-    QMetaObject::invokeMethod(this, [this, guard, msg, onError] {
-        if (guard) {
+    QMetaObject::invokeMethod(this, [this, guard, msg, onError, hasOwner, ownerGuard] {
+        // Besitzer (z. B. ein inzwischen geschlossener Dialog) weg -> nichts
+        // mehr aufrufen; die Lambdas zeigen sonst auf freigegebenen Speicher.
+        if (guard && !(hasOwner && !ownerGuard)) {
             emit guard->failed(msg);
             if (onError) onError(msg);
         }
@@ -49,22 +52,26 @@ void AsyncBridge::deliverError(QPointer<BridgeTask> guard, const QString &msg,
 
 BridgeTask *AsyncBridge::run(std::function<void()> job,
                              std::function<void()> onDone,
-                             std::function<void(const QString &)> onError)
+                             std::function<void(const QString &)> onError,
+                             QObject *owner)
 {
     BridgeTask *task = makeTask();
     QPointer<BridgeTask> guard(task);
-    m_pool.start([this, guard, job = std::move(job), onDone = std::move(onDone),
-                  onError = std::move(onError)] {
+    const bool hasOwner = owner != nullptr;
+    QPointer<QObject> ownerGuard(owner);
+    m_pool.start([this, guard, hasOwner, ownerGuard, job = std::move(job),
+                  onDone = std::move(onDone), onError = std::move(onError)] {
         try {
             job();
-            QMetaObject::invokeMethod(this, [this, guard, onDone] {
-                if (onDone && guard) onDone();
+            QMetaObject::invokeMethod(this, [this, guard, hasOwner, ownerGuard, onDone] {
+                if (onDone && guard && !(hasOwner && !ownerGuard)) onDone();
                 releaseTask(guard.data());
             }, Qt::QueuedConnection);
         } catch (const std::exception &exc) {
-            deliverError(guard, QString::fromUtf8(exc.what()), onError);
+            deliverError(guard, QString::fromUtf8(exc.what()), onError, hasOwner, ownerGuard);
         } catch (...) {
-            deliverError(guard, QStringLiteral("Unbekannter Fehler"), onError);
+            deliverError(guard, QStringLiteral("Unbekannter Fehler"), onError, hasOwner,
+                         ownerGuard);
         }
     });
     return task;
@@ -73,16 +80,20 @@ BridgeTask *AsyncBridge::run(std::function<void()> job,
 BridgeTask *AsyncBridge::stream(StreamJob job,
                                 std::function<void(const QString &)> onLine,
                                 std::function<void()> onFinished,
-                                std::function<void(const QString &)> onError)
+                                std::function<void(const QString &)> onError,
+                                QObject *owner)
 {
     BridgeTask *task = makeTask();
     QPointer<BridgeTask> guard(task);
+    // Mit owner als Empfaengerkontext trennt Qt die Verbindungen automatisch,
+    // sobald das Objekt (z. B. ein geschlossener Dialog) stirbt.
+    QObject *ctx = owner ? owner : static_cast<QObject *>(this);
     if (onLine)
-        connect(task, &BridgeTask::line, this, [onLine](const QString &l) { onLine(l); });
+        connect(task, &BridgeTask::line, ctx, [onLine](const QString &l) { onLine(l); });
     if (onFinished)
-        connect(task, &BridgeTask::finished, this, [onFinished] { onFinished(); });
+        connect(task, &BridgeTask::finished, ctx, [onFinished] { onFinished(); });
     if (onError)
-        connect(task, &BridgeTask::failed, this, [onError](const QString &e) { onError(e); });
+        connect(task, &BridgeTask::failed, ctx, [onError](const QString &e) { onError(e); });
 
     const CancelTokenPtr token = task->cancelToken;
     m_pool.start([this, guard, token, job = std::move(job)] {

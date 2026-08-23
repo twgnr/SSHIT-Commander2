@@ -94,10 +94,18 @@ static QString humanSize(qint64 bytes)
     return QStringLiteral("%1 %2").arg(v, 0, 'f', 1).arg(QString::fromLatin1(units[i]));
 }
 
+QHash<quintptr, FilePanel *> FilePanel::s_panels;
+
 FilePanel::FilePanel(AsyncBridge *bridge, const QString &title, QWidget *parent)
     : QWidget(parent), m_bridge(bridge)
 {
+    s_panels.insert(quintptr(this), this);   // fuer die Drop-Quellaufloesung
     buildUi(title);
+}
+
+FilePanel::~FilePanel()
+{
+    s_panels.remove(quintptr(this));
 }
 
 void FilePanel::buildUi(const QString &title)
@@ -745,7 +753,7 @@ void FilePanel::loadVisibleThumbs()
                         item->setIcon(icon);
                 }
             },
-            [](const QString &) {});
+            [](const QString &) {}, this);
     }
 }
 
@@ -822,7 +830,7 @@ void FilePanel::setProvider(core::FileSystemProvider *provider, const QString &s
                 if (seq == m_loadSeq)
                     navigateTo(home);
             },
-            [this](const QString &err) { emit statusMessage(err); });
+            [this](const QString &err) { emit statusMessage(err); }, this);
     }
 }
 
@@ -928,7 +936,7 @@ void FilePanel::loadDir(const QString &rawPath, bool record)
                 return;
             }
             QMessageBox::warning(this, _t("Fehler"), err);
-        });
+        }, this);
 }
 
 void FilePanel::populate(const std::vector<FileEntry> &entries)
@@ -1218,6 +1226,15 @@ void FilePanel::openContextMenu(const QPoint &pos)
         return;
     }
     QMenu menu(this);
+    // Beschriftungen tragen das KONFIGURIERTE Kuerzel, nicht die alte
+    // F-Tasten-Vorgabe — sonst zeigt das Menue nach einer Umbelegung dauerhaft
+    // die falsche Taste.
+    const auto withKey = [this](const QString &label, const char *op) {
+        const QKeySequence key = m_opShortcuts.value(QString::fromLatin1(op));
+        return key.isEmpty() ? label
+                             : QStringLiteral("%1 (%2)").arg(
+                                   label, key.toString(QKeySequence::NativeText));
+    };
     const QString sel = selectedPath();
     const bool hasSel = !sel.isEmpty();
     const FileEntry *entry = selectedEntry();
@@ -1225,8 +1242,8 @@ void FilePanel::openContextMenu(const QPoint &pos)
     const bool isDirSel = entry != nullptr && entry->isDir();
     const bool local = m_provider && !m_provider->isRemote;
 
-    menu.addAction(_t("Ansehen (F3)"), this, &FilePanel::opView)->setEnabled(hasSel);
-    menu.addAction(_t("Bearbeiten (F4)"), this, &FilePanel::opEdit)->setEnabled(hasSel);
+    menu.addAction(withKey(_t("Ansehen"), "view"), this, &FilePanel::opView)->setEnabled(hasSel);
+    menu.addAction(withKey(_t("Bearbeiten"), "edit"), this, &FilePanel::opEdit)->setEnabled(hasSel);
     menu.addAction(_t("Ausführen (Standardprogramm)"), this, &FilePanel::opExecute)
         ->setEnabled(isFile);
     addOpenWithMenu(&menu, isFile, entry);
@@ -1239,7 +1256,7 @@ void FilePanel::openContextMenu(const QPoint &pos)
         ->setEnabled(!s_clipPaths.isEmpty() || (osClip && osClip->hasUrls()));
     menu.addSeparator();
 
-    menu.addAction(_t("Kopieren → andere Pane (F5)"), this, [this] {
+    menu.addAction(withKey(_t("Kopieren → andere Pane"), "copy"), this, [this] {
         const QString p = selectedPath();
         if (!p.isEmpty())
             emit transferRequested(p);
@@ -1249,10 +1266,9 @@ void FilePanel::openContextMenu(const QPoint &pos)
         if (!p.isEmpty())
             emit moveRequested(p);
     })->setEnabled(hasSel);
-    menu.addAction(_t("Umbenennen / Verschieben (F6)"), this, &FilePanel::opRename)
+    menu.addAction(withKey(_t("Umbenennen / Verschieben"), "rename"), this, &FilePanel::opRename)
         ->setEnabled(hasSel);
-    menu.addAction(_t("Rechte ändern …"), this, &FilePanel::opProperties)->setEnabled(hasSel);
-    menu.addAction(_t("Löschen (F8)"), this, &FilePanel::opDelete)->setEnabled(hasSel);
+    menu.addAction(withKey(_t("Löschen"), "delete"), this, &FilePanel::opDelete)->setEnabled(hasSel);
     menu.addSeparator();
 
     QMenu *marks = menu.addMenu(_t("Markieren"));
@@ -1271,14 +1287,14 @@ void FilePanel::openContextMenu(const QPoint &pos)
     }
     menu.addSeparator();
 
-    menu.addAction(_t("Neuer Ordner (F7)"), this, &FilePanel::opMkdir);
+    menu.addAction(withKey(_t("Neuer Ordner"), "mkdir"), this, &FilePanel::opMkdir);
     menu.addAction(_t("Neue Datei …"), this, &FilePanel::opNewFile);
     menu.addAction(_t("Symlink anlegen …"), this, &FilePanel::opSymlink);
     menu.addAction(_t("Pfad kopieren"), this, &FilePanel::copyPathToClipboard)->setEnabled(hasSel);
-    menu.addAction(_t("Eigenschaften …"), this, &FilePanel::opProperties)->setEnabled(hasSel);
+    menu.addAction(_t("Eigenschaften / Rechte …"), this, &FilePanel::opProperties)->setEnabled(hasSel);
     menu.addSeparator();
 
-    if (isDirSel && local) {
+    if (isDirSel) {
         menu.addAction(_t("Alarm Trigger für Verzeichnis setzen …"), this,
                        [this, sel] { emit dirAlarmRequested(sel); });
     }
@@ -1294,7 +1310,7 @@ void FilePanel::openContextMenu(const QPoint &pos)
                                            &FilePanel::toggleHidden);
     hiddenAction->setCheckable(true);
     hiddenAction->setChecked(m_showHidden);
-    menu.addAction(_t("Aktualisieren (Ctrl+R)"), this, &FilePanel::refresh);
+    menu.addAction(withKey(_t("Aktualisieren"), "reload"), this, &FilePanel::refresh);
     menu.exec(m_table->viewport()->mapToGlobal(pos));
 }
 
@@ -1370,26 +1386,37 @@ void FilePanel::opView()
                             qMin(pixmap.height() + 90, 800));
                 dlg->show();
             },
-            [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+            [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
         return;
     }
 
+    // Ein Zeichen ueber dem Limit lesen, um eine Kuerzung zu erkennen — sonst
+    // sieht der Anfang einer grossen Datei wie die ganze Datei aus.
+    constexpr qint64 kViewLimit = 200'000;
     m_bridge->run<QString>(
-        [provider, path] { return provider->readText(path); },
+        [provider, path] { return provider->readText(path, kViewLimit + 1); },
         [this, path](const QString &text) {
+            const bool truncated = text.size() > kViewLimit;
             auto *dlg = new QDialog(this);
             dlg->setAttribute(Qt::WA_DeleteOnClose);
             dlg->setWindowTitle(_t("Ansehen") + QStringLiteral(" — ") + m_provider->basename(path));
             dlg->resize(760, 560);
             auto *lay = new QVBoxLayout(dlg);
+            if (truncated) {
+                auto *note = new QLabel(
+                    _t("⚠ Nur der Anfang der Datei (200 KB) — zum vollständigen Bearbeiten F4."),
+                    dlg);
+                note->setWordWrap(true);
+                lay->addWidget(note);
+            }
             auto *edit = new QTextEdit(dlg);
             edit->setReadOnly(true);
-            edit->setPlainText(text);
+            edit->setPlainText(truncated ? text.left(kViewLimit) : text);
             edit->setLineWrapMode(QTextEdit::NoWrap);
             lay->addWidget(edit);
             dlg->show();
         },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
 
 void FilePanel::opEdit()
@@ -1418,7 +1445,7 @@ void FilePanel::opMkdir()
     m_bridge->run(
         [provider, target] { provider->mkdir(target); },
         [this] { refresh(); },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
 
 void FilePanel::opSymlink()
@@ -1443,7 +1470,7 @@ void FilePanel::opSymlink()
     m_bridge->run(
         [provider, target, linkPath] { provider->symlink(target, linkPath); },
         [this] { refresh(); },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
 
 void FilePanel::opRename()
@@ -1473,7 +1500,7 @@ void FilePanel::opRename()
     m_bridge->run(
         [provider, path, target] { provider->rename(path, target); },
         [this] { refresh(); },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
 
 void FilePanel::opDelete()
@@ -1508,7 +1535,7 @@ void FilePanel::opDelete()
             // Der Ordner kann teilweise geleert sein — neu einlesen.
             refresh();
             QMessageBox::warning(this, _t("Löschen fehlgeschlagen"), err);
-        });
+        }, this);
 }
 
 void FilePanel::opProperties()
@@ -1543,7 +1570,7 @@ void FilePanel::opNewFile()
     m_bridge->run(
         [provider, target] { provider->writeBytes(target, QByteArray()); },
         [this] { refresh(); },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
 
 // --- "Oeffnen mit" ---------------------------------------------------------
@@ -1575,7 +1602,7 @@ void FilePanel::withLocalCopy(const std::function<void(const QString &)> &fn)
             f.close();
             fn(local);
         },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
 
 void FilePanel::opExecute()
@@ -1645,7 +1672,7 @@ void FilePanel::opChecksum()
             box->setTextInteractionFlags(Qt::TextSelectableByMouse);
             box->show();
         },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
 
 void FilePanel::opMakeZip()
@@ -1678,7 +1705,7 @@ void FilePanel::opMakeZip()
             emit statusMessage(_t("ZIP erstellt: %1 (%2 Einträge)").arg(archiveName).arg(count));
             refresh();
         },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
 
 void FilePanel::opExtract()
@@ -1699,7 +1726,7 @@ void FilePanel::opExtract()
             emit statusMessage(_t("%1 Eintrag/Einträge entpackt nach %2").arg(count).arg(target));
             refresh();
         },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
 
 // --- Zwischenablage ---------------------------------------------------------
@@ -1773,7 +1800,7 @@ void FilePanel::clipPaste()
                 local << url.toLocalFile();
         }
         if (!local.isEmpty())
-            emit filesDropped(local, true);
+            emit filesDropped(local, nullptr);   // Systemzwischenablage: lokal
     }
 }
 
@@ -1913,8 +1940,8 @@ void FilePanel::applyShortcuts()
     // Nur die Pane-Operationen aus dem Katalog uebernehmen; Navigations- und
     // Markier-Tasten bleiben fest (siehe eventFilter).
     const QHash<QString, QString> shortcuts = core::getShortcuts();
-    static const char *const ops[] = {"view",   "edit",  "copy",  "rename",
-                                      "mkdir",  "delete", "hidden"};
+    static const char *const ops[] = {"view",   "edit",   "copy",  "rename",
+                                      "mkdir",  "delete", "hidden", "reload"};
     m_opShortcuts.clear();
     for (const char *id : ops) {
         const QString key = shortcuts.value(QString::fromLatin1(id));
@@ -1935,6 +1962,28 @@ void FilePanel::triggerOp(const QString &id)
     else if (id == QLatin1String("mkdir")) opMkdir();
     else if (id == QLatin1String("delete")) opDelete();
     else if (id == QLatin1String("hidden")) toggleHidden();
+    else if (id == QLatin1String("reload")) refresh();
+}
+
+void FilePanel::focusView()
+{
+    if (QAbstractItemView *view = activeView())
+        view->setFocus(Qt::TabFocusReason);
+    else
+        setFocus(Qt::TabFocusReason);
+    emit activated();
+}
+
+void FilePanel::applyDisplaySettings()
+{
+    // Nach dem Speichern der Einstellungen: Anzeige sofort nachziehen, statt
+    // erst beim naechsten Verzeichniswechsel. Betrifft versteckte Dateien,
+    // Spaltenauswahl, Schriftgroesse/Zeilenhoehe, Datumsformat, Symbole und
+    // Sortierung.
+    m_showHidden = !core::getSettingBool(QStringLiteral("hide_hidden"), false);
+    setTableHeaders();
+    applyPaneStyle();
+    refresh();
 }
 
 void FilePanel::setConnected(bool connected)
@@ -2047,6 +2096,10 @@ void FilePanel::toggleHidden()
 // "application/x-sshit-paths" (Ziehen zwischen den Panes, auch remote).
 
 static const char *const kPathsMime = "application/x-sshit-paths";
+// Kennung der Quell-Pane. Ohne sie muesste der Empfaenger raten, aus welcher
+// Pane gezogen wurde ("die andere") — falsch bei einem Drop auf sich selbst
+// und bei einem Drag aus einem anderen Tab.
+static const char *const kSourceMime = "application/x-sshit-source";
 
 void FilePanel::dragEnterEvent(QDragEnterEvent *event)
 {
@@ -2068,8 +2121,14 @@ void FilePanel::dropEvent(QDropEvent *event)
         const QStringList paths =
             QString::fromUtf8(mime->data(kPathsMime)).split(QLatin1Char('\n'),
                                                             Qt::SkipEmptyParts);
-        if (!paths.isEmpty()) {
-            emit filesDropped(paths, false);
+        // Quelle aufloesen: die Kennung zeigt auf die Pane, aus der gezogen
+        // wurde (auch in einem anderen Tab). Unbekannt oder Drop auf sich
+        // selbst -> nichts tun, statt vom falschen Dateisystem zu kopieren.
+        FilePanel *source = nullptr;
+        if (mime->hasFormat(kSourceMime))
+            source = s_panels.value(mime->data(kSourceMime).toULongLong(), nullptr);
+        if (!paths.isEmpty() && source && source != this) {
+            emit filesDropped(paths, source);
             event->acceptProposedAction();
         }
         return;
@@ -2081,7 +2140,7 @@ void FilePanel::dropEvent(QDropEvent *event)
                 paths << url.toLocalFile();
         }
         if (!paths.isEmpty()) {
-            emit filesDropped(paths, true);
+            emit filesDropped(paths, nullptr);   // aus dem Explorer: lokal
             event->acceptProposedAction();
         }
     }
@@ -2128,6 +2187,7 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
                     list << p;
                 auto *mime = new QMimeData();
                 mime->setData(kPathsMime, list.join(QLatin1Char('\n')).toUtf8());
+                mime->setData(kSourceMime, QByteArray::number(quintptr(this)));
                 // Lokale Pfade zusaetzlich als URLs, damit der Explorer sie annimmt.
                 if (!m_provider->isRemote) {
                     QList<QUrl> urls;
@@ -2222,6 +2282,15 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
                 m_filterEdit->setVisible(true);
                 m_filterEdit->setFocus();
                 m_filterEdit->selectAll();
+                return true;
+            }
+            break;
+        case Qt::Key_Backtab:
+        case Qt::Key_Tab:
+            // Tab wechselt die Seite (so beschreibt es auch das Handbuch).
+            // Im Filter- und Pfadfeld bleibt Tab die normale Fokus-Taste.
+            if (obj != m_filterEdit && obj != m_pathEdit) {
+                emit switchPaneRequested();
                 return true;
             }
             break;

@@ -52,6 +52,9 @@ public:
     // Beschriftung des Abdock-Knopfes umschalten.
     void setDocked(bool docked);
 
+    // Kopfzeile der Konsole (folgt der Verbindung, nicht der Bildschirmseite).
+    void setHeaderTitle(const QString &title);
+
     // Aktiv-Markierung (blauer Rahmen ueber #ConsolePanel[active="true"]).
     void setActive(bool active);
 

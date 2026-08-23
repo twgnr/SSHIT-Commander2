@@ -149,7 +149,7 @@ void EncodingConverterDialog::repairWithAi()
         [this](const QString &err) {
             m_repairButton->setEnabled(true);
             m_status->setText(err);
-        });
+        }, this);
 }
 
 void EncodingConverterDialog::loadSource()
@@ -176,7 +176,7 @@ void EncodingConverterDialog::loadSource()
                     _t("Datei größer als 5 MB — nur Vorschau möglich, kein Konvertieren."));
             updatePreview();
         },
-        [this](const QString &err) { m_status->setText(err); });
+        [this](const QString &err) { m_status->setText(err); }, this);
 }
 
 void EncodingConverterDialog::updatePreview()
@@ -251,7 +251,7 @@ void EncodingConverterDialog::convert()
         },
         [this](const QString &err) {
             QMessageBox::warning(this, _t("Speichern fehlgeschlagen"), err);
-        });
+        }, this);
 }
 
 } // namespace ncssh::gui

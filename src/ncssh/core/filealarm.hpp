@@ -24,7 +24,11 @@ struct AlarmSpec {
     bool recursive = false;
     bool includeDirs = true;
     bool enabled = true;
-    bool remote = false;   // ueber die aktive SSH-Verbindung statt lokal ueberwachen
+    bool remote = false;   // ueber eine SSH-Verbindung statt lokal ueberwachen
+    // Profil/Server, zu dem ein Remote-Alarm gehoert. Leer = irgendeine aktive
+    // Verbindung (Verhalten vor 1.0.0-beta.2). Ohne diese Bindung wechselte ein
+    // Alarm den ueberwachten Server, sobald der Nutzer den Tab wechselte.
+    QString profile;
     // Namensfilter (jeweils ';'-getrennte Wildcard-Muster; leer = ohne Wirkung).
     QString includeGlob;   // nur passende Namen beruecksichtigen (z.B. "*.log;*.csv")
     QString excludeGlob;   // passende Namen ignorieren (z.B. "*.tmp;*~")

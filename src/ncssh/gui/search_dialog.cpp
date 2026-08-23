@@ -249,10 +249,12 @@ void SearchDialog::startSearch()
             m_task = nullptr;
         },
         [this](const QString &err) {
-            m_status->setText(err);
+            // Vom Nutzer gestoppt: die Meldung aus stopSearch() gilt.
+            if (err != QLatin1String("cancelled"))
+                m_status->setText(err);
             m_startBtn->setEnabled(true);
             m_task = nullptr;
-        });
+        }, this);
 }
 
 void SearchDialog::stopSearch()

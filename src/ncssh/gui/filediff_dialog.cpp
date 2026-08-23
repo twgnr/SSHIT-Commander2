@@ -52,7 +52,7 @@ FileDiffDialog::FileDiffDialog(AsyncBridge *bridge,
                                            provB->readText(pathB, 2'000'000));
         },
         [this](const QPair<QString, QString> &texts) { render(texts.first, texts.second); },
-        [this](const QString &err) { m_status->setText(err); });
+        [this](const QString &err) { m_status->setText(err); }, this);
 }
 
 void FileDiffDialog::render(const QString &textA, const QString &textB)

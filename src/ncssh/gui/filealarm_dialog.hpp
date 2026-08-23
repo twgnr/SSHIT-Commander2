@@ -27,10 +27,10 @@ public:
 
     void reload();                 // Alarme aus den Einstellungen neu laden
     void setIntervalSeconds(int seconds);
-    // Liefert die aktuell aktive SSH-Sitzung (fuer Remote-Alarme). Wird beim
-    // Poll im GUI-Thread abgefragt; leer = nicht verbunden -> Remote-Alarme
-    // pausieren diesen Zyklus.
-    void setSessionProvider(std::function<net::SSHSessionPtr()> provider)
+    // Liefert die SSH-Sitzung zum gebundenen Profil (leerer Name = irgendeine
+    // aktive Verbindung, fuer Alarme aus aelteren Fassungen). Wird beim Poll im
+    // GUI-Thread abgefragt; leer = nicht verbunden -> Alarm pausiert.
+    void setSessionProvider(std::function<net::SSHSessionPtr(const QString &)> provider)
     { m_sessionProvider = std::move(provider); }
 
 signals:
@@ -49,18 +49,23 @@ private:
     std::vector<core::AlarmSpec> m_alarms;
     QHash<int, core::Snapshot> m_snapshots;    // Alarm-ID -> letzter Stand
     QHash<int, QString> m_snapshotOrigin;      // Alarm-ID -> Herkunft ("local"/Session-Label)
-    std::function<net::SSHSessionPtr()> m_sessionProvider;
+    std::function<net::SSHSessionPtr(const QString &)> m_sessionProvider;
     bool m_busy = false;
 };
 
 class FileAlarmDialog : public QDialog {
     Q_OBJECT
 public:
-    FileAlarmDialog(FileAlarmManager *manager, QWidget *parent = nullptr);
+    // presetPath (optional): oeffnet direkt den Anlege-Dialog fuer dieses
+    // Verzeichnis — aus dem Pane-Kontextmenue "Alarm Trigger setzen".
+    // currentProfile: Server, an den neue Remote-Alarme gebunden werden.
+    FileAlarmDialog(FileAlarmManager *manager, QWidget *parent = nullptr,
+                    const QString &presetPath = {}, bool presetRemote = false,
+                    const QString &currentProfile = {});
 
 private:
     void reload();
-    void addAlarm();
+    void addAlarm(const QString &presetPath = {}, bool presetRemote = false);
     void editAlarm();
     void removeAlarm();
     void toggleAlarm();
@@ -70,6 +75,7 @@ private:
     QTableWidget *m_table = nullptr;
     QListWidget *m_events = nullptr;
     QLabel *m_status = nullptr;
+    QString m_currentProfile;   // Bindung fuer neue Remote-Alarme
 };
 
 } // namespace ncssh::gui

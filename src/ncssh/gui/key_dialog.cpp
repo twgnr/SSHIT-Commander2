@@ -116,7 +116,7 @@ void KeyDialog::generate()
         [this](const QString &err) {
             m_status->setText(err);
             QMessageBox::warning(this, _t("Fehler"), err);
-        });
+        }, this);
 }
 
 void KeyDialog::saveKeys()

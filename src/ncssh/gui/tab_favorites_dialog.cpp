@@ -94,8 +94,7 @@ void TabFavoritesDialog::saveCurrent()
     if (!ok)
         return;
     if (name.trimmed().isEmpty()) {
-        QMessageBox::warning(this, _t("Favorit speichern"),
-                             _t("Name bereits vergeben oder ungültig."));
+        QMessageBox::warning(this, _t("Favorit speichern"), _t("Bitte einen Namen eingeben."));
         return;
     }
     if (m_store.contains(name.trimmed())

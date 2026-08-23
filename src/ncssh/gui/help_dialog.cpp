@@ -39,11 +39,12 @@ const std::vector<Topic> &topics()
             "- Die gesamte Netzwerkarbeit läuft auf Hintergrund-Threads — das Fenster "
             "friert bei SSH-Operationen oder Transfers nie ein.")},
         {_t("Die Oberfläche"),
-         _t("- **Menüleiste**: *Aktionen · Tools · Clipboard · Ansicht · Hilfe*.\n"
+         _t("- **Menüleiste**: *Aktionen · Tools · Plugins · Clipboard · Panes · "
+            "Ansicht · Hilfe*.\n"
             "- **Tableiste**: ein Tab je Arbeitsbereich; der Titel zeigt die Verbindung.\n"
             "- **Pane-Kopf**: Titel, `sudo`-Chip (nur remote/Linux), darunter die "
-            "Pfadzeile mit ↑ (hoch), ☆ (Lesezeichen merken), ▾ (Lesezeichen-Liste) "
-            "und ⟳ (neu laden).\n"
+            "Pfadzeile mit Laufwerksauswahl, Zurück/Vor/Hoch, dem Breadcrumb "
+            "(Rechtsklick: Pfad kopieren), Lesezeichen und Neu laden.\n"
             "- **Konsolen-Kopf**: `KI` erklärt die Ausgabe, `Terminal` schaltet den "
             "Modus um, `⤢` dockt die Konsole in ein eigenes Fenster ab.\n"
             "- **Statusleiste**: Meldungen, Transfer-Ergebnisse, Alarm-Ereignisse.")},
@@ -64,7 +65,8 @@ const std::vector<Topic> &topics()
          _t("- **Navigieren**: Doppelklick öffnet, `Backspace` geht hoch, der Pfad "
             "lässt sich direkt eintippen.\n"
             "- `F3` Ansehen · `F4` Bearbeiten · `F5` Übertragen · `F6` Umbenennen · "
-            "`F7` Neuer Ordner · `F8` Löschen.\n"
+            "`F7` Neuer Ordner · `F8` Löschen — diese Tasten sind unter "
+            "*Tools → Einstellungen → Tastenkürzel* frei belegbar.\n"
             "- **Mehrfachauswahl** mit Strg/Shift; alle F-Tasten arbeiten darauf.\n"
             "- **Spalten-Sortierung**: Klick auf den Kopf (Name/Größe/Datum/Rechte); "
             "erneuter Klick dreht die Richtung. Ordner bleiben oben.\n"
@@ -190,7 +192,7 @@ const std::vector<Topic> &topics()
             "Aktionen umfassen Programme starten, Tastatur/Maus simulieren, Fenster "
             "verwalten, Medien steuern, HTTP-Anfragen und Befehle an die Konsolen.")},
         {_t("Plugins"),
-         _t("*Tools → Plugins* bindet eigenständige Programme ein.\n\n"
+         _t("*Plugins → Plugins verwalten …* bindet eigenständige Programme ein.\n\n"
             "- **Programm** (relativ zum `plugins/`-Ordner oder absolut), **Parameter** "
             "mit Platzhalter `{path}` für das gewählte Element, **Arbeitsverzeichnis**.\n"
             "- **Im Kontextmenü anzeigen** blendet das Plugin in der Pane ein; "
@@ -199,7 +201,7 @@ const std::vector<Topic> &topics()
             "- Zentral bereitgestellte Plugins (aus `plugins/plugins.json`) sind "
             "schreibgeschützt und mit *(zentral)* markiert.")},
         {_t("Netzwerkscanner"),
-         _t("*Tools → Netzwerk-Scanner* durchsucht das lokale Netz.\n\n"
+         _t("*Tools → Netzwerkscanner …* durchsucht das lokale Netz.\n\n"
             "- **Ziele**: CIDR (`192.168.1.0/24`), Bereiche (`10.0.0.1-50`), Listen "
             "oder einzelne Namen. Die lokale /24 ist vorbelegt.\n"
             "- **Ports**: Voreinstellungen (Gängige, SMB, Web, Fernzugriff, Alle) oder "
@@ -212,13 +214,13 @@ const std::vector<Topic> &topics()
             "- Beim Schließen werden die Hosts als **`net://`-Dateisystem** in die "
             "aktive Pane übernommen: Host → Freigabe → Dateien.")},
         {_t("Alarm Trigger (Datei-Alarm)"),
-         _t("*Tools → Datei-Alarm* überwacht Ordner auf Änderungen.\n\n"
+         _t("*Tools → Alarm Trigger …* überwacht Ordner auf Änderungen.\n\n"
             "- Je Alarm: **Name**, **Ordner**, überwachte **Ereignisse** (Neu, Geändert, "
             "Gelöscht), **Unterordner einbeziehen**, **Ordner mitzählen** und *aktiv*.\n"
             "- Die Überwachung läuft per Schnappschuss-Vergleich im Hintergrund; "
             "Ereignisse erscheinen in der Liste und in der Statusleiste.")},
         {_t("GitHub Repo Alarm"),
-         _t("*Tools → GitHub-Alarm* meldet neue Pushes.\n\n"
+         _t("*Tools → GitHub Repo Alarm …* meldet neue Pushes.\n\n"
             "- **Repository** als `owner/repo` oder als GitHub-URL (auch "
             "`git@github.com:owner/repo.git`).\n"
             "- Ein optionales **Token** erhöht das API-Limit und liegt im "
@@ -274,7 +276,7 @@ const std::vector<Topic> &topics()
             "die Farbfelder anklicken (Hintergrund, Flächen, Rahmen, Text, Akzente, "
             "Scrollbalken, Terminal-Farben) und unter eigenem Namen speichern. Die "
             "**Vorschau** unten zeigt das Ergebnis sofort.\n\n"
-            "*Ansicht → Vorschau* blendet unter jeder Pane ein Vorschau-Panel ein, das "
+            "*Ansicht → Vorschau-Panel* blendet unter jeder Pane ein Vorschau-Panel ein, das "
             "die markierte Datei schreibgeschützt anzeigt (Text oder Bild).")},
         {_t("Lesezeichen"),
          _t("Pfad-Lesezeichen werden **je Verbindung** getrennt geführt (Profilname "
@@ -397,9 +399,6 @@ QWidget *HelpDialog::buildShortcutsTab()
         {"Dateien", _t("Alles markieren (Strg+A)"), QStringLiteral("Strg+A")},
         {"Dateien", _t("Kopieren / Einfügen (in diese Pane)"),
          QStringLiteral("Strg+C  /  Strg+V")},
-        {"Dateien", _t("Kopieren → andere Pane / Umbenennen"), QStringLiteral("F5  /  F6")},
-        {"Dateien", _t("Neuer Ordner / Löschen"), QStringLiteral("F7  /  F8")},
-        {"Dateien", _t("Ansehen / Bearbeiten (interner Editor)"), QStringLiteral("F3  /  F4")},
         {"Dateien", _t("Kontextmenü (Rechte, Eigenschaften, …)"), _t("Rechtsklick")},
         {"Dateien", _t("Ausführen — mit OS-Standardprogramm öffnen"),
          _t("Doppelklick / Kontextmenü")},
@@ -410,8 +409,7 @@ QWidget *HelpDialog::buildShortcutsTab()
          _t("Strg+Einfg / Strg+Shift+C")},
         {"Konsole / Terminal", _t("Einfügen"), _t("Shift+Einfg / Strg+Shift+V")},
         {"Konsole / Terminal", _t("Wort markieren"), _t("Doppelklick")},
-        {"Konsole / Terminal", _t("Im Puffer suchen (Strg+F)"),
-         QStringLiteral("Strg+Shift+F")},
+        {"Konsole / Terminal", _t("Im Puffer suchen"), QStringLiteral("Strg+Shift+F")},
     };
     QHash<QString, QTreeWidgetItem *> fixedGroups;
     for (const FixedBinding &binding : fixed) {

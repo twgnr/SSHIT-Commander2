@@ -166,6 +166,12 @@ void ConsolePanel::setSession(const net::SSHSessionPtr &session)
     }
 }
 
+void ConsolePanel::setHeaderTitle(const QString &title)
+{
+    if (m_header)
+        m_header->setText(title);
+}
+
 void ConsolePanel::shutdownShell()
 {
     m_session.reset();
@@ -250,7 +256,7 @@ void ConsolePanel::runCommand(const QString &command, bool execute)
                     appendOutput(_t("cd: kein Verzeichnis: %1").arg(target));
                 }
             },
-            [this](const QString &err) { appendOutput(_t("[Fehler] %1").arg(err)); });
+            [this](const QString &err) { appendOutput(_t("[Fehler] %1").arg(err)); }, this);
         return;
     }
 
@@ -285,7 +291,7 @@ void ConsolePanel::runCommand(const QString &command, bool execute)
             }
             appendOutput(_t("[Fehler] %1").arg(err));
             m_status->setText(_t("✗ Fehler"));
-        });
+        }, this);
 }
 
 void ConsolePanel::setBusy(bool busy)
@@ -418,7 +424,7 @@ void ConsolePanel::complete()
             }
             apply(common, false);
         },
-        [](const QString &) {});
+        [](const QString &) {}, this);
 }
 
 bool ConsolePanel::eventFilter(QObject *obj, QEvent *event)

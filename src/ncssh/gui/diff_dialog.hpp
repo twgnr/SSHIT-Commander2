@@ -25,6 +25,11 @@ public:
                core::FileSystemProvider *right, const QString &rightPath,
                QWidget *parent = nullptr);
 
+signals:
+    // Uebertragungen wurden eingereiht — der Aufrufer frischt die Panes auf,
+    // sobald sie durch sind (dieser Weg umging Workspace::startTransfer).
+    void transfersQueued();
+
 private:
     void compare();
     void copySelected(bool toRight);

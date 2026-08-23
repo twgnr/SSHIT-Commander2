@@ -268,7 +268,7 @@ void ServerManagerDialog::testReachability()
         [this, host, port](const QString &err) {
             m_reachability->setText(
                 _t("%1:%2 nicht erreichbar:\n%3").arg(host).arg(port).arg(err));
-        });
+        }, this);
 }
 
 void ServerManagerDialog::loadIntoForm(const ServerProfile &p)

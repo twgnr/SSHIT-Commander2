@@ -353,7 +353,7 @@ void SecurityDialog::runAudit()
             m_progress->setVisible(false);
             m_runBtn->setEnabled(true);
             m_status->setText(_t("Fehler beim Scan") + QStringLiteral(": ") + err);
-        });
+        }, this);
 }
 
 } // namespace ncssh::gui

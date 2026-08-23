@@ -82,7 +82,7 @@ void GithubAlarmManager::checkNow()
             }
             m_busy = false;
         },
-        [this](const QString &) { m_busy = false; });
+        [this](const QString &) { m_busy = false; }, this);
 }
 
 // ---------------------------------------------------------------------------

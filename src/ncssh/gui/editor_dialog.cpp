@@ -354,7 +354,7 @@ void EditorDialog::load()
         [this](const QString &err) {
             m_status->setText(err);
             QMessageBox::warning(this, _t("Fehler"), err);
-        });
+        }, this);
 }
 
 void EditorDialog::save(bool saveAs)
@@ -391,7 +391,7 @@ void EditorDialog::save(bool saveAs)
             m_status->setText(_t("Gespeichert."));
             watchFile();   // eigenes Speichern nicht als externe Aenderung melden
         },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); });
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
 
 void EditorDialog::updateMatches()

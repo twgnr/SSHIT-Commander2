@@ -184,7 +184,10 @@ QWidget *SettingsDialog::buildGeneralTab()
     pathRow->addWidget(browse);
     form->addRow(_t("Standard-Startpfad (lokal)"), pathRow);
 
-    auto *hint = new QLabel(_t("Sprache und Schriftgrößen greifen nach einem Neustart."), page);
+    auto *hint = new QLabel(
+        _t("Die Sprache greift nach einem Neustart, Terminal- und Editor-Schrift ab dem "
+           "nächsten Öffnen. Alles andere sofort."),
+        page);
     hint->setObjectName(QStringLiteral("Muted"));
     hint->setWordWrap(true);
     form->addRow(hint);
@@ -315,8 +318,10 @@ void SettingsDialog::startPull()
             self->m_pullTask = nullptr;
             self->m_pullProgress->setVisible(false);
             self->m_pullButton->setEnabled(true);
-            self->m_aiStatus->setText(QStringLiteral("✗ %1").arg(err));
-        });
+            self->m_aiStatus->setText(err == QLatin1String("cancelled")
+                                          ? _t("Abgebrochen.")
+                                          : QStringLiteral("✗ %1").arg(err));
+        }, this);
 }
 
 void SettingsDialog::updateExecColorButton()

@@ -54,36 +54,47 @@ public:
     void stop();
 
     // Fuehrt job auf einem Worker-Thread aus; onDone/onError kommen im
-    // GUI-Thread an. Rueckgabewert-Variante:
+    // GUI-Thread an. Rueckgabewert-Variante.
+    //
+    // owner (optional, aber WICHTIG fuer nicht-modale Dialoge): Objekt, dem die
+    // Rueckrufe gehoeren. Ist es beim Eintreffen des Ergebnisses zerstoert,
+    // werden sie NICHT mehr aufgerufen. Ohne diese Bindung greifen Lambdas, die
+    // `this` eines inzwischen geschlossenen Fensters halten, auf freigegebenen
+    // Speicher zu.
     template <typename T>
     BridgeTask *run(std::function<T()> job,
                     std::function<void(const T &)> onDone = {},
-                    std::function<void(const QString &)> onError = {})
+                    std::function<void(const QString &)> onError = {},
+                    QObject *owner = nullptr)
     {
         BridgeTask *task = makeTask();
         QPointer<BridgeTask> guard(task);
-        m_pool.start([this, task, guard, job = std::move(job), onDone = std::move(onDone),
-                      onError = std::move(onError)] {
+        const bool hasOwner = owner != nullptr;
+        QPointer<QObject> ownerGuard(owner);
+        m_pool.start([this, task, guard, hasOwner, ownerGuard, job = std::move(job),
+                      onDone = std::move(onDone), onError = std::move(onError)] {
             try {
                 T result = job();
-                QMetaObject::invokeMethod(this, [this, guard, onDone,
+                QMetaObject::invokeMethod(this, [this, guard, hasOwner, ownerGuard, onDone,
                                                  result = std::move(result)] {
-                    if (onDone && guard) onDone(result);
+                    if (onDone && guard && !(hasOwner && !ownerGuard)) onDone(result);
                     releaseTask(guard.data());
                 }, Qt::QueuedConnection);
             } catch (const std::exception &exc) {
-                deliverError(guard, QString::fromUtf8(exc.what()), onError);
+                deliverError(guard, QString::fromUtf8(exc.what()), onError, hasOwner, ownerGuard);
             } catch (...) {
-                deliverError(guard, QStringLiteral("Unbekannter Fehler"), onError);
+                deliverError(guard, QStringLiteral("Unbekannter Fehler"), onError, hasOwner,
+                             ownerGuard);
             }
         });
         return task;
     }
 
-    // Void-Variante.
+    // Void-Variante (owner wie oben).
     BridgeTask *run(std::function<void()> job,
                     std::function<void()> onDone = {},
-                    std::function<void(const QString &)> onError = {});
+                    std::function<void(const QString &)> onError = {},
+                    QObject *owner = nullptr);
 
     // Streaming: job liefert Zeilen ueber emitLine (beliebiger Thread);
     // sie kommen als task->line(...) im GUI-Thread an. Abbruch ueber cancel().
@@ -92,7 +103,8 @@ public:
     BridgeTask *stream(StreamJob job,
                        std::function<void(const QString &)> onLine,
                        std::function<void()> onFinished = {},
-                       std::function<void(const QString &)> onError = {});
+                       std::function<void(const QString &)> onError = {},
+                       QObject *owner = nullptr);
 
     // Bricht einen laufenden stream()/run()-Job kooperativ ab.
     void cancel(BridgeTask *task);
@@ -101,7 +113,8 @@ private:
     BridgeTask *makeTask();
     void releaseTask(BridgeTask *task);
     void deliverError(QPointer<BridgeTask> guard, const QString &msg,
-                      const std::function<void(const QString &)> &onError);
+                      const std::function<void(const QString &)> &onError,
+                      bool hasOwner = false, QPointer<QObject> ownerGuard = {});
 
     QThreadPool m_pool;
     QSet<BridgeTask *> m_tasks;

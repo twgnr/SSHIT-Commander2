@@ -22,8 +22,11 @@ namespace ncssh::gui {
 
 using core::_t;
 
-SftpBatchDialog::SftpBatchDialog(AsyncBridge *bridge, net::SSHSessionPtr session, QWidget *parent)
-    : QDialog(parent), m_bridge(bridge), m_session(std::move(session))
+SftpBatchDialog::SftpBatchDialog(AsyncBridge *bridge, net::SSHSessionPtr session,
+                                 QWidget *parent, const QString &localCwd,
+                                 const QString &remoteCwd)
+    : QDialog(parent), m_bridge(bridge), m_session(std::move(session)),
+      m_localCwd(localCwd), m_remoteCwd(remoteCwd)
 {
     setWindowTitle(_t("SFTP-Batch / geplante Aufgaben"));
     resize(760, 640);
@@ -131,6 +134,8 @@ void SftpBatchDialog::runBatch()
 
     const bool stopOnError = m_stopOnError->isChecked();
     net::SSHSessionPtr session = m_session;
+    const QString localCwd = m_localCwd;
+    const QString remoteCwd = m_remoteCwd;
 
     m_log->clear();
     appendLog(_t("▶ Start …"));
@@ -138,14 +143,15 @@ void SftpBatchDialog::runBatch()
     updateButtons();
 
     m_task = m_bridge->stream(
-        [script, session, stopOnError](const AsyncBridge::EmitLine &emitLine,
-                                       const CancelTokenPtr &cancel) {
+        [script, session, stopOnError, localCwd, remoteCwd](
+            const AsyncBridge::EmitLine &emitLine, const CancelTokenPtr &cancel) {
             // Provider je Lauf frisch aufbauen; der gehaltene Session-Zeiger
             // haelt die Verbindung am Leben (auch wenn der Tab getrennt wird).
             core::LocalFileSystem local;
             net::SFTPFileSystem remote(session);
+            // Relative Pfade beziehen sich auf die Pane-Verzeichnisse.
             const net::BatchResult r = net::runSftpBatch(
-                script, &local, &remote, QString(), QString(),
+                script, &local, &remote, localCwd, remoteCwd,
                 [&emitLine](const QString &l) { emitLine(l); }, stopOnError, cancel);
             emitLine(QStringLiteral("__DONE__ %1 %2 %3")
                          .arg(r.ok).arg(r.failed).arg(r.aborted ? 1 : 0));
@@ -154,7 +160,9 @@ void SftpBatchDialog::runBatch()
         [this](const QString &line) {
             if (line.startsWith(QStringLiteral("__DONE__"))) {
                 const QStringList p = line.split(QLatin1Char(' '));
-                if (p.size() >= 3)
+                if (p.size() >= 4 && p[3] == QLatin1String("1"))
+                    m_status->setText(_t("Abgebrochen: %1 ok, %2 Fehler").arg(p[1], p[2]));
+                else if (p.size() >= 3)
                     m_status->setText(_t("Fertig: %1 ok, %2 Fehler").arg(p[1], p[2]));
                 return;
             }
@@ -173,7 +181,7 @@ void SftpBatchDialog::runBatch()
             m_running = false;
             m_task = nullptr;
             updateButtons();
-        });
+        }, this);
 }
 
 void SftpBatchDialog::stopBatch()

@@ -78,7 +78,7 @@ void DirChooserDialog::load()
         },
         [this](const QString &err) {
             m_pathLabel->setText(_t("Fehler: %1").arg(err));
-        });
+        }, this);
 }
 
 void DirChooserDialog::enter(QListWidgetItem *item)

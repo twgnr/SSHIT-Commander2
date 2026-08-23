@@ -31,6 +31,12 @@ namespace ncssh::gui {
 
 using core::_t;
 
+// Standardbeschriftung einer Konsole (ohne Verbindung).
+static QString defaultConsoleTitle(bool left)
+{
+    return left ? _t("Konsole (links)") : _t("Konsole (rechts)");
+}
+
 // Lesezeichen-Gruppe einer Verbindung (Profilname, sonst user@host).
 static QString bookmarkKeyFor(const net::SSHSessionPtr &session)
 {
@@ -151,6 +157,22 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     m_connectedPanel = nullptr;
     m_connectedConsole = nullptr;
 
+    // Tab-Taste: zur anderen Pane springen (Fokus + blaue Markierung).
+    for (FilePanel *p : {m_leftPanel, m_rightPanel}) {
+        connect(p, &FilePanel::switchPaneRequested, this, [this, p] {
+            FilePanel *other = (p == m_leftPanel) ? m_rightPanel : m_leftPanel;
+            other->focusView();   // setzt zugleich die aktive Seite (activated)
+        });
+    }
+
+    // Alarm-Wunsch aus dem Pane-Kontextmenue nach oben reichen; ob der Pfad
+    // remote ist, weiss nur die Pane.
+    for (FilePanel *p : {m_leftPanel, m_rightPanel}) {
+        connect(p, &FilePanel::dirAlarmRequested, this, [this, p](const QString &path) {
+            emit dirAlarmRequested(path, p->provider() && p->provider()->isRemote);
+        });
+    }
+
     // sudo-/Trennen-Chip beider Panes: wirkt auf die Pane mit der Verbindung.
     for (FilePanel *p : {m_leftPanel, m_rightPanel}) {
         connect(p, &FilePanel::sudoToggled, this, &Workspace::setSudoMode);
@@ -179,22 +201,19 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     }
 
     // Drag & Drop: Quelle ist die jeweils andere Pane (bzw. der Explorer).
-    connect(m_leftPanel, &FilePanel::filesDropped, this,
-            [this](const QStringList &paths, bool fromExplorer) {
-                core::FileSystemProvider *src = fromExplorer ? m_localFs.get()
-                                                             : m_rightPanel->provider();
-                for (const QString &p : paths)
-                    startTransfer(src, p, m_leftPanel->provider(),
-                                  m_leftPanel->currentPath());
-            });
-    connect(m_rightPanel, &FilePanel::filesDropped, this,
-            [this](const QStringList &paths, bool fromExplorer) {
-                core::FileSystemProvider *src = fromExplorer ? m_localFs.get()
-                                                             : m_leftPanel->provider();
-                for (const QString &p : paths)
-                    startTransfer(src, p, m_rightPanel->provider(),
-                                  m_rightPanel->currentPath());
-            });
+    // Quelle kommt jetzt aus den Drag-Daten (auch aus einem anderen Tab) statt
+    // aus der Annahme "die jeweils andere Pane".
+    for (FilePanel *target : {m_leftPanel, m_rightPanel}) {
+        connect(target, &FilePanel::filesDropped, this,
+                [this, target](const QStringList &paths, FilePanel *source) {
+                    core::FileSystemProvider *src =
+                        source ? source->provider() : m_localFs.get();
+                    if (!src || !target->provider())
+                        return;
+                    for (const QString &p : paths)
+                        startTransfer(src, p, target->provider(), target->currentPath());
+                });
+    }
 
     // Transfer: F5 aus einer Pane -> in das Verzeichnis der anderen Pane.
     connect(m_leftPanel, &FilePanel::transferRequested, this, [this](const QString &) {
@@ -358,7 +377,7 @@ void Workspace::startHealthCheck()
                     disconnectSession();
                     connectTo(profile, panel);
                 },
-                [this](const QString &) { m_healthPending = false; });
+                [this](const QString &) { m_healthPending = false; }, this);
         });
     }
     m_healthTimer->start();
@@ -393,6 +412,7 @@ void Workspace::disconnectSession()
         console->setSession({});      // stoppt ein laufendes Remote-Terminal
         console->setRunner(m_localRunner.get(), QDir::homePath());
         console->setCompletionProvider(m_localFs.get());
+        console->setHeaderTitle(defaultConsoleTitle(console == m_leftConsole));
     }
     m_sessions->close(m_session);
     m_session.reset();
@@ -484,6 +504,10 @@ void Workspace::swapPanes()
         return;
     m_leftPanel->setProvider(rightProvider, rightPath);
     m_rightPanel->setProvider(leftProvider, leftPath);
+    // Vorschauen gehoeren zum Inhalt und wandern mit — sonst zeigen sie nach
+    // dem Tausch die Datei der jeweils anderen Seite.
+    m_leftPreview->clearPreview();
+    m_rightPreview->clearPreview();
     // Die Verbindung haengt an der Pane — ihr Zubehoer (Titel, Chips,
     // Lesezeichen-Gruppe, Verbindungs-Zeiger) muss mitwandern, sonst wirken
     // Trennen/sudo anschliessend auf die falsche Seite.
@@ -512,9 +536,11 @@ void Workspace::swapPanes()
             toConsole->setRunner(m_remoteRunner.get(), QStringLiteral("."));
             toConsole->setCompletionProvider(m_remoteFs.get());
             toConsole->setSession(m_session);
+            toConsole->setHeaderTitle(_t("Konsole — %1").arg(m_session->label()));
             fromConsole->setSession({});
             fromConsole->setRunner(m_localRunner.get(), QDir::homePath());
             fromConsole->setCompletionProvider(m_localFs.get());
+            fromConsole->setHeaderTitle(defaultConsoleTitle(fromConsole == m_leftConsole));
             m_connectedConsole = toConsole;
         }
     }
@@ -603,8 +629,11 @@ void Workspace::undockConsole(ConsolePanel *console)
     // Eigenes Fenster als Container; die Pane fuellt danach die Spalte.
     auto *window = new QWidget(this, Qt::Window);
     window->setObjectName(QStringLiteral("FloatingConsole"));
-    window->setWindowTitle(console == m_leftConsole ? _t("Konsole (links)")
-                                                    : _t("Konsole (rechts)"));
+    // Titel nach Inhalt: die abgedockte Konsole der Verbindung heisst nach dem
+    // Server, nicht nach der Bildschirmseite.
+    window->setWindowTitle(console == m_connectedConsole && m_session
+                               ? _t("Konsole — %1").arg(m_session->label())
+                               : defaultConsoleTitle(console == m_leftConsole));
     auto *layout = new QVBoxLayout(window);
     layout->setContentsMargins(4, 4, 4, 4);
     console->setParent(window);
@@ -711,7 +740,7 @@ void Workspace::setSudoMode(bool on)
         [this](const QString &err) {
             QMessageBox::warning(this, _t("sudo"), err);
             if (m_connectedPanel) m_connectedPanel->setSudoActive(false);
-        });
+        }, this);
 }
 
 void Workspace::enableSudoFilesystem(const QString &keepPath)
@@ -879,6 +908,8 @@ void Workspace::connectTo(const core::ServerProfile &profile, FilePanel *target,
             console->setRunner(m_remoteRunner.get(), QStringLiteral("."));
             console->setCompletionProvider(m_remoteFs.get());  // Tab-Pfade vom Server
             console->setSession(session);  // Terminal-Modus nutzt die SSH-Shell
+            // Beschriftung folgt der Verbindung, nicht der Bildschirmseite.
+            console->setHeaderTitle(_t("Konsole — %1").arg(session->label()));
             // sudo-Chip nur bei POSIX-Servern anbieten; Trennen-Chip bei jeder
             // Verbindung.
             panel->setSudoAvailable(session->osType == QLatin1String("posix"));
@@ -953,7 +984,7 @@ void Workspace::connectTo(const core::ServerProfile &profile, FilePanel *target,
             }
             QMessageBox::critical(this, _t("Verbindung fehlgeschlagen"), err);
             emit statusMessage(_t("Verbindung fehlgeschlagen"));
-        });
+        }, this);
 }
 
 void Workspace::confirmAndTransfer(core::FileSystemProvider *src,
@@ -1014,7 +1045,7 @@ void Workspace::withConflictCheck(
         },
         [this](const QString &err) {
             QMessageBox::critical(this, _t("Fehler"), err);
-        });
+        }, this);
 }
 
 std::vector<std::pair<QString, QString>> Workspace::resolveOverwrites(
@@ -1115,7 +1146,7 @@ void Workspace::startTransfer(core::FileSystemProvider *src, const QString &srcP
                                 if (src == m_leftPanel->provider()) m_leftPanel->refresh();
                                 if (src == m_rightPanel->provider()) m_rightPanel->refresh();
                             },
-                            [this](const QString &err) { emit statusMessage(err); });
+                            [this](const QString &err) { emit statusMessage(err); }, this);
                     }
                     if (dst == m_leftPanel->provider())
                         m_leftPanel->refresh();
