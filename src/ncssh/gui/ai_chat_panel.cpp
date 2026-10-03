@@ -51,6 +51,13 @@ AiChatPanel::AiChatPanel(AsyncBridge *bridge, const QJsonArray &messages,
         if (m_task) {
             m_bridge->cancel(m_task);
             m_task = nullptr;
+            // Den abgebrochenen Lauf sofort entwerten: er liefert noch Chunks
+            // und spaeter failed("cancelled"). Ohne neue Generation mischten
+            // sich diese in die naechste Frage bzw. setzten deren m_task zurueck.
+            ++m_generation;
+            if (!m_pending.isEmpty())
+                appendMarkdown(_t("Antwort (abgebrochen)"), m_pending);
+            m_pending.clear();
             m_status->setText(_t("Abgebrochen."));
         }
     });
@@ -113,6 +120,9 @@ void AiChatPanel::streamAnswer()
     m_pending.clear();
     m_status->setText(_t("Denkt nach …"));
     const QJsonArray messages = m_messages;
+    // Jeder Lauf bekommt eine Kennung; Rueckmeldungen eines veralteten
+    // (gestoppten) Laufs werden verworfen.
+    const quint64 generation = ++m_generation;
 
     m_task = m_bridge->stream(
         [target, messages](const AsyncBridge::EmitLine &emitLine,
@@ -120,23 +130,31 @@ void AiChatPanel::streamAnswer()
             core::chatStream(target, messages,
                              [&emitLine](const QString &chunk) { emitLine(chunk); }, cancel);
         },
-        [this](const QString &chunk) { m_pending += chunk; },
-        [this] {
+        [this, generation](const QString &chunk) {
+            if (generation == m_generation)
+                m_pending += chunk;
+        },
+        [this, generation] {
+            if (generation != m_generation)
+                return;
             appendMarkdown(_t("Antwort"), m_pending);
             m_messages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("assistant")},
                                           {QStringLiteral("content"), m_pending}});
+            m_pending.clear();
             m_status->clear();
             m_task = nullptr;
         },
-        [this](const QString &err) {
-            // Vom Nutzer gestoppt: Meldung aus dem Stop-Knopf behalten. Die
-            // bereits empfangene Teilantwort nicht wegwerfen.
+        [this, generation](const QString &err) {
+            if (generation != m_generation)
+                return;   // gestoppter Lauf: der Stop-Knopf hat schon aufgeraeumt
+            // Teilantwort nicht wegwerfen.
             if (err == QLatin1String("cancelled")) {
                 if (!m_pending.isEmpty())
                     appendMarkdown(_t("Antwort (abgebrochen)"), m_pending);
             } else {
                 m_status->setText(err);
             }
+            m_pending.clear();
             m_task = nullptr;
         }, this);
 }

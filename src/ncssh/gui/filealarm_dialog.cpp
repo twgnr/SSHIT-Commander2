@@ -3,6 +3,7 @@
 #include "ncssh/core/settings.hpp"
 
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/core/runner.hpp"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
@@ -213,31 +214,24 @@ void FileAlarmManager::poll()
 void FileAlarmManager::runAction(const core::AlarmSpec &spec, const QString &kind,
                                  const QString &path, int count)
 {
-    QString cmd = spec.actionCmd.trimmed();
-    if (cmd.isEmpty())
+    if (spec.actionCmd.trimmed().isEmpty())
         return;
-    // Platzhalter ersetzen.
-    cmd.replace(QStringLiteral("{path}"), path);
-    cmd.replace(QStringLiteral("{kind}"), kind);
-    cmd.replace(QStringLiteral("{name}"), spec.name);
-    cmd.replace(QStringLiteral("{count}"), QString::number(count));
-    // Als losgeloester Prozess starten — die Shell parst Argumente/Quotes. Die
-    // Ereignisdaten stehen zusaetzlich als Umgebungsvariablen bereit (robuster
-    // als String-Interpolation bei Sonderzeichen im Pfad).
+    // Sicherheit: Pfad/Name koennen von einem fremden Server stammen (z.B. eine
+    // Datei namens `x & calc.exe`). Woertlich eingesetzt fuehrte cmd den Rest
+    // als eigenen Befehl aus. Daher stehen die Werte NUR in Umgebungsvariablen;
+    // die Platzhalter werden zu !ALARM_PATH! usw. und cmd laeuft mit /v:on —
+    // verzoegerte Expansion setzt den Wert erst nach dem Parsen von
+    // & | < > ^ ( ) und Zeilenumbruechen ein, er bleibt also reiner Text.
+    // (Ein Ausmaskieren der Metazeichen waere fehleranfaellig: cmd hat je nach
+    // Quote-Zustand unterschiedliche Regeln fuer ^, % und !.)
+    const QString cmd = core::alarmShellCommand(spec.actionCmd, count);
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert(QStringLiteral("ALARM_PATH"), path);
-    env.insert(QStringLiteral("ALARM_KIND"), kind);
-    env.insert(QStringLiteral("ALARM_NAME"), spec.name);
-    env.insert(QStringLiteral("ALARM_COUNT"), QString::number(count));
+    const QHash<QString, QString> vars = core::alarmEnvironment(kind, path, spec.name, count);
+    for (auto it = vars.begin(); it != vars.end(); ++it)
+        env.insert(it.key(), it.value());
     QProcess proc;
     proc.setProcessEnvironment(env);
-#ifdef Q_OS_WIN
-    proc.setProgram(QStringLiteral("cmd"));
-    proc.setArguments({QStringLiteral("/c"), cmd});
-#else
-    proc.setProgram(QStringLiteral("/bin/sh"));
-    proc.setArguments({QStringLiteral("-c"), cmd});
-#endif
+    core::setShellCommand(proc, cmd, /*delayedExpansion=*/true);
     proc.startDetached();
 }
 

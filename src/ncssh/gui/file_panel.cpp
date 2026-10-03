@@ -960,7 +960,9 @@ void FilePanel::loadDir(const QString &rawPath, bool record)
                         if (seq == m_loadSeq && home != path)
                             navigateTo(home);
                     },
-                    [](const QString &) {});
+                    // owner: die Pane kann bis zur Antwort mit ihrem Tab
+                    // geschlossen sein — dann darf der Rueckruf nicht laufen.
+                    [](const QString &) {}, this);
                 return;
             }
             QMessageBox::warning(this, _t("Fehler"), err);
@@ -1802,6 +1804,15 @@ void FilePanel::opExtract()
 core::FileSystemProvider *FilePanel::s_clipProvider = nullptr;
 QStringList FilePanel::s_clipPaths;
 bool FilePanel::s_clipMove = false;
+
+void FilePanel::forgetProvider(const core::FileSystemProvider *provider)
+{
+    if (!provider || s_clipProvider != provider)
+        return;
+    s_clipProvider = nullptr;
+    s_clipPaths.clear();
+    s_clipMove = false;
+}
 
 void FilePanel::copyPathToClipboard()
 {

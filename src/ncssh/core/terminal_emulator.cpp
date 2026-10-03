@@ -11,8 +11,32 @@ static const char *kBase16[] = {
     "#555753", "#ef2929", "#8ae234", "#fce94f", "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeec",
 };
 
+// Obergrenzen gegen boesartige/kaputte Sequenzen: numerische Parameter werden
+// gedeckelt (ESC[2147483647B liess m_cy + p0 ueberlaufen -> negativer Cursor
+// -> Heap-Schreibzugriff), der Parameterpuffer einer nie endenden CSI waechst
+// nicht unbegrenzt.
+static constexpr int kMaxParam = 9999;
+static constexpr int kMaxParamBuf = 256;
+
+// Liest eine Dezimalzahl mit Deckel kMaxParam (leer -> def). toInt() lieferte
+// bei Ueberlauf 0 bzw. ungedeckelte Riesenwerte.
+static int parseParam(const QString &s, int def)
+{
+    if (s.isEmpty())
+        return def;
+    int v = 0;
+    for (const QChar ch : s) {
+        const ushort u = ch.unicode();
+        if (u < '0' || u > '9')
+            break;
+        v = std::min(kMaxParam, v * 10 + (u - '0'));
+    }
+    return v;
+}
+
 static QColor ansi256(int n)
 {
+    n = std::clamp(n, 0, 255);
     if (n < 16)
         return QColor(QString::fromLatin1(kBase16[std::clamp(n, 0, 15)]));
     if (n < 232) {
@@ -62,11 +86,19 @@ void TerminalEmulator::resize(int cols, int rows)
     rows = std::max(1, rows);
     if (cols == m_cols && rows == m_rows)
         return;
-    std::vector<std::vector<TermCell>> ng(rows, std::vector<TermCell>(cols, TermCell{}));
-    for (int r = 0; r < std::min(rows, m_rows); ++r)
-        for (int c = 0; c < std::min(cols, m_cols); ++c)
-            ng[r][c] = m_grid[r][c];
-    m_grid = std::move(ng);
+    const auto regrid = [&](const std::vector<std::vector<TermCell>> &old) {
+        std::vector<std::vector<TermCell>> ng(rows, std::vector<TermCell>(cols, TermCell{}));
+        for (int r = 0; r < std::min(rows, static_cast<int>(old.size())); ++r)
+            for (int c = 0; c < std::min(cols, static_cast<int>(old[r].size())); ++c)
+                ng[r][c] = old[r][c];
+        return ng;
+    };
+    m_grid = regrid(m_grid);
+    // Gesicherten Primaerschirm mitziehen: sonst kaeme er beim Verlassen des
+    // Alternate-Screens mit alter Spaltenzahl zurueck, und Schreibzugriffe bis
+    // m_cols liefen ueber das Zeilenende hinaus.
+    if (!m_savedPrimary.empty())
+        m_savedPrimary = regrid(m_savedPrimary);
     m_cols = cols;
     m_rows = rows;
     m_top = 0;
@@ -97,6 +129,14 @@ void TerminalEmulator::clampCursor()
 {
     m_cx = std::clamp(m_cx, 0, m_cols - 1);
     m_cy = std::clamp(m_cy, 0, m_rows - 1);
+}
+
+void TerminalEmulator::clampRegion()
+{
+    // Scrollregion immer innerhalb des Gitters halten (Schutz fuer die
+    // Zeilenindizes in scrollUp/scrollDown).
+    m_top = std::clamp(m_top, 0, m_rows - 1);
+    m_bottom = std::clamp(m_bottom, m_top, m_rows - 1);
 }
 
 // --- Parser -----------------------------------------------------------------
@@ -133,10 +173,11 @@ void TerminalEmulator::feed(const QString &data)
             break;
 
         case State::Csi:
-            if (u >= 0x30 && u <= 0x3f) {
-                m_paramBuf += qc;  // Parameter-/Privat-Bytes
-            } else if (u >= 0x20 && u <= 0x2f) {
-                m_paramBuf += qc;  // Zwischenbytes (meist ignoriert)
+            if (u >= 0x20 && u <= 0x3f) {
+                // Parameter-/Privat-/Zwischenbytes; ueberlange Sequenzen werden
+                // abgeschnitten statt den Speicher unbegrenzt zu fuellen.
+                if (m_paramBuf.size() < kMaxParamBuf)
+                    m_paramBuf += qc;
             } else if (u >= 0x40 && u <= 0x7e) {
                 csiDispatch(qc);
                 m_state = State::Ground;
@@ -254,7 +295,7 @@ std::vector<int> TerminalEmulator::params(int def, int count) const
         // ':'-Subparameter (z.B. Truecolor 38:2:...) auf ';' vereinfachen wird
         // hier nicht gebraucht — nur der Hauptwert zaehlt.
         const QString main = s.section(QLatin1Char(':'), 0, 0);
-        out.push_back(main.isEmpty() ? def : main.toInt());
+        out.push_back(parseParam(main, def));
         if (static_cast<int>(out.size()) >= count)
             break;
     }
@@ -272,13 +313,20 @@ void TerminalEmulator::csiDispatch(QChar final)
         return (idx < static_cast<int>(p.size()) && p[idx] != 0) ? p[idx] : def;
     };
 
+    // Vertikale Relativbewegung bleibt in der Scrollregion — ausser der Cursor
+    // steht schon ausserhalb, dann gilt der Schirmrand (sonst sprang er z.B.
+    // bei CUD unterhalb der Region wieder nach oben).
+    clampCursor();
+    const int upLimit = (m_cy >= m_top) ? m_top : 0;
+    const int downLimit = (m_cy <= m_bottom) ? m_bottom : m_rows - 1;
+
     switch (final.unicode()) {
     case 'A':  // CUU
-        m_cy = std::max(m_top, m_cy - std::max(1, p0));
+        m_cy = std::max(upLimit, m_cy - std::max(1, p0));
         m_wrapPending = false;
         break;
     case 'B':  // CUD
-        m_cy = std::min(m_bottom, m_cy + std::max(1, p0));
+        m_cy = std::min(downLimit, m_cy + std::max(1, p0));
         m_wrapPending = false;
         break;
     case 'C':  // CUF
@@ -290,12 +338,12 @@ void TerminalEmulator::csiDispatch(QChar final)
         m_wrapPending = false;
         break;
     case 'E':  // CNL
-        m_cy = std::min(m_bottom, m_cy + std::max(1, p0));
+        m_cy = std::min(downLimit, m_cy + std::max(1, p0));
         m_cx = 0;
         m_wrapPending = false;
         break;
     case 'F':  // CPL
-        m_cy = std::max(m_top, m_cy - std::max(1, p0));
+        m_cy = std::max(upLimit, m_cy - std::max(1, p0));
         m_cx = 0;
         m_wrapPending = false;
         break;
@@ -313,7 +361,7 @@ void TerminalEmulator::csiDispatch(QChar final)
         int row = std::max(1, arg(0, 1)) - 1;
         int col = std::max(1, arg(1, 1)) - 1;
         if (m_originMode)
-            row += m_top;
+            row = std::min(row + m_top, m_bottom);  // DECOM: relativ zur Region
         m_cy = std::clamp(row, 0, m_rows - 1);
         m_cx = std::clamp(col, 0, m_cols - 1);
         m_wrapPending = false;
@@ -423,6 +471,7 @@ void TerminalEmulator::reverseIndex()
 
 void TerminalEmulator::scrollUp(int n)
 {
+    clampRegion();
     const int height = m_bottom - m_top + 1;
     n = std::min(n, height);
     if (n <= 0)
@@ -435,6 +484,7 @@ void TerminalEmulator::scrollUp(int n)
 
 void TerminalEmulator::scrollDown(int n)
 {
+    clampRegion();
     const int height = m_bottom - m_top + 1;
     n = std::min(n, height);
     if (n <= 0)
@@ -449,6 +499,7 @@ void TerminalEmulator::scrollDown(int n)
 
 void TerminalEmulator::eraseInDisplay(int mode)
 {
+    clampCursor();  // Gitter nie mit ungeprueftem Cursor indizieren
     if (mode == 2 || mode == 3) {
         for (auto &row : m_grid)
             row.assign(m_cols, blankCell());
@@ -469,6 +520,7 @@ void TerminalEmulator::eraseInDisplay(int mode)
 
 void TerminalEmulator::eraseInLine(int mode)
 {
+    clampCursor();
     if (mode == 0) {
         for (int c = m_cx; c < m_cols; ++c)
             m_grid[m_cy][c] = blankCell();
@@ -482,6 +534,8 @@ void TerminalEmulator::eraseInLine(int mode)
 
 void TerminalEmulator::insertLines(int n)
 {
+    clampCursor();
+    clampRegion();
     if (m_cy < m_top || m_cy > m_bottom)
         return;
     n = std::min(n, m_bottom - m_cy + 1);
@@ -493,6 +547,8 @@ void TerminalEmulator::insertLines(int n)
 
 void TerminalEmulator::deleteLines(int n)
 {
+    clampCursor();
+    clampRegion();
     if (m_cy < m_top || m_cy > m_bottom)
         return;
     n = std::min(n, m_bottom - m_cy + 1);
@@ -504,6 +560,7 @@ void TerminalEmulator::deleteLines(int n)
 
 void TerminalEmulator::insertChars(int n)
 {
+    clampCursor();
     n = std::min(n, m_cols - m_cx);
     auto &row = m_grid[m_cy];
     for (int c = m_cols - 1; c >= m_cx + n; --c)
@@ -514,6 +571,7 @@ void TerminalEmulator::insertChars(int n)
 
 void TerminalEmulator::deleteChars(int n)
 {
+    clampCursor();
     n = std::min(n, m_cols - m_cx);
     auto &row = m_grid[m_cy];
     for (int c = m_cx; c <= m_cols - 1 - n; ++c)
@@ -524,6 +582,7 @@ void TerminalEmulator::deleteChars(int n)
 
 void TerminalEmulator::eraseChars(int n)
 {
+    clampCursor();
     n = std::min(n, m_cols - m_cx);
     for (int c = m_cx; c < m_cx + n; ++c)
         m_grid[m_cy][c] = blankCell();
@@ -626,7 +685,7 @@ void TerminalEmulator::applySgr(const QString &paramBuf)
     const QStringList parts =
         p.isEmpty() ? QStringList{QStringLiteral("0")} : p.split(QLatin1Char(';'));
     for (const QString &s : parts)
-        codes.push_back(s.isEmpty() ? 0 : s.section(QLatin1Char(':'), 0, 0).toInt());
+        codes.push_back(parseParam(s.section(QLatin1Char(':'), 0, 0), 0));
 
     for (int i = 0; i < static_cast<int>(codes.size()); ++i) {
         const int c = codes[i];
@@ -670,7 +729,9 @@ void TerminalEmulator::applySgr(const QString &paramBuf)
                 *target = ansi256(codes[i + 2]);
                 i += 2;
             } else if (i + 4 < static_cast<int>(codes.size()) && codes[i + 1] == 2) {
-                *target = QColor(codes[i + 2], codes[i + 3], codes[i + 4]);
+                *target = QColor(std::clamp(codes[i + 2], 0, 255),
+                                 std::clamp(codes[i + 3], 0, 255),
+                                 std::clamp(codes[i + 4], 0, 255));
                 i += 4;
             }
         }

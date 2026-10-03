@@ -199,10 +199,12 @@ MacroConfig load()
 
 void save(const MacroConfig &config)
 {
-    QFile f(macrosFile());
-    if (!f.open(QIODevice::WriteOnly))
-        throw std::runtime_error("Kann macros.json nicht schreiben.");
-    f.write(QJsonDocument(config.toJson()).toJson(QJsonDocument::Indented));
+    // Atomar (QSaveFile): ein Absturz/voller Datentraeger mitten im Schreiben
+    // liesse sonst eine abgeschnittene macros.json zurueck — load() faellt dann
+    // still auf die Standard-Belegung zurueck und alle Makros waeren weg.
+    ncssh::atomicWriteText(
+        macrosFile(),
+        QString::fromUtf8(QJsonDocument(config.toJson()).toJson(QJsonDocument::Indented)));
 }
 
 QJsonObject exportBundle(const MacroConfig &config, const QStringList &namesIn)

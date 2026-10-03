@@ -21,17 +21,65 @@ static QString regValue(const QString &path, const QString &name)
     return reg.value(name).toString();
 }
 
+// %VAR%-Platzhalter (REG_EXPAND_SZ, z.B. "%SystemRoot%\system32\notepad.exe")
+// aufloesen. Unbekannte Namen — etwa die Argument-Platzhalter "%1"/"%L" —
+// bleiben unveraendert stehen.
+static QString expandEnvVars(const QString &s)
+{
+    QString out;
+    int i = 0;
+    while (i < s.size()) {
+        if (s.at(i) == QLatin1Char('%')) {
+            const int end = s.indexOf(QLatin1Char('%'), i + 1);
+            if (end > i + 1) {
+                const QString name = s.mid(i + 1, end - i - 1);
+                const QByteArray key = name.toLocal8Bit();
+                if (qEnvironmentVariableIsSet(key.constData())) {
+                    out += qEnvironmentVariable(key.constData());
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+        out += s.at(i);
+        ++i;
+    }
+    return out;
+}
+
+static bool isExistingFile(const QString &path)
+{
+    if (QFileInfo(path).isFile())
+        return true;
+    return !path.endsWith(QLatin1String(".exe"), Qt::CaseInsensitive)
+           && QFileInfo(path + QLatin1String(".exe")).isFile();
+}
+
 // Programmpfad aus einem shell\open\command-String extrahieren.
 static QString exeFromCommand(const QString &cmd)
 {
-    const QString c = cmd.trimmed();
+    const QString c = expandEnvVars(cmd.trimmed());
     if (c.isEmpty())
         return {};
     if (c.startsWith(QLatin1Char('"'))) {
         const int end = c.indexOf(QLatin1Char('"'), 1);
         return end > 0 ? c.mid(1, end - 1) : c.mid(1);
     }
-    const int sp = c.indexOf(QLatin1Char(' '));
+    // Ungequotete Pfade mit Leerzeichen ("C:\Program Files\x\x.exe %1"):
+    // frueher wurde am ersten Leerzeichen abgeschnitten -> "C:\Program".
+    // Wie CreateProcess die Praefixe an Leerzeichen der Reihe nach probieren
+    // und den ersten nehmen, der als Datei existiert.
+    int sp = c.indexOf(QLatin1Char(' '));
+    while (sp > 0) {
+        const QString cand = c.left(sp);
+        if (isExistingFile(cand))
+            return QFileInfo(cand).isFile() ? cand : cand + QLatin1String(".exe");
+        sp = c.indexOf(QLatin1Char(' '), sp + 1);
+    }
+    if (isExistingFile(c))
+        return QFileInfo(c).isFile() ? c : c + QLatin1String(".exe");
+    // Nichts gefunden: altes Verhalten (erstes Wort, z.B. Programm im PATH).
+    sp = c.indexOf(QLatin1Char(' '));
     return sp < 0 ? c : c.left(sp);
 }
 
@@ -64,7 +112,7 @@ static std::pair<QString, QString> resolveExe(const QString &exeName)
                     .arg(root, exeName));
             if (!p.isEmpty()) {
                 p.remove(QLatin1Char('"'));
-                path = p;
+                path = expandEnvVars(p);   // App Paths darf %VAR% enthalten
                 break;
             }
         }

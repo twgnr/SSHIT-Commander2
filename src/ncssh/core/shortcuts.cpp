@@ -4,6 +4,7 @@
 #include "ncssh/core/settings.hpp"
 
 #include <QJsonObject>
+#include <QKeySequence>
 #include <QVariantMap>
 
 namespace ncssh::core {
@@ -94,6 +95,28 @@ QString labelFor(const QString &sid)
             return d.label;
     }
     return sid;
+}
+
+QString normalizeShortcut(const QString &key)
+{
+    QString compact = key.trimmed();
+    compact.remove(QLatin1Char(' '));
+    if (compact.isEmpty())
+        return {};
+    // QKeySequence versteht Modifier/Tasten unabhaengig von der Schreibweise.
+    const QKeySequence seq = QKeySequence::fromString(compact, QKeySequence::PortableText);
+    if (seq.isEmpty() || seq[0].key() == Qt::Key_unknown)
+        return compact.toLower();
+    return seq.toString(QKeySequence::PortableText);
+}
+
+std::vector<std::pair<QString, QString>> fixedShortcuts()
+{
+    return {
+        {QStringLiteral("Ctrl+Q"), _t("Beenden")},
+        {QStringLiteral("Ctrl+Shift+K"), _t("Befehl an beide Konsolen …")},
+        {QStringLiteral("Ctrl+F2"), _t("Vorschau-Panel")},
+    };
 }
 
 } // namespace ncssh::core

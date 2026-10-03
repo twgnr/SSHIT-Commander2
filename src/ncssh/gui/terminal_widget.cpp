@@ -144,6 +144,7 @@ void TerminalWidget::attachBackend(ShellBackend *backend)
 {
     stop();
     m_backend = backend;
+    m_shellEnded = false;
     connect(backend, &ShellBackend::dataReceived, this, [this](const QString &data) {
         feedOutput(data);
         if (!m_altScreen)
@@ -157,10 +158,20 @@ void TerminalWidget::attachBackend(ShellBackend *backend)
         if (!m_altScreen && !m_searchPattern.isEmpty())
             recomputeMatches();
     });
-    connect(backend, &ShellBackend::closed, this, [this] {
+    connect(backend, &ShellBackend::closed, this, [this, backend] {
+        // Spaetes (gequeuetes) closed() eines bereits ersetzten Backends darf
+        // den Zustand der neuen Shell nicht anfassen.
+        if (backend != m_backend)
+            return;
+        // Backend abbauen: sonst bliebe isRunning() true, und weder der
+        // Wechsel in den Terminal-Modus noch Enter startete je eine neue Shell.
+        stop();
+        m_shellEnded = true;
         m_altScreen = false;    // etwaigen Alt-Screen verlassen, damit die Meldung sichtbar ist
+        setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
         m_feedCarry.clear();
-        m_renderer->feed(QStringLiteral("\r\n\x1b[90m[Shell beendet]\x1b[0m\r\n"));
+        m_renderer->reset();    // halbe Sequenz/Farben der alten Shell verwerfen
+        printLocal(_t("[Shell beendet — Enter startet neu]"));
         viewport()->update();
         emit shellClosed();
     });
@@ -393,6 +404,9 @@ void TerminalWidget::stop()
 {
     if (!m_backend)
         return;
+    // Signale des alten Backends kappen: beim Abbau gequeuete dataReceived/
+    // closed-Aufrufe trafen sonst nach einem Neustart die NEUE Shell.
+    disconnect(m_backend, nullptr, this, nullptr);
     // close() beendet und joint die Lesethreads SYNCHRON — deleteLater raeumt
     // danach nur noch das QObject auf. Beim App-Ende wird das Event ggf. nie
     // zugestellt (keine Ereignisschleife mehr); das ist unkritisch, weil dann
@@ -411,6 +425,12 @@ void TerminalWidget::sendText(const QString &text)
 void TerminalWidget::keyPressEvent(QKeyEvent *event)
 {
     if (!m_backend) {
+        // Shell beendet: Enter startet eine neue (die Konsole kennt die Session).
+        if (m_shellEnded
+            && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) {
+            emit restartRequested();
+            return;
+        }
         QPlainTextEdit::keyPressEvent(event);
         return;
     }

@@ -207,16 +207,23 @@ public:
     ~RemoteShell();
 
     void write(const QByteArray &data);
-    // Liest bis maxBytes; blockiert bis timeoutMs (leer bei Timeout).
+    // Liest bis maxBytes (stdout, sonst stderr); wartet hoechstens timeoutMs
+    // (leer bei Timeout). Kehrt nie ohne Wartezeit leer zurueck. Wirft bei
+    // echten Kanal-/Transportfehlern und wenn die Session schliesst. Nach dem
+    // Kanalende (Gegenseite hat z. B. "exit" ausgefuehrt) ist atEof() true.
     QByteArray read(int maxBytes = 8192, int timeoutMs = 100);
+    // Kanal zu Ende (EOF der Gegenseite oder per close() geschlossen). Nur
+    // aus dem Lesethread abfragen (wird von read() gesetzt).
+    bool atEof() const { return m_eof; }
     void resize(int cols, int rows);
     void close();
 
 private:
     explicit RemoteShell(SSHSessionPtr session) : m_session(std::move(session)) {}
     SSHSessionPtr m_session;
-    void *m_channel = nullptr;  // LIBSSH2_CHANNEL*
-    bool m_closed = false;
+    void *m_channel = nullptr;  // LIBSSH2_CHANNEL*; nur unter dem Session-Mutex aendern
+    bool m_closed = false;      // nur unter dem Session-Mutex
+    bool m_eof = false;         // nur im Lesethread (read/atEof)
 };
 
 } // namespace ncssh::net

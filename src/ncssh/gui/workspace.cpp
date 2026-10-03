@@ -342,6 +342,19 @@ void Workspace::pasteInto(FilePanel *target, bool move)
 
 Workspace::~Workspace()
 {
+    // Nicht-modale Dialoge dieses Tabs (Suche, Vergleich, Encoding …) halten
+    // rohe Zeiger auf Panes/Provider — sie gehen mit dem Tab.
+    for (const QPointer<QWidget> &dialog : std::as_const(m_boundDialogs)) {
+        if (dialog) {
+            dialog->close();
+            dialog->deleteLater();
+        }
+    }
+    // Die Abbrueche unten melden sich per jobUpdated — die Handler aus
+    // startTransfer() sollen dabei nicht mehr in diesen sterbenden Tab greifen.
+    if (m_transfers)
+        disconnect(m_transfers, nullptr, this, nullptr);
+
     // Geordneter Abbau: erst die Terminal-Lesethreads stoppen und die
     // Weiterleitungen schliessen, DANN die Session — sonst arbeiten die
     // Threads auf freigegebenen libssh2-Objekten. Das Hauptfenster loescht
@@ -351,6 +364,67 @@ Workspace::~Workspace()
     m_tunnels.stopAll();  // Weiterleitungen vor dem Sessionende schliessen
     if (m_session)
         m_sessions->close(m_session);
+
+    // Provider NICHT freigeben: Worker-Threads (Transfers, Listings,
+    // Vorschau, Konfliktpruefung) koennen sie nach dem Abbruch noch kurz
+    // benutzen. Interne Zwischenablage leeren, Transfers dieses Tabs abbrechen
+    // und nicht wiederholbar machen, die Objekte dem TransferManager (lebt bis
+    // Programmende) zur Aufbewahrung geben. Die Sitzung ist geschlossen — jeder
+    // spaete Zugriff endet mit einer Fehlermeldung statt auf freiem Speicher.
+    const QSet<const core::FileSystemProvider *> owned = ownedProviders();
+    for (const core::FileSystemProvider *provider : owned)
+        FilePanel::forgetProvider(provider);
+    if (m_transfers) {
+        m_transfers->releaseProviders(owned);
+        // Abbau in umgekehrter Deklarationsreihenfolge: sudo-Dateisysteme
+        // (auch stillgelegte) zeigen auf remoteFs und muessen vorher gehen.
+        struct Remains {
+            std::unique_ptr<core::LocalFileSystem> localFs;
+            std::unique_ptr<core::LocalCommandRunner> localRunner;
+            std::unique_ptr<core::NetworkScanProvider> netFs;
+            std::unique_ptr<net::RemoteCommandRunner> remoteRunner;
+            std::unique_ptr<net::SFTPFileSystem> remoteFs;
+            std::unique_ptr<net::SudoFileSystem> sudoFs;
+            std::vector<RetiredRemote> retired;
+        };
+        auto remains = std::make_shared<Remains>();
+        remains->localFs = std::move(m_localFs);
+        remains->localRunner = std::move(m_localRunner);
+        remains->netFs = std::move(m_netFs);
+        remains->sudoFs = std::move(m_sudoFs);
+        remains->remoteFs = std::move(m_remoteFs);
+        remains->remoteRunner = std::move(m_remoteRunner);
+        remains->retired = std::move(m_retired);
+        m_transfers->keepAlive(std::move(remains));
+    }
+}
+
+QSet<const core::FileSystemProvider *> Workspace::ownedProviders() const
+{
+    QSet<const core::FileSystemProvider *> owned;
+    const auto add = [&owned](const core::FileSystemProvider *p) {
+        if (p)
+            owned.insert(p);
+    };
+    add(m_localFs.get());
+    add(m_netFs.get());
+    add(m_remoteFs.get());
+    add(m_sudoFs.get());
+    for (const RetiredRemote &r : m_retired) {
+        add(r.remoteFs.get());
+        add(r.sudoFs.get());
+    }
+    return owned;
+}
+
+void Workspace::bindDialog(QWidget *dialog)
+{
+    if (!dialog)
+        return;
+    // Bereits geschlossene (geloeschte) Dialoge austragen, damit die Liste
+    // ueber die Laufzeit nicht waechst.
+    m_boundDialogs.removeIf([](const QPointer<QWidget> &p) { return p.isNull(); });
+    m_boundDialogs.append(dialog);
 }
 
 QString Workspace::connectionLabel() const
@@ -465,6 +539,7 @@ void Workspace::disconnectSession()
     }
     m_sessions->close(m_session);
     m_session.reset();
+    ++m_sudoSeq;   // laufende sudo-Einschaltung gilt der alten Sitzung
     m_connectedPanel = nullptr;
     m_connectedConsole = nullptr;
     retireRemoteObjects();
@@ -474,17 +549,55 @@ void Workspace::disconnectSession()
 void Workspace::retireRemoteObjects()
 {
     // Nicht zerstoeren, nur stilllegen — siehe m_retired in der Kopfdatei.
+    // Die interne Zwischenablage zeigt danach auf eine geschlossene Sitzung —
+    // leeren, statt beim Einfuegen einen Fehler zu provozieren.
+    FilePanel::forgetProvider(m_sudoFs.get());
+    FilePanel::forgetProvider(m_remoteFs.get());
     RetiredRemote old;
     old.sudoFs = std::move(m_sudoFs);
     old.remoteFs = std::move(m_remoteFs);
     old.runner = std::move(m_remoteRunner);
     if (old.sudoFs || old.remoteFs || old.runner)
         m_retired.push_back(std::move(old));
-    // Nicht unbegrenzt wachsen lassen: nach so vielen Verbindungswechseln ist
-    // garantiert kein Dialog von damals mehr offen.
+    trimRetired();
+}
+
+void Workspace::retireSudoFs()
+{
+    if (!m_sudoFs)
+        return;
+    // Die Sitzung lebt weiter: ein laufender Transfer ueber sudo darf zu Ende
+    // laufen — deshalb stilllegen statt freigeben.
+    RetiredRemote old;
+    old.sudoFs = std::move(m_sudoFs);
+    m_retired.push_back(std::move(old));
+    trimRetired();
+}
+
+void Workspace::trimRetired()
+{
+    // Nicht unbegrenzt wachsen lassen — aber nur von vorn (aeltester zuerst)
+    // freigeben: ein stillgelegtes sudo-Dateisystem zeigt auf ein remoteFs,
+    // das hoechstens im selben oder einem JUENGEREN Eintrag liegt. Ein Eintrag,
+    // den noch ein Transfer nutzt, haelt alle juengeren mit fest.
     constexpr size_t kKeep = 8;
-    if (m_retired.size() > kKeep)
-        m_retired.erase(m_retired.begin(), m_retired.end() - kKeep);
+    while (m_retired.size() > kKeep) {
+        RetiredRemote &oldest = m_retired.front();
+        QSet<const core::FileSystemProvider *> providers;
+        if (oldest.remoteFs)
+            providers.insert(oldest.remoteFs.get());
+        if (oldest.sudoFs)
+            providers.insert(oldest.sudoFs.get());
+        if (m_transfers && m_transfers->activeJobsFor(providers) > 0)
+            break;
+        for (const core::FileSystemProvider *p : providers)
+            FilePanel::forgetProvider(p);
+        // Abgeschlossene Jobs duerfen den Zeiger danach nicht mehr per
+        // "Wiederholen" benutzen.
+        if (m_transfers)
+            m_transfers->releaseProviders(providers);
+        m_retired.erase(m_retired.begin());
+    }
 }
 
 void Workspace::explainActiveConsoleWithAi()
@@ -743,9 +856,19 @@ void Workspace::setSudoMode(bool on)
         return;
     FilePanel *const panel = m_connectedPanel;  // Pane mit der Verbindung
     const QString keepPath = panel->currentPath();
+    // Jede Umschaltung macht fruehere, noch laufende Einschaltungen ungueltig:
+    // sonst haengt eine verspaetete Antwort sudo ein, obwohl der Chip aus ist.
+    const quint64 seq = ++m_sudoSeq;
     if (!on) {
-        panel->setProvider(m_remoteFs.get(), keepPath);
-        m_sudoFs.reset();
+        // Erst die Panes zurueck auf das normale Remote-Dateisystem stellen
+        // (auch eine zweite Pane, die das sudo-Dateisystem zeigt), dann das
+        // sudo-Dateisystem stilllegen — NICHT freigeben: Transfers, Listings
+        // und Vorschauen koennen es noch benutzen.
+        for (FilePanel *p : {m_leftPanel, m_rightPanel}) {
+            if (p == panel || (m_sudoFs && p->provider() == m_sudoFs.get()))
+                p->setProvider(m_remoteFs.get(), p == panel ? keepPath : p->currentPath());
+        }
+        retireSudoFs();
         emit statusMessage(_t("sudo-Modus aus."));
         return;
     }
@@ -753,11 +876,15 @@ void Workspace::setSudoMode(bool on)
     // NOPASSWD pruefen; sonst das Passwort einmal erfragen (nur im RAM halten).
     net::SSHSessionPtr session = m_session;
     const QString host = session->label();
+    // Gilt die Antwort noch? Weder getrennt/anderer Server noch inzwischen
+    // wieder ausgeschaltet bzw. neu angefordert.
+    const auto stillWanted = [this, session, seq] {
+        return m_session == session && seq == m_sudoSeq;
+    };
     m_bridge->run<bool>(
         [session] { return net::sudoNeedsPassword(session); },
-        [this, session, keepPath, host](bool needsPassword) {
-            // Zwischenzeitlich getrennt oder anderer Server -> nichts tun.
-            if (m_session != session)
+        [this, session, keepPath, host, stillWanted](bool needsPassword) {
+            if (!stillWanted())
                 return;
             if (!needsPassword || session->sudoPassword) {
                 enableSudoFilesystem(keepPath);
@@ -767,6 +894,9 @@ void Workspace::setSudoMode(bool on)
             const QString password = QInputDialog::getText(
                 this, _t("sudo-Passwort"), _t("sudo-Passwort für %1:").arg(host),
                 QLineEdit::Password, QString(), &ok);
+            // Waehrend der Abfrage kann sich der Zustand geaendert haben.
+            if (!stillWanted())
+                return;
             if (!ok || password.isEmpty()) {
                 if (m_connectedPanel) m_connectedPanel->setSudoActive(false);   // Chip zurueckstellen
                 return;
@@ -775,8 +905,8 @@ void Workspace::setSudoMode(bool on)
             // Fenster fuer die Dauer der Runde.
             m_bridge->run<bool>(
                 [session, password] { return net::verifySudoPassword(session, password); },
-                [this, session, password, keepPath](bool accepted) {
-                    if (m_session != session)
+                [this, session, password, keepPath, stillWanted](bool accepted) {
+                    if (!stillWanted())
                         return;
                     if (!accepted) {
                         QMessageBox::warning(this, _t("sudo"),
@@ -787,12 +917,18 @@ void Workspace::setSudoMode(bool on)
                     session->sudoPassword = password;
                     enableSudoFilesystem(keepPath);
                 },
-                [this](const QString &err) {
+                [this, stillWanted](const QString &err) {
+                    if (!stillWanted())
+                        return;
                     QMessageBox::warning(this, _t("sudo"), err);
                     if (m_connectedPanel) m_connectedPanel->setSudoActive(false);
-                });
+                },
+                // owner: der Tab kann bis zur Antwort geschlossen sein.
+                this);
         },
-        [this](const QString &err) {
+        [this, stillWanted](const QString &err) {
+            if (!stillWanted())
+                return;
             QMessageBox::warning(this, _t("sudo"), err);
             if (m_connectedPanel) m_connectedPanel->setSudoActive(false);
         }, this);
@@ -806,6 +942,9 @@ void Workspace::enableSudoFilesystem(const QString &keepPath)
     // und kein Remote-Dateisystem mehr.
     if (!m_session || !m_remoteFs || !m_connectedPanel)
         return;
+    // Ein vorhandenes sudo-Dateisystem nicht per Zuweisung zerstoeren — es
+    // kann noch in Benutzung sein.
+    retireSudoFs();
     m_sudoFs = std::make_unique<net::SudoFileSystem>(m_remoteFs.get(), m_session);
     m_connectedPanel->setProvider(m_sudoFs.get(), keepPath);
     emit statusMessage(_t("sudo-Modus aktiv — Operationen laufen als root."));

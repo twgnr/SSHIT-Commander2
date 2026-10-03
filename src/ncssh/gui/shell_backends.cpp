@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QStandardPaths>
 #include <QMetaObject>
+#include <QStringDecoder>
 #include <chrono>
 #include <thread>
 
@@ -69,6 +70,7 @@ struct LocalShellBackend::Impl {
     HANDLE outRead = nullptr;   // Shell schreibt -> wir lesen
     PROCESS_INFORMATION pi{};
     LPPROC_THREAD_ATTRIBUTE_LIST attrList = nullptr;
+    HANDLE stopEvent = nullptr;   // weckt den Prozess-Waechter beim close()
 #endif
 };
 
@@ -82,6 +84,8 @@ LocalShellBackend::~LocalShellBackend()
     close();
     if (m_thread.joinable())
         m_thread.join();
+    if (m_waitThread.joinable())
+        m_waitThread.join();
 }
 
 void LocalShellBackend::start(int cols, int rows)
@@ -133,6 +137,29 @@ void LocalShellBackend::start(int cols, int rows)
 
     m_alive = true;
     m_thread = std::thread([this] { readLoop(); });
+
+    // Prozess-Waechter: Beendet sich die Shell selbst ("exit"), haelt die
+    // ConPTY die Ausgabe-Pipe offen — ReadFile blockiert bis zum
+    // ClosePseudoConsole, closed() kaeme nie. Der Waechter meldet das Ende;
+    // den Abbau (in der dokumentierten Reihenfolge) macht dann close().
+    m_impl->stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (m_impl->stopEvent) {
+        const HANDLE process = m_impl->pi.hProcess;
+        const HANDLE stop = m_impl->stopEvent;
+        m_waitThread = std::thread([this, process, stop] {
+            const HANDLE handles[2] = {process, stop};
+            const DWORD rc = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+            if (rc != WAIT_OBJECT_0)
+                return;   // close() laeuft oder Fehler: nichts melden
+            // Kurz warten, damit der Lesethread die letzte Ausgabe noch
+            // zustellt; ein close() in dieser Zeit weckt sofort.
+            if (WaitForSingleObject(stop, 150) == WAIT_OBJECT_0)
+                return;
+            if (!m_closing.load())
+                QMetaObject::invokeMethod(this, [this] { emit closed(); },
+                                          Qt::QueuedConnection);
+        });
+    }
 #else
     Q_UNUSED(cols);
     Q_UNUSED(rows);
@@ -146,10 +173,15 @@ void LocalShellBackend::readLoop()
 #ifdef Q_OS_WIN
     char buf[4096];
     DWORD read = 0;
+    // Zustandsbehaftet ueber alle Bloecke: geteilte UTF-8-Zeichen an der
+    // Blockgrenze wurden mit fromUtf8 je Block zu U+FFFD.
+    QStringDecoder decoder(QStringDecoder::Utf8);
     while (m_alive.load()) {
         if (!ReadFile(m_impl->outRead, buf, sizeof(buf), &read, nullptr) || read == 0)
             break;
-        const QString text = QString::fromUtf8(buf, static_cast<int>(read));
+        const QString text = decoder.decode(QByteArrayView(buf, static_cast<qsizetype>(read)));
+        if (text.isEmpty())
+            continue;
         QMetaObject::invokeMethod(this, [this, text] { emit dataReceived(text); },
                                   Qt::QueuedConnection);
     }
@@ -191,6 +223,17 @@ void LocalShellBackend::close()
     if (m_closing.exchange(true))
         return;
 #ifdef Q_OS_WIN
+    // Prozess-Waechter zuerst wecken und einsammeln: er wartet auf
+    // pi.hProcess, das gleich geschlossen wird. Er blockiert nichts weiter,
+    // der Join kehrt also sofort zurueck.
+    if (m_impl->stopEvent)
+        SetEvent(m_impl->stopEvent);
+    if (m_waitThread.joinable() && m_waitThread.get_id() != std::this_thread::get_id())
+        m_waitThread.join();
+    if (m_impl->stopEvent) {
+        CloseHandle(m_impl->stopEvent);
+        m_impl->stopEvent = nullptr;
+    }
     // Reihenfolge gegen den dokumentierten ConPTY-Deadlock: erst den Client
     // beenden, dann die Konsole schliessen, WAEHREND der Lesethread die
     // Ausgabe-Pipe weiter leert (m_alive bleibt so lange true) —
@@ -257,9 +300,15 @@ void RemoteShellBackend::start(const net::SSHSessionPtr &session, int cols, int 
     }
     m_alive = true;
     m_thread = std::thread([this] {
+        // Zustandsbehafteter Dekoder fuer den ganzen Strom: ein UTF-8-Zeichen,
+        // das an einer Blockgrenze geteilt wird, ergab mit fromUtf8 je Block
+        // zwei U+FFFD statt des Zeichens.
+        QStringDecoder decoder(QStringDecoder::Utf8);
         while (m_alive.load()) {
             QByteArray data;
             try {
+                // read() wartet selbst (ohne Session-Lock) auf den Socket und
+                // kehrt nie ohne Pause leer zurueck — kein Leerlauf-Drehen.
                 data = m_shell->read(32768, 100);
             } catch (const std::exception &exc) {
                 if (m_alive.load()) {
@@ -270,15 +319,20 @@ void RemoteShellBackend::start(const net::SSHSessionPtr &session, int cols, int 
                 }
                 break;
             }
-            if (data.isEmpty())
-                continue;
-            const QString text = QString::fromUtf8(data);
-            QMetaObject::invokeMethod(this, [this, text] { emit dataReceived(text); },
-                                      Qt::QueuedConnection);
-            // Winzige Pause zwischen vollen Puffern: der Windows-Mutex ist
-            // nicht fair, bei stroemender Terminalausgabe wuerde die Schleife
-            // sonst alle SFTP-Jobs (Listings, Transfers) verhungern lassen.
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if (!data.isEmpty()) {
+                const QString text = decoder.decode(data);
+                if (!text.isEmpty())
+                    QMetaObject::invokeMethod(this, [this, text] { emit dataReceived(text); },
+                                              Qt::QueuedConnection);
+                // Winzige Pause zwischen vollen Puffern: der Windows-Mutex ist
+                // nicht fair, bei stroemender Terminalausgabe wuerde die Schleife
+                // sonst alle SFTP-Jobs (Listings, Transfers) verhungern lassen.
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            // Kanalende (z. B. "exit"): Schleife beenden, damit closed() kommt.
+            // Frueher lief sie hier ewig weiter und belegte einen Kern.
+            if (m_shell->atEof())
+                break;
         }
         QMetaObject::invokeMethod(this, [this] { emit closed(); }, Qt::QueuedConnection);
     });

@@ -159,10 +159,10 @@ void save(const std::vector<Plugin> &plugins)
     QJsonArray arr;
     for (const auto &p : plugins)
         arr.append(p.toJson());
-    QFile f(pluginsConfigFile());
-    if (!f.open(QIODevice::WriteOnly))
-        throw std::runtime_error("Kann plugins.json nicht schreiben.");
-    f.write(QJsonDocument(arr).toJson(QJsonDocument::Indented));
+    // Atomar (QSaveFile): ein abgebrochener Schreibvorgang darf die
+    // bestehende plugins.json nicht abgeschnitten zuruecklassen.
+    ncssh::atomicWriteText(pluginsConfigFile(),
+                           QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Indented)));
 }
 
 int nextId(const std::vector<Plugin> &plugins)

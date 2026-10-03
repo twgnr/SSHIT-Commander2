@@ -1,4 +1,9 @@
 // Persistente Befehlshistorie + Favoriten (JSON).
+//
+// Jede Konsole und der Verlaufsdialog haben eine eigene Instanz. Damit keine
+// die Aenderungen der anderen mit einem veralteten Stand ueberschreibt, liest
+// jede aendernde Operation die Datei unmittelbar vorher neu ein und speichert
+// danach selbst (read-modify-write) — ein zusaetzliches save() ist unnoetig.
 #pragma once
 
 #include <QString>
@@ -28,6 +33,9 @@ public:
     bool isFavorite(const QString &command) const;
 
 private:
+    // Aktuellen Dateistand vor einer Aenderung holen (Lesefehler -> Speicherstand).
+    void refresh();
+
     QStringList m_history;
     QStringList m_favorites;
 };

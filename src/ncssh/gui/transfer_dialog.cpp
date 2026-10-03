@@ -160,6 +160,7 @@ void TransferDialog::updateButtons()
 {
     const int row = m_table->currentRow();
     QString status;
+    bool restartable = false;
     if (row >= 0 && m_table->item(row, 0)) {
         const int id = m_table->item(row, 0)->data(Qt::UserRole).toInt();
         for (const TransferJob &job : m_manager->jobs()) {
@@ -168,13 +169,16 @@ void TransferDialog::updateButtons()
                 break;
             }
         }
+        // Jobs eines geschlossenen Tabs haben keine Provider mehr — Wiederholen
+        // bzw. Fortsetzen ginge ins Leere.
+        restartable = m_manager->canRestart(id);
     }
     const bool running = status == QLatin1String("running");
     const bool paused = status == QLatin1String("paused");
     const bool failed = status == QLatin1String("error") || status == QLatin1String("cancelled");
-    m_pauseBtn->setEnabled(running || paused);
+    m_pauseBtn->setEnabled(running || (paused && restartable));
     m_cancelBtn->setEnabled(running || paused);
-    m_retryBtn->setEnabled(failed);
+    m_retryBtn->setEnabled(failed && restartable);
 }
 
 int TransferDialog::rowForJob(int jobId) const

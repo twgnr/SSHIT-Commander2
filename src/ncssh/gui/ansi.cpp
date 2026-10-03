@@ -5,7 +5,9 @@
 #include <QFont>
 #include <QPlainTextEdit>
 #include <QRegularExpression>
+#include <QTextBlock>
 #include <QTextCursor>
+#include <algorithm>
 
 namespace ncssh::gui {
 
@@ -16,6 +18,7 @@ static const char *kBase16[] = {
 
 static QColor ansiColor(int n)
 {
+    n = qBound(0, n, 255);  // Riesenwerte liessen (n - 232) * 10 ueberlaufen
     if (n < 16)
         return QColor(QString::fromLatin1(kBase16[qBound(0, n, 15)]));
     if (n < 232) {
@@ -59,6 +62,11 @@ void AnsiRenderer::reset()
     m_bg.reset();
     m_bold = m_italic = m_underline = m_reverse = false;
     m_pendingCr = false;
+    // Parserzustand ebenfalls verwerfen: eine nie beendete OSC wuerde sonst
+    // alle folgende Ausgabe (z.B. die Meldung "Shell beendet") verschlucken.
+    m_carry.clear();
+    m_inString = false;
+    m_stringLen = 0;
 }
 
 QTextCharFormat AnsiRenderer::format() const
@@ -129,7 +137,8 @@ void AnsiRenderer::applySgr(const QString &params)
                 *target = ansiColor(codes[i + 2]);
                 i += 2;
             } else if (i + 4 < codes.size() && codes[i + 1] == 2) {
-                *target = QColor(codes[i + 2], codes[i + 3], codes[i + 4]);
+                *target = QColor(qBound(0, codes[i + 2], 255), qBound(0, codes[i + 3], 255),
+                                 qBound(0, codes[i + 4], 255));
                 i += 4;
             }
         }
@@ -162,7 +171,11 @@ void AnsiRenderer::handleCsi(QTextCursor &cur, const QString &params, QChar fina
 
 void AnsiRenderer::feed(const QString &textIn)
 {
-    QString text = textIn;
+    // Unvollstaendige Sequenz vom letzten Chunk voranstellen. Frueher wurde der
+    // Rest eines Chunks ab einer angeschnittenen Sequenz verworfen, und ein
+    // einzelnes ESC am Chunk-Ende liess die Schleife unten nie fortschreiten.
+    QString text = m_carry + textIn;
+    m_carry.clear();
     QTextCursor cur = m_editor->textCursor();
     cur.movePosition(QTextCursor::End);
 
@@ -178,25 +191,89 @@ void AnsiRenderer::feed(const QString &textIn)
 
     const int n = text.size();
     int i = 0;
+
+    // Zeichenkette einer OSC/DCS/APC/PM/SOS ueberspringen; Ende ist BEL oder
+    // ST (ESC \). Liefert die Position danach; endet der Chunk vorher, bleibt
+    // m_inString gesetzt und es geht im naechsten Chunk weiter.
+    // Sicherung: eine nie abgeschlossene Zeichenkette (z. B. "ESC ]" mitten in
+    // einer per cat ausgegebenen Binaerdatei) verschluckte sonst ALLE folgende
+    // Ausgabe. Nach 4096 Zeichen gilt sie als kaputt und endet; CAN/SUB
+    // brechen sie wie bei echten Terminals ab.
+    constexpr int kMaxStringLen = 4096;
+    const auto skipString = [&](int from) -> int {
+        for (int k = from; k < n; ++k) {
+            const ushort u = text.at(k).unicode();
+            if (u == 0x07) {
+                m_inString = false;
+                return k + 1;
+            }
+            if (u == 0x18 || u == 0x1a) {
+                m_inString = false;
+                return k + 1;
+            }
+            if (++m_stringLen > kMaxStringLen) {
+                m_inString = false;
+                return k;
+            }
+            if (u == 0x1b) {
+                if (k + 1 >= n) {  // ESC am Chunk-Ende: ST erst im naechsten Chunk
+                    m_carry = QStringLiteral("\x1b");
+                    return n;
+                }
+                m_inString = false;
+                // ESC \ ist ST; jedes andere ESC bricht die Zeichenkette ab und
+                // beginnt eine neue Sequenz (wird von der Hauptschleife gelesen).
+                return text.at(k + 1) == QLatin1Char('\\') ? k + 2 : k;
+            }
+        }
+        return n;
+    };
+    if (m_inString)
+        i = skipString(0);
+
     while (i < n) {
         const QChar ch = text.at(i);
-        if (ch == QChar(0x1b) && i + 1 < n) {
+        if (ch == QChar(0x1b)) {
+            if (i + 1 >= n) {  // einzelnes ESC am Chunk-Ende -> auf Rest warten
+                m_carry = text.mid(i);
+                break;
+            }
             const QChar nxt = text.at(i + 1);
             if (nxt == QLatin1Char('[')) {
                 int j = i + 2;
                 while (j < n && !(text.at(j).unicode() >= 0x40 && text.at(j).unicode() <= 0x7e))
                     ++j;
-                if (j >= n)
+                if (j >= n) {
+                    // Angeschnittene CSI zuruecklegen; ueberlange (kaputte)
+                    // Sequenzen verwerfen statt unbegrenzt zu puffern.
+                    if (n - i <= 256)
+                        m_carry = text.mid(i);
                     break;
+                }
                 handleCsi(cur, text.mid(i + 2, j - (i + 2)), text.at(j));
                 i = j + 1;
                 continue;
             }
-            if (nxt == QLatin1Char(']')) {  // OSC (z.B. Titel) -> bis BEL ueberspringen
-                const int k = text.indexOf(QChar(0x07), i);
-                if (k < 0)
+            const ushort nu = nxt.unicode();
+            if (nu == ']' || nu == 'P' || nu == '_' || nu == '^' || nu == 'X') {
+                // OSC (Titel), DCS, APC, PM, SOS -> bis BEL bzw. ST ueberspringen
+                m_inString = true;
+                m_stringLen = 0;
+                i = skipString(i + 2);
+                continue;
+            }
+            if (nu >= 0x20 && nu <= 0x2f) {
+                // ESC + Zwischenbyte + Endbyte, z.B. ESC ( B (Zeichensatz, kommt
+                // von 'tput sgr0') — sonst bliebe ein einzelnes "B" stehen.
+                int j = i + 1;
+                while (j < n && text.at(j).unicode() >= 0x20 && text.at(j).unicode() <= 0x2f)
+                    ++j;
+                if (j >= n) {
+                    if (n - i <= 16)
+                        m_carry = text.mid(i);
                     break;
-                i = k + 1;
+                }
+                i = j + 1;
                 continue;
             }
             i += 2;  // sonstige 2-Zeichen-Escapes verwerfen
@@ -236,7 +313,25 @@ void AnsiRenderer::feed(const QString &textIn)
                 break;
             ++j;
         }
-        cur.insertText(text.mid(i, j - i), format());
+        // Ausgabe ohne Zeilenumbruch (z.B. cat einer Binaerdatei) liess sonst
+        // einen einzigen Block unbegrenzt wachsen — maximumBlockCount greift
+        // dann nicht, und QPlainTextEdit wird quaelend langsam. Ab
+        // kMaxBlockLen Zeichen wird hart umgebrochen.
+        constexpr int kMaxBlockLen = 8192;
+        int from = i;
+        while (from < j) {
+            int room = kMaxBlockLen - (cur.block().length() - 1);
+            if (room <= 0) {
+                newline(cur);
+                continue;
+            }
+            room = std::min(room, j - from);
+            // Surrogatpaar nicht zerschneiden.
+            if (from + room < j && room > 1 && text.at(from + room - 1).isHighSurrogate())
+                --room;
+            cur.insertText(text.mid(from, room), format());
+            from += room;
+        }
         i = j;
     }
     m_editor->setTextCursor(cur);

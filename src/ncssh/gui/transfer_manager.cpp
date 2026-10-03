@@ -1,5 +1,6 @@
 #include "ncssh/gui/transfer_manager.hpp"
 
+#include "ncssh/core/i18n.hpp"
 #include "ncssh/core/settings.hpp"
 
 #include <QElapsedTimer>
@@ -8,6 +9,7 @@
 
 namespace ncssh::gui {
 
+using core::_t;
 using net::TransferJob;
 
 TransferManager::TransferManager(AsyncBridge *bridge, QObject *parent)
@@ -178,8 +180,62 @@ void TransferManager::run(int jobId, bool resume)
 void TransferManager::cancel(int jobId)
 {
     m_pausing.remove(jobId);  // ausdruecklicher Abbruch, nicht Pause
-    if (BridgeTask *task = m_tasks.value(jobId, nullptr))
+    if (BridgeTask *task = m_tasks.value(jobId, nullptr)) {
         m_bridge->cancel(task);
+        return;
+    }
+    // Pausierte Jobs haben keinen Worker mehr — der Abbruch muss den Zustand
+    // selbst setzen, sonst bliebe der Job ewig "pausiert".
+    if (TransferJob *job = find(jobId); job && job->status == QLatin1String("paused")) {
+        job->status = QStringLiteral("cancelled");
+        emit jobUpdated(jobId);
+    }
+}
+
+int TransferManager::activeJobsFor(const QSet<const core::FileSystemProvider *> &providers) const
+{
+    int count = 0;
+    for (const TransferJob &job : m_jobs) {
+        if (job.status != QLatin1String("running") && job.status != QLatin1String("pending")
+            && job.status != QLatin1String("paused"))
+            continue;
+        const auto it = m_params.constFind(job.id);
+        if (it != m_params.constEnd()
+            && (providers.contains(it->src) || providers.contains(it->dst)))
+            ++count;
+    }
+    return count;
+}
+
+void TransferManager::releaseProviders(const QSet<const core::FileSystemProvider *> &providers)
+{
+    if (providers.isEmpty())
+        return;
+    QList<int> affected;
+    for (auto it = m_params.cbegin(); it != m_params.cend(); ++it) {
+        if (providers.contains(it->src) || providers.contains(it->dst))
+            affected << it.key();
+    }
+    for (int jobId : affected) {
+        // Parameter zuerst vergessen: retry()/resumePaused() pruefen genau das.
+        m_params.remove(jobId);
+        m_pausing.remove(jobId);   // ein laufender Pause-Abbruch wird zum Abbruch
+        if (BridgeTask *task = m_tasks.value(jobId, nullptr))
+            m_bridge->cancel(task);   // Worker bricht beim naechsten Fortschritt ab
+        TransferJob *job = find(jobId);
+        if (!job || job->status == QLatin1String("done"))
+            continue;
+        if (job->status == QLatin1String("paused") || job->status == QLatin1String("pending"))
+            job->status = QStringLiteral("cancelled");
+        job->error = _t("Dateisystem nicht mehr verfügbar (Tab geschlossen bzw. getrennt)");
+        emit jobUpdated(jobId);
+    }
+}
+
+void TransferManager::keepAlive(std::shared_ptr<void> holder)
+{
+    if (holder)
+        m_keepAlive.push_back(std::move(holder));
 }
 
 void TransferManager::pause(int jobId)

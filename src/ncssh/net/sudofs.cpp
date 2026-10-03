@@ -96,8 +96,13 @@ std::vector<FileEntry> SudoFileSystem::listDir(const QString &path)
         up.type = EntryType::Parent;
         entries.push_back(up);
     }
+    // "env TZ=UTC0": Zeiten in UTC, damit parseLsLong sie unabhaengig von der
+    // Server-Zeitzone korrekt einordnet (sudo setzt die Umgebung zurueck, ein
+    // direktes "sudo TZ=..." waere je nach sudoers verboten). Literal-Quoting,
+    // damit Namen ohne Anfuehrungszeichen/Escapes erscheinen.
     const QByteArray out =
-        run(QStringLiteral("ls -lnA --time-style=long-iso -- ") + shQuote(path));
+        run(QStringLiteral("env TZ=UTC0 ls -lnA --time-style=long-iso --quoting-style=literal -- ")
+            + shQuote(path));
     std::vector<FileEntry> items = core::parseLsLong(QString::fromUtf8(out));
     std::sort(items.begin(), items.end(), [](const FileEntry &a, const FileEntry &b) {
         if (a.isDir() != b.isDir()) return a.isDir();
@@ -109,13 +114,22 @@ std::vector<FileEntry> SudoFileSystem::listDir(const QString &path)
 
 bool SudoFileSystem::isDir(const QString &path)
 {
+    // Frueher "sudo -n test -d X && echo D || echo F": das "|| echo F" lief
+    // AUSSERHALB von sudo — lehnte sudo ab (Timestamp abgelaufen), endete der
+    // Befehl trotzdem mit Exit 0 und "F", run() frischte nie auf und ein
+    // Ordner galt still als Datei. Jetzt laeuft alles unter sudo in einer
+    // Shell; der Pfad geht als $1 hinein (kein Quoting im Skript noetig).
     const QByteArray out =
-        run(QStringLiteral("test -d ") + shQuote(path) + QStringLiteral(" && echo D || echo F"));
+        run(QStringLiteral("sh -c 'test -d \"$1\" && echo D || echo F' sh ") + shQuote(path));
     return out.trimmed() == "D";
 }
 
 QByteArray SudoFileSystem::readBytes(const QString &path, qint64 maxBytes)
 {
+    // "head -c -N" hiesse bei GNU "alles AUSSER den letzten N Bytes" — ein
+    // negativer Wert (= unbegrenzt) darf daher nie durchgereicht werden.
+    if (maxBytes < 0)
+        return run(QStringLiteral("cat -- ") + shQuote(path));
     return run(QStringLiteral("head -c %1 -- %2").arg(maxBytes).arg(shQuote(path)));
 }
 
@@ -128,7 +142,9 @@ qint64 SudoFileSystem::size(const QString &path)
 {
     try {
         const QByteArray out = run(QStringLiteral("stat -c %s -- ") + shQuote(path));
-        return QString::fromUtf8(out).trimmed().toLongLong();
+        bool ok = false;
+        const qint64 n = QString::fromUtf8(out).trimmed().toLongLong(&ok);
+        return (ok && n >= 0) ? n : 0;
     } catch (...) {
         return 0;
     }
@@ -157,7 +173,9 @@ void SudoFileSystem::remove(const QString &path, bool recursive)
 
 void SudoFileSystem::rename(const QString &oldPath, const QString &newPath)
 {
-    run(QStringLiteral("mv -- %1 %2").arg(shQuote(oldPath), shQuote(newPath)));
+    // -T: ist newPath ein vorhandener Ordner, wuerde "mv a b" sonst nach b/a
+    // verschieben statt umzubenennen (Datei landet an unerwarteter Stelle).
+    run(QStringLiteral("mv -T -- %1 %2").arg(shQuote(oldPath), shQuote(newPath)));
 }
 
 void SudoFileSystem::chmod(const QString &path, quint32 mode)

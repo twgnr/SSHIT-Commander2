@@ -42,23 +42,22 @@ HistoryDialog::HistoryDialog(QWidget *parent) : QDialog(parent)
     auto *insertBtn = new QPushButton(_t("Einfügen"), this);
     insertBtn->setDefault(true);
 
+    // Die Store-Operationen lesen die Datei vorher neu ein und speichern selbst
+    // (andere Konsolen schreiben parallel) — kein zusaetzliches save().
     connect(favBtn, &QPushButton::clicked, this, [this] {
         if (auto *item = m_history->currentItem()) {
             m_store.addFavorite(item->text());
-            m_store.save();
             reload();
         }
     });
     connect(unfavBtn, &QPushButton::clicked, this, [this] {
         if (auto *item = m_favorites->currentItem()) {
             m_store.removeFavorite(item->text());
-            m_store.save();
             reload();
         }
     });
     connect(clearBtn, &QPushButton::clicked, this, [this] {
         m_store.clearHistory();
-        m_store.save();
         reload();
     });
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);

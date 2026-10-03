@@ -59,6 +59,8 @@ public:
 
 signals:
     void shellClosed();
+    // Enter in einem Terminal, dessen Shell beendet ist: neue Shell gewuenscht.
+    void restartRequested();
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
@@ -93,6 +95,7 @@ private:
     AsyncBridge *m_bridge;
     std::unique_ptr<AnsiRenderer> m_renderer;
     ShellBackend *m_backend = nullptr;  // Qt-Parent = this
+    bool m_shellEnded = false;          // Shell hat sich selbst beendet (Enter = Neustart)
     QString m_shellKind;
 
     // Vollwertiger Terminal-Emulator (Zellengitter) fuer den Alternate-Screen.

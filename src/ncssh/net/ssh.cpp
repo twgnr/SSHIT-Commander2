@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QStringDecoder>
 #include <QUrl>
 #include <algorithm>
 #include <cstdlib>
@@ -313,6 +314,17 @@ static QString lastSshError(LIBSSH2_SESSION *session)
     char *msg = nullptr;
     libssh2_session_last_error(session, &msg, nullptr, 0);
     return msg ? QString::fromUtf8(msg) : QStringLiteral("SSH-Fehler");
+}
+
+// Transportfehler, nach denen die Session tot ist. libssh2_channel_read meldet
+// einen solchen Fehler NICHT, sondern liefert 0 (siehe _libssh2_channel_read:
+// "rc != EAGAIN -> return 0"), und libssh2_channel_eof bleibt 0 — ein Leser,
+// der nur auf n/eof schaut, liefe dann endlos. Nur unter dem Session-Mutex rufen.
+static bool transportDead(LIBSSH2_SESSION *session)
+{
+    const int e = libssh2_session_last_errno(session);
+    return e == LIBSSH2_ERROR_SOCKET_DISCONNECT || e == LIBSSH2_ERROR_SOCKET_SEND
+           || e == LIBSSH2_ERROR_SOCKET_RECV;
 }
 
 // Fingerprint: "SHA256:" + Base64(SHA256(hostkey)) ohne Padding.
@@ -1226,30 +1238,42 @@ void SFTPFileSystem::mkdir(const QString &path)
 
 void SFTPFileSystem::remove(const QString &path, bool recursive)
 {
-    std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
+    // Den Session-Mutex NUR je libssh2-Aufruf halten: frueher lief das ganze
+    // rekursive Loeschen eines Baums unter einem Lock — Terminal und Listings
+    // standen so lange still. sftp() bricht ab, sobald die Session schliesst.
+    const QByteArray p = path.toUtf8();
     // lstat statt stat: ein Symlink auf einen Ordner ist KEIN Ordner. Frueher
     // wurde er wie einer behandelt und rekursiv geleert — den Link "www" zu
     // loeschen leerte /var/www. Links werden nur selbst entfernt (unlink).
     LIBSSH2_SFTP_ATTRIBUTES attrs;
-    const bool known =
-        libssh2_sftp_lstat(m_session->sftp(), path.toUtf8().constData(), &attrs) == 0
-        && (attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS);
+    bool known = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
+        known = libssh2_sftp_lstat(m_session->sftp(), p.constData(), &attrs) == 0
+                && (attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS);
+    }
     const bool realDir = known && LIBSSH2_SFTP_S_ISDIR(attrs.permissions);
     if (realDir) {
         if (recursive) {
-            for (const FileEntry &e : listDir(path)) {
+            // Erst die Kinder auflisten (ein Lock-Block in listDir), dann jedes
+            // einzeln mit eigenen kurzen Locks entfernen. Kinder werden im
+            // rekursiven Aufruf wieder per lstat geprueft — Symlinks also nur
+            // selbst geloescht, nie verfolgt.
+            const std::vector<FileEntry> children = listDir(path);
+            for (const FileEntry &e : children) {
                 if (e.type == core::EntryType::Parent)
                     continue;
                 remove(join(path, e.name), true);
             }
-            if (libssh2_sftp_rmdir(m_session->sftp(), path.toUtf8().constData()) != 0)
-                fail(QStringLiteral("Verzeichnis konnte nicht gelöscht werden: %1").arg(path));
-        } else {
-            if (libssh2_sftp_rmdir(m_session->sftp(), path.toUtf8().constData()) != 0)
-                fail(QStringLiteral("Verzeichnis nicht leer oder gesperrt: %1").arg(path));
         }
+        std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
+        if (libssh2_sftp_rmdir(m_session->sftp(), p.constData()) != 0)
+            fail(recursive
+                     ? QStringLiteral("Verzeichnis konnte nicht gelöscht werden: %1").arg(path)
+                     : QStringLiteral("Verzeichnis nicht leer oder gesperrt: %1").arg(path));
     } else {
-        if (libssh2_sftp_unlink(m_session->sftp(), path.toUtf8().constData()) != 0)
+        std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
+        if (libssh2_sftp_unlink(m_session->sftp(), p.constData()) != 0)
             fail(QStringLiteral("Löschen fehlgeschlagen: %1").arg(path));
     }
 }
@@ -1348,34 +1372,41 @@ void SFTPFileSystem::writeText(const QString &path, const QString &content)
 
 void SFTPFileSystem::rename(const QString &oldPath, const QString &newPath)
 {
-    std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
-    LIBSSH2_SFTP *sftp = m_session->sftp();
     const QByteArray from = oldPath.toUtf8();
     const QByteArray to = newPath.toUtf8();
-    // Zuerst direkt versuchen — klappt, wenn das Ziel nicht existiert, und auf
-    // Windows-Servern auch bei reiner Gross-/Kleinschreibung ("Readme" ->
-    // "README"). Frueher wurde das Ziel VORHER geloescht: dort war das die
-    // Datei selbst, und sie war weg.
-    if (libssh2_sftp_rename(sftp, from.constData(), to.constData()) == 0)
-        return;
-    // SFTPv3-Server ueberschreiben nicht. Vorhandenes Ziel erst beiseite
-    // legen und nur nach erfolgreichem Umbenennen entfernen — schlaegt es fehl,
-    // kommt das Ziel zurueck.
-    LIBSSH2_SFTP_ATTRIBUTES attrs;
-    if (libssh2_sftp_lstat(sftp, to.constData(), &attrs) != 0)
-        fail(QStringLiteral("Umbenennen fehlgeschlagen: %1 → %2").arg(oldPath, newPath));
-    const QByteArray backup =
-        (newPath + QStringLiteral(".sshit-bak-%1").arg(QDateTime::currentMSecsSinceEpoch())).toUtf8();
-    if (libssh2_sftp_rename(sftp, to.constData(), backup.constData()) != 0)
-        fail(QStringLiteral("Umbenennen fehlgeschlagen (Ziel nicht ersetzbar): %1").arg(newPath));
-    if (libssh2_sftp_rename(sftp, from.constData(), to.constData()) != 0) {
-        libssh2_sftp_rename(sftp, backup.constData(), to.constData());   // Ziel zurueck
-        fail(QStringLiteral("Umbenennen fehlgeschlagen: %1 → %2").arg(oldPath, newPath));
+    QByteArray backup;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
+        LIBSSH2_SFTP *sftp = m_session->sftp();
+        // Zuerst direkt versuchen — klappt, wenn das Ziel nicht existiert, und auf
+        // Windows-Servern auch bei reiner Gross-/Kleinschreibung ("Readme" ->
+        // "README"). Frueher wurde das Ziel VORHER geloescht: dort war das die
+        // Datei selbst, und sie war weg.
+        if (libssh2_sftp_rename(sftp, from.constData(), to.constData()) == 0)
+            return;
+        // SFTPv3-Server ueberschreiben nicht. Vorhandenes Ziel erst beiseite
+        // legen und nur nach erfolgreichem Umbenennen entfernen — schlaegt es fehl,
+        // kommt das Ziel zurueck.
+        LIBSSH2_SFTP_ATTRIBUTES attrs;
+        if (libssh2_sftp_lstat(sftp, to.constData(), &attrs) != 0)
+            fail(QStringLiteral("Umbenennen fehlgeschlagen: %1 → %2").arg(oldPath, newPath));
+        backup = (newPath + QStringLiteral(".sshit-bak-%1")
+                                .arg(QDateTime::currentMSecsSinceEpoch())).toUtf8();
+        if (libssh2_sftp_rename(sftp, to.constData(), backup.constData()) != 0)
+            fail(QStringLiteral("Umbenennen fehlgeschlagen (Ziel nicht ersetzbar): %1").arg(newPath));
+        if (libssh2_sftp_rename(sftp, from.constData(), to.constData()) != 0) {
+            libssh2_sftp_rename(sftp, backup.constData(), to.constData());   // Ziel zurueck
+            fail(QStringLiteral("Umbenennen fehlgeschlagen: %1 → %2").arg(oldPath, newPath));
+        }
+        if (!(LIBSSH2_SFTP_S_ISDIR(attrs.permissions)
+              && (attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS))) {
+            libssh2_sftp_unlink(sftp, backup.constData());
+            return;
+        }
     }
-    if (LIBSSH2_SFTP_S_ISDIR(attrs.permissions) && (attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS))
-        remove(QString::fromUtf8(backup), true);
-    else
-        libssh2_sftp_unlink(sftp, backup.constData());
+    // Ersetzter Ordner: ausserhalb des Locks entfernen — remove() sperrt je
+    // Einzelaufruf selbst, ein grosser Baum blockiert so nicht die Session.
+    remove(QString::fromUtf8(backup), true);
 }
 
 void SFTPFileSystem::symlink(const QString &target, const QString &linkPath)
@@ -1489,11 +1520,17 @@ void RemoteCommandRunner::stream(const QString &command, const QString &cwd,
 {
     lastExitStatus.reset();
     const QString full = wrap(command, cwd);
-    LIBSSH2_SESSION *sess = m_session->raw();
-    const int sock = m_session->socket();
+    LIBSSH2_SESSION *sess = nullptr;
+    int sock = -1;
     LIBSSH2_CHANNEL *channel = nullptr;
     {
         std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
+        // Nach close() ist raw() == nullptr — lastSshError(nullptr) wuerde
+        // dereferenzieren. Deshalb vor jedem Kanal-Aufbau pruefen.
+        sess = m_session->raw();
+        if (m_session->closing || !sess)
+            fail("Sitzung geschlossen.");
+        sock = m_session->socket();
         channel = libssh2_channel_open_session(sess);
         if (!channel)
             fail(QStringLiteral("Kanal konnte nicht geöffnet werden: %1").arg(lastSshError(sess)));
@@ -1502,8 +1539,11 @@ void RemoteCommandRunner::stream(const QString &command, const QString &cwd,
             fail(QStringLiteral("Befehl fehlgeschlagen: %1").arg(lastSshError(sess)));
         }
     }
-    QByteArray pending;
-    const auto flush = [&](bool all) {
+    // stdout und stderr getrennt puffern: sonst entstuenden aus zwei halben
+    // Zeilen der beiden Stroeme gemischte Zeilen.
+    QByteArray pendingOut;
+    QByteArray pendingErr;
+    const auto flush = [&](QByteArray &pending, bool all) {
         int idx;
         while ((idx = pending.indexOf('\n')) >= 0) {
             QByteArray raw = pending.left(idx);
@@ -1517,14 +1557,18 @@ void RemoteCommandRunner::stream(const QString &command, const QString &cwd,
         }
     };
     char buf[16384];
+    char ebuf[16384];
     bool cancelled = false;
+    bool broken = false;
     for (;;) {
         if (cancel && cancel->isCancelled()) { cancelled = true; break; }
         // Lock nur fuer den einzelnen Lesezugriff halten und die Session danach
         // wieder blockierend hinterlassen — sonst stehen SFTP-Listings und
         // Transfers, bis der Befehl beendet ist.
         ssize_t n;
+        ssize_t e;
         bool eof;
+        bool dead;
         int dir;
         {
             std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
@@ -1536,48 +1580,59 @@ void RemoteCommandRunner::stream(const QString &command, const QString &cwd,
             }
             libssh2_session_set_blocking(sess, 0);
             n = libssh2_channel_read(channel, buf, sizeof(buf));
+            // stderr IMMER mitlesen: libssh2_channel_eof meldet erst dann EOF,
+            // wenn auch kein stderr-Paket mehr ansteht. Wurde stderr nicht
+            // geleert (z. B. "ls /gibtsnicht"), lieferte read() 0 bei eof 0 —
+            // die Schleife drehte endlos unter dem (unfairen) Session-Mutex.
+            e = libssh2_channel_read_stderr(channel, ebuf, sizeof(ebuf));
             eof = libssh2_channel_eof(channel) != 0;
+            dead = n <= 0 && e <= 0 && !eof && transportDead(sess);
             dir = libssh2_session_block_directions(sess);
             libssh2_session_set_blocking(sess, 1);
         }
-        if (n == LIBSSH2_ERROR_EAGAIN) {
-            if (eof)
-                break;
-            waitSocketDir(sock, dir, 200);
-            continue;
+        if (n > 0) {
+            pendingOut.append(buf, n);
+            flush(pendingOut, false);
         }
-        if (n < 0)
-            break;
-        if (n == 0) {
-            if (eof)
-                break;
-            continue;
+        if (e > 0) {
+            pendingErr.append(ebuf, e);
+            flush(pendingErr, false);
         }
-        pending.append(buf, n);
-        flush(false);
+        if (n > 0 || e > 0)
+            continue;   // Fortschritt: sofort weiterlesen
+        if ((n < 0 && n != LIBSSH2_ERROR_EAGAIN) || (e < 0 && e != LIBSSH2_ERROR_EAGAIN)
+            || dead) {
+            broken = true;
+            break;      // echter Fehler
+        }
+        if (eof)
+            break;      // beide Stroeme leer und Gegenseite fertig
+        // Nichts gelesen: OHNE Lock auf den Socket warten statt zu drehen.
+        waitSocketDir(sock, dir, 200);
     }
     {
         std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
         if (m_session->closing || m_session->raw() != sess) {
             lastExitStatus = -1;   // Kanal gehoert der sterbenden Session
         } else {
-            // stderr nachziehen
+            // Rest von stderr nachziehen (nur was schon da ist, nicht warten)
             libssh2_session_set_blocking(sess, 0);
             for (;;) {
-                const ssize_t e = libssh2_channel_read_stderr(channel, buf, sizeof(buf));
-                if (e == LIBSSH2_ERROR_EAGAIN) break;
+                const ssize_t e = libssh2_channel_read_stderr(channel, ebuf, sizeof(ebuf));
                 if (e <= 0) break;
-                pending.append(buf, e);
+                pendingErr.append(ebuf, e);
             }
             libssh2_session_set_blocking(sess, 1);
             if (cancelled)
                 libssh2_channel_send_eof(channel);
             libssh2_channel_close(channel);
-            lastExitStatus = cancelled ? -1 : libssh2_channel_get_exit_status(channel);
+            lastExitStatus = (cancelled || broken) ? -1
+                                                   : libssh2_channel_get_exit_status(channel);
             libssh2_channel_free(channel);
         }
     }
-    flush(true);
+    flush(pendingOut, true);
+    flush(pendingErr, true);
 }
 
 std::optional<QString> RemoteCommandRunner::resolveDir(const QString &cwd, const QString &target)
@@ -1603,11 +1658,16 @@ void RemoteCommandRunner::runTerminal(const QString &command, const QString &cwd
     const QString prefix =
         QStringLiteral("export PAGER=cat GIT_PAGER=cat SYSTEMD_PAGER=cat 2>/dev/null; ");
     const QString full = prefix + wrap(command, cwd);
-    LIBSSH2_SESSION *sess = m_session->raw();
-    const int sock = m_session->socket();
+    LIBSSH2_SESSION *sess = nullptr;
+    int sock = -1;
     LIBSSH2_CHANNEL *channel = nullptr;
     {
         std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
+        // Geschlossene Session: raw() == nullptr (lastSshError wuerde abstuerzen).
+        sess = m_session->raw();
+        if (m_session->closing || !sess)
+            fail("Sitzung geschlossen.");
+        sock = m_session->socket();
         channel = libssh2_channel_open_session(sess);
         if (!channel)
             fail(QStringLiteral("Kanal konnte nicht geöffnet werden: %1").arg(lastSshError(sess)));
@@ -1619,12 +1679,21 @@ void RemoteCommandRunner::runTerminal(const QString &command, const QString &cwd
     }
     char buf[8192];
     bool cancelled = false;
+    bool broken = false;
+    // Zustandsbehafteter Dekoder: ein an der Blockgrenze geteiltes UTF-8-
+    // Zeichen wuerde sonst zu zwei U+FFFD.
+    QStringDecoder decoder(QStringDecoder::Utf8);
     for (;;) {
         if (cancel && cancel->isCancelled()) { cancelled = true; break; }
-        // Wie in stream(): Lock nur je Lesezugriff, warten ohne Lock.
+        // Wie in stream(): Lock nur je Lesezugriff, warten ohne Lock. stderr
+        // wird mitgelesen (ein PTY mischt es meist ein, aber nicht zwingend) —
+        // sonst maskiert ungelesenes stderr das EOF und die Schleife dreht.
         ssize_t n;
+        ssize_t e;
         bool eof;
+        bool dead;
         int dir;
+        char ebuf[4096];
         {
             std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
             if (m_session->closing || m_session->raw() != sess) {
@@ -1633,29 +1702,35 @@ void RemoteCommandRunner::runTerminal(const QString &command, const QString &cwd
             }
             libssh2_session_set_blocking(sess, 0);
             n = libssh2_channel_read(channel, buf, sizeof(buf));
+            e = libssh2_channel_read_stderr(channel, ebuf, sizeof(ebuf));
             eof = libssh2_channel_eof(channel) != 0;
+            dead = n <= 0 && e <= 0 && !eof && transportDead(sess);
             dir = libssh2_session_block_directions(sess);
             libssh2_session_set_blocking(sess, 1);
         }
-        if (n == LIBSSH2_ERROR_EAGAIN) {
-            if (eof)
-                break;
-            waitSocketDir(sock, dir, 200);
+        if (n > 0)
+            onChunk(QString(decoder.decode(QByteArrayView(buf, n))));
+        if (e > 0)
+            onChunk(QString(decoder.decode(QByteArrayView(ebuf, e))));
+        if (n > 0 || e > 0)
             continue;
+        if ((n < 0 && n != LIBSSH2_ERROR_EAGAIN) || (e < 0 && e != LIBSSH2_ERROR_EAGAIN)
+            || dead) {
+            broken = true;
+            break;
         }
-        if (n <= 0) {
-            if (eof)
-                break;
-            continue;
-        }
-        onChunk(QString::fromUtf8(buf, n));
+        if (eof)
+            break;
+        waitSocketDir(sock, dir, 200);
     }
     std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
     if (m_session->closing || m_session->raw() != sess) {
         lastExitStatus = -1;   // Kanal raeumt libssh2_session_free mit ab
         return;
     }
-    if (!cancelled)
+    if (broken)
+        lastExitStatus = -1;
+    else if (!cancelled)
         lastExitStatus = libssh2_channel_get_exit_status(channel);
     else
         libssh2_channel_send_eof(channel);
@@ -1671,6 +1746,9 @@ std::unique_ptr<RemoteShell> RemoteShell::open(SSHSessionPtr session, int cols, 
 {
     std::lock_guard<std::recursive_mutex> lock(session->mutex());
     LIBSSH2_SESSION *sess = session->raw();
+    // Geschlossene Session: raw() == nullptr (lastSshError wuerde abstuerzen).
+    if (session->closing || !sess)
+        fail("Sitzung geschlossen.");
     LIBSSH2_CHANNEL *channel = libssh2_channel_open_session(sess);
     if (!channel)
         fail(QStringLiteral("Shell-Kanal konnte nicht geöffnet werden: %1").arg(lastSshError(sess)));
@@ -1691,10 +1769,12 @@ RemoteShell::~RemoteShell()
 
 void RemoteShell::close()
 {
+    // m_closed/m_channel nur unter dem Session-Mutex aendern: read() laeuft
+    // parallel im Lesethread und prueft m_channel unter demselben Lock.
+    std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
     if (m_closed || !m_channel)
         return;
     m_closed = true;
-    std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
     auto *channel = static_cast<LIBSSH2_CHANNEL *>(m_channel);
     // Nur auf einer lebenden Session aufraeumen — sonst uebernimmt
     // libssh2_session_free den Kanal.
@@ -1707,26 +1787,27 @@ void RemoteShell::close()
 
 void RemoteShell::write(const QByteArray &data)
 {
-    if (m_closed || !m_channel)
-        return;
-    auto *channel = static_cast<LIBSSH2_CHANNEL *>(m_channel);
     qint64 sent = 0;
     while (sent < data.size()) {
         // Lock nur je Schreibversuch; das Warten auf den Socket laeuft ohne
         // Lock, sonst steht waehrenddessen die ganze Session.
         ssize_t n;
         int dir = 0;
+        int sock = -1;
         {
             std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
-            if (m_session->closing || !m_session->raw())
+            // Kanal unter dem Lock pruefen: close() kann ihn parallel freigeben.
+            if (m_session->closing || !m_session->raw() || m_closed || !m_channel)
                 return;
+            auto *channel = static_cast<LIBSSH2_CHANNEL *>(m_channel);
             libssh2_session_set_blocking(m_session->raw(), 0);
             n = libssh2_channel_write(channel, data.constData() + sent, data.size() - sent);
             dir = libssh2_session_block_directions(m_session->raw());
             libssh2_session_set_blocking(m_session->raw(), 1);
+            sock = m_session->socket();
         }
         if (n == LIBSSH2_ERROR_EAGAIN) {
-            waitSocketDir(m_session->socket(), dir, 200);
+            waitSocketDir(sock, dir, 200);
             continue;
         }
         if (n < 0)
@@ -1737,42 +1818,80 @@ void RemoteShell::write(const QByteArray &data)
 
 QByteArray RemoteShell::read(int maxBytes, int timeoutMs)
 {
-    if (m_closed || !m_channel)
+    if (m_eof)
         return {};
     QByteArray out(maxBytes, Qt::Uninitialized);
     ssize_t n;
+    bool eof = false;
+    QString error;
     int dir = 0;
+    int sock = -1;
     {
         std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
         // Session schliesst: den Lesethread des Terminals kontrolliert beenden
         // (der Backend-Thread faengt die Ausnahme und stellt den Betrieb ein).
         if (m_session->closing || !m_session->raw())
             fail("Sitzung geschlossen.");
+        // Per close() geschlossen: wie Kanalende behandeln.
+        if (m_closed || !m_channel) {
+            m_eof = true;
+            return {};
+        }
         auto *channel = static_cast<LIBSSH2_CHANNEL *>(m_channel);
-        libssh2_session_set_blocking(m_session->raw(), 0);
+        LIBSSH2_SESSION *sess = m_session->raw();
+        libssh2_session_set_blocking(sess, 0);
         n = libssh2_channel_read(channel, out.data(), maxBytes);
+        if (n == 0 || n == LIBSSH2_ERROR_EAGAIN) {
+            // stdout leer: auch stderr leeren. Ungelesenes stderr haelt
+            // libssh2_channel_eof auf 0, read() liefert dann 0 — frueher eine
+            // Endlosschleife ohne Pause unter dem Session-Mutex.
+            const ssize_t e = libssh2_channel_read_stderr(channel, out.data(), maxBytes);
+            if (e > 0 || (e < 0 && e != LIBSSH2_ERROR_EAGAIN))
+                n = e;
+        }
+        eof = libssh2_channel_eof(channel) != 0;
+        if (n < 0 && n != LIBSSH2_ERROR_EAGAIN)
+            error = lastSshError(sess);
+        else if (n == 0 && !eof && transportDead(sess))
+            error = lastSshError(sess);
         // Blockrichtung noch unter dem Lock abfragen — waitSocket ohne Lock
         // waere ein Data Race mit parallelen libssh2-Aufrufen.
-        dir = libssh2_session_block_directions(m_session->raw());
-        libssh2_session_set_blocking(m_session->raw(), 1);
+        dir = libssh2_session_block_directions(sess);
+        libssh2_session_set_blocking(sess, 1);
+        sock = m_session->socket();
+    }
+    if (!error.isEmpty()) {
+        // Echter Fehler: Kanal ist nicht mehr nutzbar — Lesethread beenden.
+        m_eof = true;
+        fail(error);
+    }
+    if (n > 0) {
+        out.resize(n);
+        // eof ist erst 1, wenn nichts mehr ansteht — die Daten gehen also
+        // vollstaendig raus, danach meldet atEof() das Ende.
+        m_eof = eof;
+        return out;
+    }
+    if (eof) {
+        // Gegenseite fertig (z. B. "exit"): Ende melden statt weiter zu pollen.
+        m_eof = true;
+        return {};
     }
     if (n == LIBSSH2_ERROR_EAGAIN) {
         // Lock zwischen den Poll-Zyklen freigeben, damit SFTP parallel laeuft.
-        waitSocketDir(m_session->socket(), dir, timeoutMs);
+        waitSocketDir(sock, dir, timeoutMs);
         return {};
     }
-    if (n <= 0)
-        return {};
-    out.resize(n);
-    return out;
+    // n == 0 ohne EOF und ohne erkennbaren Fehler: kein Fortschritt. Nie ohne
+    // Pause zurueckkehren, sonst dreht der Aufrufer unter dem unfairen Mutex.
+    std::this_thread::sleep_for(std::chrono::milliseconds(qBound(1, timeoutMs, 20)));
+    return {};
 }
 
 void RemoteShell::resize(int cols, int rows)
 {
-    if (m_closed || !m_channel)
-        return;
     std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
-    if (m_session->closing || !m_session->raw())
+    if (m_session->closing || !m_session->raw() || m_closed || !m_channel)
         return;
     auto *channel = static_cast<LIBSSH2_CHANNEL *>(m_channel);
     libssh2_channel_request_pty_size(channel, cols, rows);

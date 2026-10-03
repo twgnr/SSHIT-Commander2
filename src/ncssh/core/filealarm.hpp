@@ -71,6 +71,20 @@ std::vector<std::tuple<QString, QString, bool>> diffSnapshots(
     const Snapshot &oldSnap, const Snapshot &newSnap,
     bool onCreated = true, bool onModified = true, bool onDeleted = true);
 
+// Baut aus der Befehlsvorlage einer Alarm-Aktion die Shell-Kommandozeile.
+// Die Platzhalter {path} {kind} {name} werden NICHT durch ihre Werte ersetzt,
+// sondern durch Verweise auf die Umgebungsvariablen ALARM_PATH/ALARM_KIND/
+// ALARM_NAME (Windows: !ALARM_PATH! — nur mit cmd /v:on gueltig; sonst
+// "${ALARM_PATH}"). Grund: Dateinamen kommen u.U. von einem fremden Server;
+// ein Name wie `x & calc.exe` wuerde woertlich eingesetzt als Befehl laufen.
+// Verzoegerte Expansion setzt den Wert erst NACH dem Parsen von & | < > ^ ( )
+// ein — er bleibt reiner Text. {count} ist eine Zahl und wird direkt ersetzt.
+QString alarmShellCommand(const QString &actionCmd, int count);
+
+// Die Umgebungsvariablen fuer alarmShellCommand (Name -> Wert).
+QHash<QString, QString> alarmEnvironment(const QString &kind, const QString &path,
+                                         const QString &name, int count);
+
 std::vector<AlarmSpec> loadAlarms();
 void saveAlarms(const std::vector<AlarmSpec> &alarms);
 

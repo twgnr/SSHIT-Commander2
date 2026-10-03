@@ -42,6 +42,9 @@ private:
     AsyncBridge *m_bridge;
     core::ProfileStore m_store;
     std::optional<core::ServerProfile> m_chosen;
+    // Name des ins Formular geladenen Profils (leer = neues Profil). Weicht
+    // der Name beim Speichern ab, ist das eine Umbenennung — kein neues Profil.
+    QString m_loadedName;
 
     QLineEdit *m_filter = nullptr;
     QListWidget *m_list = nullptr;

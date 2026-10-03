@@ -191,6 +191,28 @@ std::vector<RenamePair> planSafeOrder(const std::vector<RenamePair> &pairs,
     return ops;
 }
 
+void applyRenamePlan(const std::vector<RenamePair> &steps,
+                     const std::function<void(const QString &, const QString &)> &rename)
+{
+    size_t done = 0;
+    try {
+        for (; done < steps.size(); ++done)
+            rename(steps[done].first, steps[done].second);
+    } catch (...) {
+        // Rueckwaerts zuruecknehmen: so landet auch ein schon in den
+        // Temp-Namen verschobener Eintrag wieder unter seinem alten Namen.
+        // Fehler beim Zuruecknehmen schlucken — gemeldet wird der Ursprung.
+        while (done > 0) {
+            --done;
+            try {
+                rename(steps[done].second, steps[done].first);
+            } catch (...) {
+            }
+        }
+        throw;
+    }
+}
+
 QString wildcardToRegex(const QString &pattern)
 {
     QString out;

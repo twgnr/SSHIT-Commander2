@@ -144,6 +144,62 @@ std::vector<std::tuple<QString, QString, bool>> diffSnapshots(
     return events;
 }
 
+QString alarmShellCommand(const QString &actionCmd, int count)
+{
+    // Platzhalter -> Variablenverweis (nie der Wert selbst, siehe Header).
+    const auto ref = [](const char *var) {
+#ifdef Q_OS_WIN
+        // Mit cmd /v:on: Ersetzung erst nach dem Parsen der Befehlszeile.
+        return QStringLiteral("!%1!").arg(QLatin1String(var));
+#else
+        // In sh werden Parameterwerte nie erneut als Befehl ausgewertet.
+        return QStringLiteral("\"${%1}\"").arg(QLatin1String(var));
+#endif
+    };
+    QString cmd = actionCmd.trimmed();
+#ifdef Q_OS_WIN
+    // Mit /v:on bekaeme ein woertliches "!" der Vorlage ("echo Achtung! {path}")
+    // eine Sonderbedeutung und verschluckte den eingesetzten Pfad; in
+    // Anfuehrungszeichen wuerde zudem "^" entfernt. Beide deshalb ebenfalls
+    // ueber Variablen einsetzen. Ausserhalb von Anfuehrungszeichen bleibt "^"
+    // unangetastet: dort ist es das vom Nutzer gewollte Escape-Zeichen.
+    {
+        QString escaped;
+        bool inQuotes = false;
+        for (const QChar c : std::as_const(cmd)) {
+            if (c == QLatin1Char('"'))
+                inQuotes = !inQuotes;
+            if (c == QLatin1Char('!'))
+                escaped += QStringLiteral("!ALARM_EXCL!");
+            else if (c == QLatin1Char('^') && inQuotes)
+                escaped += QStringLiteral("!ALARM_CARET!");
+            else
+                escaped += c;
+        }
+        cmd = escaped;
+    }
+#endif
+    cmd.replace(QStringLiteral("{path}"), ref("ALARM_PATH"));
+    cmd.replace(QStringLiteral("{kind}"), ref("ALARM_KIND"));
+    cmd.replace(QStringLiteral("{name}"), ref("ALARM_NAME"));
+    cmd.replace(QStringLiteral("{count}"), QString::number(count));
+    return cmd;
+}
+
+QHash<QString, QString> alarmEnvironment(const QString &kind, const QString &path,
+                                         const QString &name, int count)
+{
+    return {
+        {QStringLiteral("ALARM_PATH"), path},
+        {QStringLiteral("ALARM_KIND"), kind},
+        {QStringLiteral("ALARM_NAME"), name},
+        {QStringLiteral("ALARM_COUNT"), QString::number(count)},
+        // Woertliche Sonderzeichen der Vorlage (siehe alarmShellCommand).
+        {QStringLiteral("ALARM_EXCL"), QStringLiteral("!")},
+        {QStringLiteral("ALARM_CARET"), QStringLiteral("^")},
+    };
+}
+
 std::vector<AlarmSpec> loadAlarms()
 {
     std::vector<AlarmSpec> out;

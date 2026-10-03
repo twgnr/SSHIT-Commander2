@@ -8,6 +8,7 @@
 #include <QHash>
 #include <QObject>
 #include <QSet>
+#include <memory>
 #include <vector>
 
 namespace ncssh::gui {
@@ -33,6 +34,22 @@ public:
 
     const std::vector<net::TransferJob> &jobs() const { return m_jobs; }
 
+    // --- Provider-Lebensdauer ---
+    // Jobs halten nur rohe Provider-Zeiger; die Provider gehoeren den Tabs.
+    // Laufende, wartende oder pausierte Jobs, die einen der Provider nutzen
+    // (als Quelle ODER Ziel — Drag & Drop geht auch ueber Tab-Grenzen).
+    int activeJobsFor(const QSet<const core::FileSystemProvider *> &providers) const;
+    // Der Tab bzw. die Verbindung verschwindet: laufende Jobs dieser Provider
+    // abbrechen, pausierte als abgebrochen markieren und ALLE ihre Parameter
+    // vergessen — Wiederholen/Fortsetzen ist danach nicht mehr moeglich.
+    void releaseProviders(const QSet<const core::FileSystemProvider *> &providers);
+    // false, wenn der Job nicht mehr neu gestartet werden kann (Provider weg).
+    bool canRestart(int jobId) const { return m_params.contains(jobId); }
+    // Haelt Provider-Objekte eines geschlossenen Tabs bis zum Programmende am
+    // Leben: Worker-Threads (Transfers, Listings, Vorschau) koennen sie nach
+    // dem Abbruch noch kurz benutzen — freigeben waere ein Use-after-free.
+    void keepAlive(std::shared_ptr<void> holder);
+
 signals:
     void jobAdded(int jobId);
     void jobUpdated(int jobId);
@@ -55,6 +72,7 @@ private:
     QHash<int, BridgeTask *> m_tasks;
     QSet<int> m_pausing;  // Jobs, deren Abbruch als "pausiert" (nicht "abgebrochen") gilt
     int m_counter = 0;
+    std::vector<std::shared_ptr<void>> m_keepAlive;   // Provider geschlossener Tabs
 };
 
 } // namespace ncssh::gui

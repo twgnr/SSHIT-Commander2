@@ -7,9 +7,33 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <algorithm>
+#include <functional>
 #include <stdexcept>
 
 namespace ncssh::core {
+
+// Rekursiver Durchlauf, der NICHT in Symlinks oder NTFS-Junctions absteigt.
+// QDirIterator::Subdirectories folgt Junctions (Qt sieht sie nicht als Symlink):
+// Zyklen (Junction auf einen Vorfahren) liefen endlos, Ziele ausserhalb des
+// Baums wurden mitgezaehlt bzw. doppelt gezaehlt. visit() erhaelt jeden
+// Eintrag (auch Link-Ordner, nur ohne Abstieg); false bricht ab.
+static void walkNoLinks(const QString &root, const std::function<bool(const QFileInfo &)> &visit)
+{
+    QStringList pending{root};
+    while (!pending.isEmpty()) {
+        const QString dir = pending.takeLast();
+        QDirIterator it(dir, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden
+                                 | QDir::System);
+        while (it.hasNext()) {
+            it.next();
+            const QFileInfo fi = it.fileInfo();
+            if (!visit(fi))
+                return;
+            if (fi.isDir() && !fi.isSymLink() && !fi.isJunction())
+                pending.append(fi.filePath());
+        }
+    }
+}
 
 // Vom Entpacken unterstuetzte Endungen (laengere zuerst).
 static const QStringList kArchiveExts = {
@@ -60,14 +84,13 @@ int extractArchive(const QString &archive, const QString &destDir)
         throw std::runtime_error(("Entpacken fehlgeschlagen: "
                                   + QString::fromLocal8Bit(proc.readAllStandardError()))
                                      .toStdString());
-    // Anzahl Eintraege: entpackte Dateien zaehlen (best-effort).
+    // Anzahl Eintraege: entpackte Dateien zaehlen (best-effort; ohne Links zu
+    // folgen — ein Archiv kann Symlinks auf beliebige Ziele enthalten).
     int count = 0;
-    QDirIterator it(destDir, QDir::AllEntries | QDir::NoDotAndDotDot,
-                    QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
+    walkNoLinks(destDir, [&count](const QFileInfo &) {
         ++count;
-    }
+        return true;
+    });
     return count;
 }
 
@@ -102,8 +125,17 @@ int makeZip(const QString &archive, const QString &baseDir, const QStringList &n
     QProcess proc;
     proc.setWorkingDirectory(baseDir);
     QStringList args{QStringLiteral("-a"), QStringLiteral("-c"), QStringLiteral("-f"),
-                     QFileInfo(archive).absoluteFilePath()};
-    args += names;
+                     QFileInfo(archive).absoluteFilePath(), QStringLiteral("--")};
+    // Dateinamen duerfen nie als Option gelesen werden ("-C", "--exclude=*"):
+    // "--" beendet die Optionen. bsdtar wertet "@name" aber auch danach noch
+    // als "Inhalt eines anderen Archivs uebernehmen" aus — solche Namen (und
+    // zur Sicherheit auch "-...") daher als "./name" uebergeben.
+    for (const QString &name : names) {
+        if (name.startsWith(QLatin1Char('@')) || name.startsWith(QLatin1Char('-')))
+            args << QStringLiteral("./") + name;
+        else
+            args << name;
+    }
     proc.start(QStringLiteral("tar"), args);
     if (!proc.waitForStarted(5000))
         throw std::runtime_error("Konnte 'tar' nicht starten (fuer ZIP-Erstellung).");
@@ -118,10 +150,14 @@ int makeZip(const QString &archive, const QString &baseDir, const QStringList &n
     int count = 0;
     for (const QString &name : names) {
         const QString full = baseDir + QLatin1Char('/') + name;
-        if (QFileInfo(full).isDir()) {
-            QDirIterator it(full, QDir::Files, QDirIterator::Subdirectories);
-            while (it.hasNext()) { it.next(); ++count; }
-        } else if (QFileInfo::exists(full)) {
+        const QFileInfo top(full);
+        if (top.isDir() && !top.isSymLink() && !top.isJunction()) {
+            walkNoLinks(full, [&count](const QFileInfo &fi) {
+                if (fi.isFile())
+                    ++count;
+                return true;
+            });
+        } else if (top.exists() || top.isSymLink()) {
             ++count;
         }
     }
@@ -131,15 +167,14 @@ int makeZip(const QString &archive, const QString &baseDir, const QStringList &n
 DirStats dirStats(const QString &path, int limitEntries)
 {
     DirStats out;
-    QDirIterator it(path, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
-                    QDirIterator::Subdirectories);
     int seen = 0;
-    while (it.hasNext()) {
-        it.next();
-        const QFileInfo fi = it.fileInfo();
+    const QDir base(path);
+    // Ohne Symlinks/Junctions zu folgen (siehe walkNoLinks): sonst Zyklen und
+    // doppelt gezaehlte Groessen.
+    walkNoLinks(path, [&](const QFileInfo &fi) -> bool {
         if (fi.isDir()) {
             ++out.dirs;
-            continue;
+            return true;
         }
         ++out.files;
         const qint64 sz = fi.size();
@@ -157,7 +192,7 @@ DirStats dirStats(const QString &path, int limitEntries)
             out.topExt.emplace_back(ext, 1);
         const QDateTime mt = fi.lastModified();
         const QDateTime ct = fi.birthTime().isValid() ? fi.birthTime() : fi.metadataChangeTime();
-        const QString rel = QDir(path).relativeFilePath(fi.filePath());
+        const QString rel = base.relativeFilePath(fi.filePath());
         if (!out.newestModified || mt > out.newestModified->second)
             out.newestModified = {rel, mt};
         if (!out.oldestModified || mt < out.oldestModified->second)
@@ -168,9 +203,10 @@ DirStats dirStats(const QString &path, int limitEntries)
             out.largest = {rel, sz};
         if (++seen >= limitEntries) {
             out.truncated = true;
-            break;
+            return false;
         }
-    }
+        return true;
+    });
     std::sort(out.topExt.begin(), out.topExt.end(),
               [](const auto &a, const auto &b) {
                   if (a.second != b.second) return a.second > b.second;
@@ -185,15 +221,19 @@ std::pair<qint64, bool> dirSize(const QString &path, int limitEntries)
 {
     qint64 total = 0;
     int seen = 0;
-    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::System,
-                    QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
-        total += it.fileInfo().size();
-        if (++seen >= limitEntries)
-            return {total, true};
-    }
-    return {total, false};
+    bool truncated = false;
+    // Ohne Symlinks/Junctions zu folgen (siehe walkNoLinks).
+    walkNoLinks(path, [&](const QFileInfo &fi) -> bool {
+        if (fi.isDir())
+            return true;
+        total += fi.size();
+        if (++seen >= limitEntries) {
+            truncated = true;
+            return false;
+        }
+        return true;
+    });
+    return {total, truncated};
 }
 
 } // namespace ncssh::core

@@ -147,6 +147,12 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     // Seite 2: interaktives Terminal (echtes PTY)
     m_terminal = new TerminalWidget(bridge, m_stack);
     m_stack->addWidget(m_terminal);
+    // Beendete Shell: Enter im Terminal startet eine neue (lokal bzw. ueber
+    // die aktuelle Session) — switchToTerminal startet nur, wenn keine laeuft.
+    connect(m_terminal, &TerminalWidget::restartRequested, this, [this] {
+        if (m_stack->currentWidget() == m_terminal)
+            switchToTerminal();
+    });
 
     m_historyStore.load();
     m_history = m_historyStore.history();
@@ -267,10 +273,8 @@ void ConsolePanel::runCommand(const QString &command, bool execute)
         if (command.trimmed().isEmpty())
             return;
         m_terminal->sendText(execute ? command + QStringLiteral("\r") : command);
-        if (execute) {
-            m_historyStore.add(command);
-            m_historyStore.save();
-        }
+        if (execute)
+            m_historyStore.add(command);  // liest neu ein und speichert selbst
         m_terminal->setFocus();
         return;
     }
@@ -314,12 +318,22 @@ void ConsolePanel::runCommand(const QString &command, bool execute)
     core::CommandRunner *runner = m_runner;
     const QString cwd = m_cwd;
     setBusy(true);
+    // Laufnummer: Rueckrufe eines abgebrochenen, aelteren Befehls kommen erst
+    // spaeter an und duerfen m_running/den Status des NEUEN Befehls nicht
+    // zuruecksetzen (sonst war er nicht mehr stoppbar, und ein dritter Befehl
+    // durfte parallel starten).
+    const quint64 seq = ++m_runSeq;
     m_running = m_bridge->stream(
         [runner, command, cwd](const AsyncBridge::EmitLine &emit, const CancelTokenPtr &cancel) {
             runner->stream(command, cwd, [&emit](const QString &line) { emit(line); }, cancel);
         },
-        [this](const QString &line) { appendOutput(line); },
-        [this, runner] {
+        [this, seq](const QString &line) {
+            if (seq == m_runSeq)   // Nachzuegler eines abgebrochenen Befehls verwerfen
+                appendOutput(line);
+        },
+        [this, runner, seq] {
+            if (seq != m_runSeq)
+                return;
             m_running = nullptr;
             setBusy(false);
             // Exit-Code anzeigen, sofern der Runner ihn geliefert hat.
@@ -331,7 +345,9 @@ void ConsolePanel::runCommand(const QString &command, bool execute)
             else
                 m_status->setText(_t("✓ fertig"));
         },
-        [this](const QString &err) {
+        [this, seq](const QString &err) {
+            if (seq != m_runSeq)
+                return;
             m_running = nullptr;
             setBusy(false);
             // Vom Nutzer gestoppt ist kein Fehler — die Meldung aus
@@ -370,8 +386,9 @@ void ConsolePanel::submit()
     m_input->clear();
     m_history.append(command);
     m_historyPos = m_history.size();
+    // add() liest die Datei neu ein und speichert selbst — ein eigenes save()
+    // schriebe sonst womoeglich einen veralteten Stand zurueck.
     m_historyStore.add(command);
-    m_historyStore.save();
     runCommand(command, true);
 }
 

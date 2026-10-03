@@ -11,7 +11,9 @@
 #include <QDialog>
 #include <QJsonObject>
 #include <QPushButton>
+#include <QStringList>
 #include <functional>
+#include <memory>
 #include <vector>
 
 class QGridLayout;
@@ -26,6 +28,9 @@ class QDockWidget;
 class QCloseEvent;
 
 namespace ncssh::gui {
+
+// Weiterleitung von Worker-Threads in den GUI-Thread (siehe .cpp).
+struct MacroGuiGate;
 
 // Eine Taste im Raster: eigenes Zeichnen (Icon + Beschriftung) und
 // Unterscheidung zwischen kurzem Klick und langem Halten.
@@ -92,7 +97,20 @@ private:
     void onTileHeld(int index);
     void runKey(const QJsonObject &config, int index);
     // Sequenz: jeder Schritt erst nach Abschluss des vorherigen.
-    void runSteps(std::vector<QJsonObject> steps, const QString &keyId);
+    void runSteps(std::vector<QJsonObject> steps, const QString &keyId, int index);
+    // Eine einzelne Aktion: Navigation und GUI-Aktionen im GUI-Thread, alles
+    // andere im Worker. done(ok) kommt danach im GUI-Thread (darf leer sein).
+    void runAction(const QString &type, const QJsonValue &payload, const QString &keyId,
+                   int index, std::function<void(bool)> done);
+    void navigate(const QString &type, const QJsonValue &payload);
+    // Aktionen mit gui=true (Bildschirmfoto, Mehrzustands-Taste, Befehlsauswahl,
+    // Zwischenablage-Verlauf).
+    void runGuiAction(const QString &type, const QJsonValue &payload, const QString &keyId,
+                      int index, std::function<void(bool)> done);
+    bool takeScreenshot(const QString &folder);
+    // Beschriftung des naechsten Zustands einer Mehrzustands-Taste (leer = keine).
+    QString toggleStateLabel(const QJsonValue &payload, const QString &keyId);
+    void onClipboardChanged();
     void exportLayers();
     void importLayers();
     void toggleMode(bool runMode);
@@ -111,7 +129,11 @@ private:
 
     AsyncBridge *m_bridge;
     core::macros::MacroConfig m_config;
-    core::macroactions::ExecContext m_context;
+    // Geteilt mit laufenden Workern: ein Job darf den Dialog ueberleben, ohne
+    // auf freigegebenen Kontext zuzugreifen.
+    std::shared_ptr<core::macroactions::ExecContext> m_context;
+    std::shared_ptr<MacroGuiGate> m_gate;
+    QStringList m_clipHistory;       // zuletzt kopierte Texte (neueste zuerst)
     QString m_currentLayer;
     QStringList m_layerHistory;      // fuer "Zurueck"
     bool m_runMode = false;

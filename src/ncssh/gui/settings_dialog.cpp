@@ -261,13 +261,13 @@ QWidget *SettingsDialog::buildAiTab()
     m_aiModel = new QComboBox(page);
     m_aiModel->setEditable(true);
     m_aiModel->setCurrentText(m_aiModels.value(QStringLiteral("ollama")));
-    auto *loadBtn = new QPushButton(_t("Modelle laden"), page);
-    connect(loadBtn, &QPushButton::clicked, this, &SettingsDialog::loadAiModels);
-    auto *testBtn = new QPushButton(_t("Verbindung testen"), page);
-    connect(testBtn, &QPushButton::clicked, this, &SettingsDialog::testAiConnection);
+    m_aiLoadBtn = new QPushButton(_t("Modelle laden"), page);
+    connect(m_aiLoadBtn, &QPushButton::clicked, this, &SettingsDialog::loadAiModels);
+    m_aiTestBtn = new QPushButton(_t("Verbindung testen"), page);
+    connect(m_aiTestBtn, &QPushButton::clicked, this, &SettingsDialog::testAiConnection);
     modelRow->addWidget(m_aiModel, 1);
-    modelRow->addWidget(loadBtn);
-    modelRow->addWidget(testBtn);
+    modelRow->addWidget(m_aiLoadBtn);
+    modelRow->addWidget(m_aiTestBtn);
     form->addRow(_t("Modell"), modelRow);
 
     m_aiStatus = new QLabel(page);
@@ -386,18 +386,17 @@ void SettingsDialog::testAiConnection()
         return;
     }
     m_aiStatus->setText(_t("Teste Verbindung …"));
-    QCoreApplication::processEvents();
-    try {
-        const QStringList ids = net::cloudListModels(
-            net::CloudTarget{m_aiShownProvider, m_aiUrls.value(m_aiShownProvider),
-                             m_aiModels.value(m_aiShownProvider),
-                             m_aiKeys.value(m_aiShownProvider)});
-        m_aiStatus->setText(_t("✓ Verbunden mit %1 — %2 Modell(e) verfügbar.")
-                                .arg(core::aiProviderName(m_aiShownProvider))
-                                .arg(ids.size()));
-    } catch (const std::exception &exc) {
-        m_aiStatus->setText(QStringLiteral("✗ %1").arg(QString::fromUtf8(exc.what())));
-    }
+    const QString provider = m_aiShownProvider;
+    const net::CloudTarget target{provider, m_aiUrls.value(provider),
+                                  m_aiModels.value(provider), m_aiKeys.value(provider)};
+    runAiJob(
+        [target]() -> QVariant { return net::cloudListModels(target); },
+        [this, provider](const QVariant &result) {
+            m_aiStatus->setText(_t("✓ Verbunden mit %1 — %2 Modell(e) verfügbar.")
+                                    .arg(core::aiProviderName(provider))
+                                    .arg(result.toStringList().size()));
+        },
+        [this](const QString &err) { m_aiStatus->setText(QStringLiteral("✗ %1").arg(err)); });
 }
 
 void SettingsDialog::loadAiModels()
@@ -408,20 +407,66 @@ void SettingsDialog::loadAiModels()
         return;
     }
     m_aiStatus->setText(_t("Lade Modelle …"));
-    QCoreApplication::processEvents();
-    try {
-        const QStringList ids = net::cloudListModels(
-            net::CloudTarget{m_aiShownProvider, m_aiUrls.value(m_aiShownProvider),
-                             m_aiModels.value(m_aiShownProvider),
-                             m_aiKeys.value(m_aiShownProvider)});
-        const QString keep = m_aiModel->currentText();
-        m_aiModel->clear();
-        m_aiModel->addItems(ids);
-        m_aiModel->setCurrentText(keep.isEmpty() && !ids.isEmpty() ? ids.first() : keep);
-        m_aiStatus->setText(_t("✓ %1 Modell(e) verfügbar.").arg(ids.size()));
-    } catch (const std::exception &exc) {
-        m_aiStatus->setText(QStringLiteral("✗ %1").arg(QString::fromUtf8(exc.what())));
+    const QString provider = m_aiShownProvider;
+    const net::CloudTarget target{provider, m_aiUrls.value(provider),
+                                  m_aiModels.value(provider), m_aiKeys.value(provider)};
+    runAiJob(
+        [target]() -> QVariant { return net::cloudListModels(target); },
+        [this](const QVariant &result) {
+            const QStringList ids = result.toStringList();
+            const QString keep = m_aiModel->currentText();
+            m_aiModel->clear();
+            m_aiModel->addItems(ids);
+            m_aiModel->setCurrentText(keep.isEmpty() && !ids.isEmpty() ? ids.first() : keep);
+            m_aiStatus->setText(_t("✓ %1 Modell(e) verfügbar.").arg(ids.size()));
+        },
+        [this](const QString &err) { m_aiStatus->setText(QStringLiteral("✗ %1").arg(err)); });
+}
+
+void SettingsDialog::runAiJob(std::function<QVariant()> job,
+                              std::function<void(const QVariant &)> onDone,
+                              std::function<void(const QString &)> onError)
+{
+    // Die Aufrufe blockieren bis zum Timeout (Cloud 15 s) — im GUI-Thread
+    // fror die ganze App so lange ein. Waehrend des Laufs Knoepfe und die
+    // Anbieterwahl sperren: das Ergebnis gehoert zum angezeigten Anbieter.
+    setAiBusy(true);
+    if (!m_bridge) {
+        // Ohne Bridge (Tests) synchron wie bisher.
+        try {
+            const QVariant result = job();
+            setAiBusy(false);
+            onDone(result);
+        } catch (const std::exception &exc) {
+            setAiBusy(false);
+            onError(QString::fromUtf8(exc.what()));
+        }
+        return;
     }
+    // owner = this: schliesst der Nutzer den Dialog vorher, laufen die
+    // Rueckrufe nicht mehr (sie fassen Widgets dieses Dialogs an).
+    m_bridge->run<QVariant>(
+        std::move(job),
+        [this, onDone](const QVariant &result) {
+            setAiBusy(false);
+            onDone(result);
+        },
+        [this, onError](const QString &err) {
+            setAiBusy(false);
+            if (err == QLatin1String("cancelled"))
+                m_aiStatus->setText(_t("Abgebrochen."));
+            else
+                onError(err);
+        }, this);
+}
+
+void SettingsDialog::setAiBusy(bool busy)
+{
+    m_aiJobs = qMax(0, m_aiJobs + (busy ? 1 : -1));
+    const bool idle = m_aiJobs == 0;
+    m_aiLoadBtn->setEnabled(idle);
+    m_aiTestBtn->setEnabled(idle);
+    m_aiProvider->setEnabled(idle);
 }
 
 void SettingsDialog::startPull()
@@ -590,6 +635,14 @@ void SettingsDialog::importConfig()
             this, _t("Konfiguration importieren"),
             _t("Übernommen: %1\n\nDie Anwendung sollte neu gestartet werden.")
                 .arg(applied.join(QStringLiteral(", "))));
+        // Der Import hat settings.json bereits geschrieben. Die Felder dieses
+        // Dialogs zeigen noch die ALTEN Werte — ein spaeteres "Speichern"
+        // schriebe sie zurueck und machte den Import still rueckgaengig.
+        // Daher sofort schliessen, OHNE save(): accept() (statt reject()),
+        // damit das Hauptfenster Theme/Kuerzel aus den importierten Werten
+        // neu anwendet.
+        if (!applied.isEmpty())
+            accept();
     } catch (const std::exception &exc) {
         QMessageBox::warning(this, _t("Import fehlgeschlagen"), QString::fromUtf8(exc.what()));
     }
@@ -644,56 +697,72 @@ QWidget *SettingsDialog::buildShortcutsTab()
 void SettingsDialog::testOllama()
 {
     m_aiStatus->setText(_t("Teste Verbindung …"));
-    try {
-        const QString v = net::version(m_aiUrl->text().trimmed());
-        m_aiStatus->setText(_t("✓ Verbunden mit Ollama %1").arg(v));
-    } catch (const std::exception &exc) {
-        Q_UNUSED(exc);
-        m_aiStatus->setText(
-            _t("✗ Ollama nicht erreichbar. Dienst starten oder von ollama.com installieren."));
-    }
+    const QString baseUrl = m_aiUrl->text().trimmed();
+    runAiJob(
+        [baseUrl]() -> QVariant { return net::version(baseUrl); },
+        [this](const QVariant &result) {
+            m_aiStatus->setText(_t("✓ Verbunden mit Ollama %1").arg(result.toString()));
+        },
+        [this](const QString &) {
+            m_aiStatus->setText(
+                _t("✗ Ollama nicht erreichbar. Dienst starten oder von ollama.com installieren."));
+        });
 }
 
 void SettingsDialog::loadOllamaModels()
 {
-    try {
-        const auto models = net::listModels(m_aiUrl->text().trimmed());
-        const QString keep = m_aiModel->currentText();
-        m_aiModel->clear();
-        for (const QJsonObject &m : models)
-            m_aiModel->addItem(m.value(QStringLiteral("name")).toString());
-        if (!keep.isEmpty())
-            m_aiModel->setCurrentText(keep);
-        if (models.empty())
-            m_aiStatus->setText(_t("Verbunden, aber kein Modell installiert — unten laden."));
-        else
-            m_aiStatus->setText(_t("✓ %1 Modell(e) verfügbar.").arg(models.size()));
-    } catch (const std::exception &exc) {
-        Q_UNUSED(exc);
-        m_aiStatus->setText(
-            _t("✗ Ollama nicht erreichbar. Dienst starten oder von ollama.com installieren."));
-    }
+    const QString baseUrl = m_aiUrl->text().trimmed();
+    runAiJob(
+        [baseUrl]() -> QVariant {
+            // Nur die Namen ueber die Thread-Grenze reichen.
+            QStringList names;
+            for (const QJsonObject &m : net::listModels(baseUrl))
+                names << m.value(QStringLiteral("name")).toString();
+            return names;
+        },
+        [this](const QVariant &result) {
+            const QStringList names = result.toStringList();
+            const QString keep = m_aiModel->currentText();
+            m_aiModel->clear();
+            m_aiModel->addItems(names);
+            if (!keep.isEmpty())
+                m_aiModel->setCurrentText(keep);
+            if (names.isEmpty())
+                m_aiStatus->setText(_t("Verbunden, aber kein Modell installiert — unten laden."));
+            else
+                m_aiStatus->setText(_t("✓ %1 Modell(e) verfügbar.").arg(names.size()));
+        },
+        [this](const QString &) {
+            m_aiStatus->setText(
+                _t("✗ Ollama nicht erreichbar. Dienst starten oder von ollama.com installieren."));
+        });
 }
 
 void SettingsDialog::save()
 {
-    // Tastenkuerzel auf Dubletten pruefen
+    // Tastenkuerzel auf Dubletten pruefen — in Normalform verglichen, sonst
+    // galten "ctrl+p" und "Ctrl+P" als verschieden, obwohl Qt beide gleich
+    // bindet (und dann KEINES ausloest). Die fest verdrahteten Kuerzel des
+    // Hauptfensters gehoeren mit in die Pruefung.
     QHash<QString, QString> mapping;
-    QHash<QString, QString> seen;  // Kuerzel -> Aktion
+    QHash<QString, QString> seen;  // normalisiertes Kuerzel -> Aktion
+    for (const auto &[fixedKey, fixedLabel] : core::fixedShortcuts())
+        seen.insert(core::normalizeShortcut(fixedKey), fixedLabel);
     for (int r = 0; r < m_shortcuts->rowCount(); ++r) {
         const QString id = m_shortcuts->item(r, 1)->data(Qt::UserRole).toString();
         const QString key = m_shortcuts->item(r, 2)->text().trimmed();
         mapping.insert(id, key);
         if (key.isEmpty())
             continue;
-        if (seen.contains(key)) {
+        const QString norm = core::normalizeShortcut(key);
+        if (seen.contains(norm)) {
             QMessageBox::warning(
                 this, _t("Doppeltes Kürzel"),
-                QStringLiteral("\"%1\" ist doppelt vergeben (%2 und %3).")
-                    .arg(key, seen.value(key), m_shortcuts->item(r, 1)->text()));
+                _t("\"%1\" ist doppelt vergeben (%2 und %3).")
+                    .arg(key, seen.value(norm), m_shortcuts->item(r, 1)->text()));
             return;
         }
-        seen.insert(key, m_shortcuts->item(r, 1)->text());
+        seen.insert(norm, m_shortcuts->item(r, 1)->text());
     }
 
     // Sprachwechsel merken (wird erst nach Neustart wirksam).
@@ -747,9 +816,21 @@ void SettingsDialog::save()
             QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
         accept();
         if (choice == QMessageBox::Yes) {
-            // Neue Instanz starten (ohne Programmpfad-Argument), dann beenden.
-            QProcess::startDetached(QApplication::applicationFilePath(),
-                                    QApplication::arguments().mid(1));
+            // Erst das Hauptfenster regulaer schliessen: sein closeEvent fragt
+            // nach ungespeicherten Editoren und sichert session_tabs. Lehnt es
+            // ab (Nutzer bricht ab), bleibt diese Instanz einfach offen — vorher
+            // lief dann trotzdem eine zweite.
+            QWidget *mainWindow = parentWidget() ? parentWidget()->window() : nullptr;
+            if (mainWindow && !mainWindow->close())
+                return;
+            // Neue Instanz erst starten, wenn diese wirklich endet (aboutToQuit)
+            // — nicht schon vor dem Sichern. Einmalige Verbindung.
+            const QString program = QApplication::applicationFilePath();
+            const QStringList args = QApplication::arguments().mid(1);
+            QObject::connect(
+                qApp, &QCoreApplication::aboutToQuit, qApp,
+                [program, args] { QProcess::startDetached(program, args); },
+                Qt::SingleShotConnection);
             QApplication::quit();
         }
         return;

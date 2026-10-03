@@ -61,6 +61,19 @@ void HistoryStore::save() const
         QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Indented)));
 }
 
+void HistoryStore::refresh()
+{
+    // Andere Instanzen (weitere Konsolen, Verlaufsdialog) koennen die Datei
+    // seit unserem letzten Laden geaendert haben. Ohne Neuladen schrieb jede
+    // Instanz ihren alten Schnappschuss zurueck: Favoriten/Leeren aus dem
+    // Dialog gingen verloren, Befehle anderer Konsolen fielen heraus.
+    try {
+        load();
+    } catch (const std::exception &) {
+        // Datei gerade nicht lesbar -> mit dem Speicherstand weiterarbeiten.
+    }
+}
+
 // --- Historie --------------------------------------------------------------
 
 void HistoryStore::add(const QString &command)
@@ -68,6 +81,7 @@ void HistoryStore::add(const QString &command)
     const QString cmd = command.trimmed();
     if (cmd.isEmpty())
         return;
+    refresh();
     if (!m_history.isEmpty() && m_history.last() == cmd)
         return;  // keine direkten Dubletten
     m_history.append(cmd);
@@ -78,6 +92,7 @@ void HistoryStore::add(const QString &command)
 
 void HistoryStore::clearHistory()
 {
+    refresh();  // Favoriten anderer Instanzen erhalten
     m_history.clear();
     save();
 }
@@ -87,7 +102,10 @@ void HistoryStore::clearHistory()
 void HistoryStore::addFavorite(const QString &command)
 {
     const QString cmd = command.trimmed();
-    if (!cmd.isEmpty() && !m_favorites.contains(cmd)) {
+    if (cmd.isEmpty())
+        return;
+    refresh();
+    if (!m_favorites.contains(cmd)) {
         m_favorites.append(cmd);
         save();
     }
@@ -95,6 +113,7 @@ void HistoryStore::addFavorite(const QString &command)
 
 void HistoryStore::removeFavorite(const QString &command)
 {
+    refresh();
     if (m_favorites.removeOne(command))
         save();
 }

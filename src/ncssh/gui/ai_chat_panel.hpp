@@ -31,6 +31,9 @@ private:
     QJsonArray m_messages;
     QString m_pending;              // Antwort im Aufbau
     BridgeTask *m_task = nullptr;
+    // Kennung des aktuellen Laufs; Stop erhoeht sie, damit Chunks und das
+    // spaete failed("cancelled") des gestoppten Laufs ignoriert werden.
+    quint64 m_generation = 0;
 
     QTextBrowser *m_view = nullptr;
     QLineEdit *m_input = nullptr;

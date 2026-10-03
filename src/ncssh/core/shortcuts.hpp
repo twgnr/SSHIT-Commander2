@@ -12,6 +12,7 @@
 #include <QHash>
 #include <QString>
 #include <QStringList>
+#include <utility>
 #include <vector>
 
 namespace ncssh::core {
@@ -39,5 +40,15 @@ QHash<QString, QString> getShortcuts();
 void saveShortcuts(const QHash<QString, QString> &mapping);
 
 QString labelFor(const QString &sid);
+
+// Vergleichsform eines Kuerzels: "ctrl+p", "Ctrl+P" und " CTRL + p " ergeben
+// dasselbe (QKeySequence-PortableText). Leer bleibt leer; Unparsebares wird
+// klein geschrieben ohne Leerzeichen zurueckgegeben.
+QString normalizeShortcut(const QString &key);
+
+// Fest verdrahtete, nicht konfigurierbare Kuerzel des Hauptfensters
+// (Kuerzel, Bezeichnung) — fuer die Dublettenpruefung der Einstellungen.
+// Muss zu den setShortcut-Aufrufen in main_window.cpp passen.
+std::vector<std::pair<QString, QString>> fixedShortcuts();
 
 } // namespace ncssh::core

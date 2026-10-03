@@ -45,26 +45,45 @@ FileDiffDialog::FileDiffDialog(AsyncBridge *bridge,
     connect(closeBtn, &QPushButton::clicked, this, &QDialog::accept);
     layout->addWidget(closeBtn);
 
-    // Beide Dateien im Worker lesen, dann rendern.
-    bridge->run<QPair<QString, QString>>(
-        [provA, pathA, provB, pathB] {
-            return QPair<QString, QString>(provA->readText(pathA, 2'000'000),
-                                           provB->readText(pathB, 2'000'000));
+    // Lesen UND Vergleichen im Worker: der Diff grosser Dateien kostet
+    // Sekunden — im GUI-Thread fror das Fenster ein, und ein bad_alloc im
+    // Slot beendete die App. Fehler (auch bad_alloc) kommen hier als onError an.
+    const QString nameA = m_nameA;
+    const QString nameB = m_nameB;
+    bridge->run<DiffResult>(
+        [provA, pathA, provB, pathB, nameA, nameB] {
+            const QString textA = provA->readText(pathA, 2'000'000);
+            const QString textB = provB->readText(pathB, 2'000'000);
+            DiffResult res;
+            res.rows = core::unified(textA, textB, nameA, nameB, 3, &res.approximate);
+            return res;
         },
-        [this](const QPair<QString, QString> &texts) { render(texts.first, texts.second); },
+        [this](const DiffResult &res) { render(res); },
         [this](const QString &err) { m_status->setText(err); }, this);
 }
 
-void FileDiffDialog::render(const QString &textA, const QString &textB)
+void FileDiffDialog::render(const DiffResult &res)
 {
-    const auto rows = core::unified(textA, textB, m_nameA, m_nameB);
+    const auto &rows = res.rows;
     if (rows.empty()) {
         m_status->setText(_t("Die Dateien sind identisch."));
         return;
     }
+    // Anzeige deckeln: Hunderttausende farbige Zeilen einzeln einzufuegen
+    // blockiert den GUI-Thread genauso wie frueher der Diff selbst.
+    constexpr size_t kMaxShownRows = 100'000;
     QTextCursor cur = m_view->textCursor();
+    cur.beginEditBlock();
     int added = 0, removed = 0;
+    size_t shown = 0;
     for (const auto &[line, kind] : rows) {
+        if (kind == QLatin1String("add"))
+            ++added;
+        else if (kind == QLatin1String("del"))
+            ++removed;
+        if (shown >= kMaxShownRows)
+            continue;   // weiter zaehlen, aber nicht mehr anzeigen
+        ++shown;
         QTextCharFormat fmt;
         if (kind == QLatin1String("hdr")) {
             fmt.setForeground(QColor(QStringLiteral("#8b90a0")));
@@ -73,15 +92,19 @@ void FileDiffDialog::render(const QString &textA, const QString &textB)
             fmt.setForeground(QColor(QStringLiteral("#4f8cff")));
         } else if (kind == QLatin1String("add")) {
             fmt.setForeground(QColor(QStringLiteral("#3fb950")));
-            ++added;
         } else if (kind == QLatin1String("del")) {
             fmt.setForeground(QColor(QStringLiteral("#ef4444")));
-            ++removed;
         }
         cur.insertText(line + QLatin1Char('\n'), fmt);
     }
+    if (shown < rows.size())
+        cur.insertText(QStringLiteral("… (%1 / %2)\n").arg(qulonglong(shown)).arg(qulonglong(rows.size())));
+    cur.endEditBlock();
     m_view->moveCursor(QTextCursor::Start);
-    m_status->setText(QStringLiteral("+%1 / -%2 Zeilen").arg(added).arg(removed));
+    QString status = QStringLiteral("+%1 / -%2 Zeilen").arg(added).arg(removed);
+    if (res.approximate)
+        status += QStringLiteral(" — ") + _t("Dateien zu groß für Detailvergleich");
+    m_status->setText(status);
 }
 
 } // namespace ncssh::gui

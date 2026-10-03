@@ -424,8 +424,11 @@ void BulkRenameDialog::runRenames(const std::vector<RenamePair> &steps, int coun
                         _t("„%1“ existiert bereits im Ordner (nicht ausgewählt) — es wurde "
                            "nichts umbenannt.").arg(to).toStdString());
             }
-            for (const auto &[from, to] : steps)
-                provider->rename(provider->join(dir, from), provider->join(dir, to));
+            // Schlaegt ein Schritt fehl, werden die erledigten rueckwaerts
+            // zurueckgenommen — kein halber Stand, keine Temp-Namen-Reste.
+            core::applyRenamePlan(steps, [provider, dir](const QString &f, const QString &t) {
+                provider->rename(provider->join(dir, f), provider->join(dir, t));
+            });
         },
         [onDone, count] { onDone(count); },
         [this, button](const QString &err) {

@@ -217,6 +217,20 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
         // ihm zerstoert — ihre Aenderungen waeren weg.
         if (!closeDirtyEditors(w))
             return;
+        // Laufende/pausierte Uebertragungen, die Dateisysteme dieses Tabs
+        // nutzen (auch als Ziel eines Drags aus einem anderen Tab), wuerden mit
+        // ihm abgebrochen und koennten nicht mehr fortgesetzt werden — fragen.
+        if (auto *ws = qobject_cast<Workspace *>(w)) {
+            const int active = m_transfers->activeJobsFor(ws->ownedProviders());
+            if (active > 0
+                && QMessageBox::question(
+                       this, _t("Übertragungen laufen"),
+                       _t("%1 Übertragung(en) dieses Tabs laufen noch oder sind pausiert.\n"
+                          "Abbrechen und Tab schließen?")
+                           .arg(active))
+                       != QMessageBox::Yes)
+                return;
+        }
         // Offene Verbindungen nicht stillschweigend kappen.
         if (auto *ws = qobject_cast<Workspace *>(w); ws && ws->isConnected()) {
             if (QMessageBox::question(
@@ -1112,9 +1126,13 @@ void MainWindow::openSearch(const QString &mode)
     const QString root = usable ? panel->currentPath() : QDir::homePath();
     auto *dlg = new SearchDialog(m_bridge, mode, root, this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
-    connect(dlg, &QDialog::accepted, this, [dlg, panel] {
-        if (!dlg->chosenPath().isEmpty())
-            panel->navigateTo(QFileInfo(dlg->chosenPath()).path());
+    // Der Dialog lebt laenger als ein Tab-Schliessen: an den Tab binden und
+    // die Ziel-Pane nur ueber QPointer ansprechen.
+    ws->bindDialog(dlg);
+    const QPointer<FilePanel> target(panel);
+    connect(dlg, &QDialog::accepted, this, [dlg, target] {
+        if (target && !dlg->chosenPath().isEmpty())
+            target->navigateTo(QFileInfo(dlg->chosenPath()).path());
     });
     dlg->show();
 }
@@ -1171,6 +1189,7 @@ void MainWindow::openFileDiff()
     }
     auto *dlg = new FileDiffDialog(m_bridge, provA, pathA, provB, pathB, this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
+    ws->bindDialog(dlg);   // haelt Provider-Zeiger des Tabs -> schliesst mit ihm
     dlg->show();
 }
 
@@ -1215,12 +1234,19 @@ void MainWindow::openDirDiff()
                                ws->rightPanel()->provider(), ws->rightPanel()->currentPath(),
                                this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
+    ws->bindDialog(dlg);   // haelt Provider-Zeiger des Tabs -> schliesst mit ihm
     // Nach dem Kopieren aus dem Vergleich die Panes auffrischen — dieser Weg
     // laeuft an Workspace::startTransfer vorbei, das das sonst erledigt.
-    connect(dlg, &DiffDialog::transfersQueued, this, [ws] {
-        QTimer::singleShot(1500, ws, [ws] {
-            ws->leftPanel()->refresh();
-            ws->rightPanel()->refresh();
+    // QPointer: der Tab kann bis dahin geschlossen sein.
+    const QPointer<Workspace> wsGuard(ws);
+    connect(dlg, &DiffDialog::transfersQueued, this, [wsGuard] {
+        if (!wsGuard)
+            return;
+        QTimer::singleShot(1500, wsGuard.data(), [wsGuard] {
+            if (!wsGuard)
+                return;
+            wsGuard->leftPanel()->refresh();
+            wsGuard->rightPanel()->refresh();
         });
     });
     dlg->show();
@@ -1270,6 +1296,7 @@ void MainWindow::openEncodingConverter()
     }
     auto *dlg = new EncodingConverterDialog(m_bridge, panel->provider(), path, this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
+    ws->bindDialog(dlg);   // haelt den Provider-Zeiger des Tabs -> schliesst mit ihm
     connect(dlg, &QDialog::accepted, panel, &FilePanel::refresh);
     dlg->show();
 }

@@ -3,6 +3,7 @@
 
 #include <QDateTime>
 #include <QStringList>
+#include <QTimeZone>
 
 namespace ncssh::core {
 
@@ -63,13 +64,17 @@ quint32 modeFromPerms(const QString &sIn)
 
 namespace {
 
+// Die Zeit wird als UTC gelesen: sudofs ruft ls mit TZ=UTC0 auf. Frueher
+// wurde sie als Ortszeit des CLIENTS interpretiert — bei abweichender
+// Server-Zeitzone verschoben gegenueber den SFTP-Listings (Epoch-Sekunden).
+// Rueckgabe in Ortszeit, damit Anzeige/Vergleich wie bei SFTP-Eintraegen laufen.
 QDateTime parseMtime(const QString &date, const QString &time)
 {
     const QString joined = date + QLatin1Char(' ') + time;
     for (const char *fmt : {"yyyy-MM-dd HH:mm", "yyyy-MM-dd HH:mm:ss"}) {
         const QDateTime dt = QDateTime::fromString(joined, QString::fromLatin1(fmt));
         if (dt.isValid())
-            return dt;
+            return QDateTime(dt.date(), dt.time(), QTimeZone::utc()).toLocalTime();
     }
     return {};
 }
@@ -77,14 +82,25 @@ QDateTime parseMtime(const QString &date, const QString &time)
 // Wie Pythons str.split(None, maxSplit): Whitespace-Laeufe trennen; nach
 // maxSplit Trennungen behaelt der letzte Teil den Rest der Zeile
 // (der Name — Teil 8 — darf Leerzeichen enthalten).
+//
+// Abweichung fuer den Rest: ls trennt den Namen durch GENAU EIN Leerzeichen
+// von der Uhrzeit. Weitere Leerzeichen gehoeren zum Namen — frueher wurden sie
+// verschluckt, " foo" und "foo" kollidierten, und Loeschen/Bearbeiten traf die
+// jeweils andere Datei.
 QStringList splitWs(const QString &line, int maxSplit)
 {
     QStringList parts;
     const int n = line.size();
     int i = 0;
     while (i < n) {
+        const int runStart = i;
         while (i < n && line.at(i).isSpace())
             ++i;
+        if (parts.size() == maxSplit && runStart > 0 && i > runStart) {
+            // Name = alles nach dem einen Trenn-Leerzeichen (auch reine Leerzeichen).
+            parts << line.mid(runStart + 1);
+            break;
+        }
         if (i >= n)
             break;
         if (parts.size() == maxSplit) {
@@ -147,6 +163,8 @@ std::vector<FileEntry> parseLsLong(const QString &text)
                 name = name.left(arrow);
             }
         }
+        if (name.isEmpty())
+            continue;                          // abgeschnittene Zeile ohne Namen
         bool ok = false;
         qint64 sz = size.toLongLong(&ok);
         if (!ok)

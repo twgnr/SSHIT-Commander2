@@ -14,6 +14,7 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <functional>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -64,6 +65,15 @@ std::vector<RenamePair> autoResolveCollisions(const std::vector<RenamePair> &pai
 // existing: weitere im Ordner vorhandene Namen (fuer die Temp-Namenswahl).
 std::vector<RenamePair> planSafeOrder(const std::vector<RenamePair> &pairs,
                                       const QSet<QString> &existing = {});
+
+// Fuehrt die Schritte aus planSafeOrder der Reihe nach ueber rename(from, to)
+// aus (Namen, nicht Pfade — der Aufrufer verbindet sie mit dem Ordner).
+// Scheitert ein Schritt, werden die bereits erledigten in umgekehrter
+// Reihenfolge zurueckgenommen (best effort) und der urspruengliche Fehler neu
+// geworfen. So bleibt bei einem abgebrochenen Zyklus (a->tmp, b->a, tmp->b)
+// keine versteckte ".sshit-rename-tmp-N"-Datei liegen.
+void applyRenamePlan(const std::vector<RenamePair> &steps,
+                     const std::function<void(const QString &from, const QString &to)> &rename);
 
 // Uebersetzt ein einfaches Platzhalter-Muster (* = beliebig, ? = ein Zeichen)
 // in einen Regex. Alles andere wird woertlich genommen.

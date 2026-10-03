@@ -4,13 +4,26 @@
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/gui/macro_key_editor.hpp"
 
+#include <QAction>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCursor>
+#include <QDateTime>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QDockWidget>
+#include <QGuiApplication>
 #include <QHash>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QMetaObject>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QPointer>
+#include <QScreen>
+#include <QStandardPaths>
 #include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
 #include <QGridLayout>
@@ -200,7 +213,63 @@ private:
     QWidget *m_inner;
 };
 
+// Auswahl-Menue an der Mauszeiger-Position; liefert den gewaehlten Eintrag
+// (leer = abgebrochen). Menuetexte werden gekuerzt, '&' nicht als Mnemonic.
+QString pickFromMenu(QWidget *parent, const QStringList &entries)
+{
+    QMenu menu(parent);
+    for (const QString &entry : entries) {
+        QString label = entry.section(QLatin1Char('\n'), 0, 0);
+        if (label.size() > 60 || entry.contains(QLatin1Char('\n')))
+            label = label.left(57) + QStringLiteral(" …");
+        label.replace(QLatin1Char('&'), QStringLiteral("&&"));
+        QAction *action = menu.addAction(label);
+        action->setData(entry);
+    }
+    QAction *chosen = menu.exec(QCursor::pos());
+    return chosen ? chosen->data().toString() : QString();
+}
+
+// Zustaende einer Mehrzustands-Taste: JSON-Liste von Objekten
+// {label, action_type, payload}; auch {"states": [...]} oder der Rohtext,
+// falls der Editor ungueltiges JSON als Text gespeichert hat.
+QJsonArray toggleStates(const QJsonValue &payload)
+{
+    if (payload.isArray())
+        return payload.toArray();
+    if (payload.isObject())
+        return payload.toObject().value(QStringLiteral("states")).toArray();
+    const QJsonDocument doc = QJsonDocument::fromJson(payload.toString().toUtf8());
+    if (doc.isArray())
+        return doc.array();
+    if (doc.isObject())
+        return doc.object().value(QStringLiteral("states")).toArray();
+    return {};
+}
+
 } // namespace
+
+// Leitet Rueckrufe aus Worker-Threads in den GUI-Thread des Dialogs weiter.
+// executeAction ruft sshSend/sshBroadcast im Worker; die Lambdas des
+// Hauptfensters fassen aber Widgets an (nur im GUI-Thread erlaubt). Bewusst
+// NICHT BlockingQueuedConnection: beim Beenden wartet der GUI-Thread in
+// AsyncBridge::stop auf die Worker — ein blockierender Aufruf haette dort
+// einen Deadlock. Posted Events zum selben Thread bleiben in Reihenfolge,
+// d.h. der Konsolenbefehl kommt vor dem onDone des Jobs an.
+// target wird im Dialog-Destruktor unter dem Mutex genullt; danach kann kein
+// Worker mehr etwas an den sterbenden Dialog posten (bereits gepostete
+// Events verwirft ~QObject).
+struct MacroGuiGate {
+    QMutex mutex;
+    QObject *target = nullptr;
+
+    void post(std::function<void()> fn)
+    {
+        QMutexLocker lock(&mutex);
+        if (target)
+            QMetaObject::invokeMethod(target, std::move(fn), Qt::QueuedConnection);
+    }
+};
 
 // ---------------------------------------------------------------------------
 // MacroManagerDialog
@@ -210,12 +279,31 @@ MacroManagerDialog::MacroManagerDialog(AsyncBridge *bridge,
                                        std::function<void(const QString &, bool)> sshSend,
                                        std::function<void(const QString &, bool)> sshBroadcast,
                                        QWidget *parent)
-    : QDialog(parent), m_bridge(bridge)
+    : QDialog(parent), m_bridge(bridge),
+      m_context(std::make_shared<ma::ExecContext>()),
+      m_gate(std::make_shared<MacroGuiGate>())
 {
     setWindowTitle(_t("Makro-Manager"));
     m_config = mc::load();
-    m_context.sshSend = std::move(sshSend);
-    m_context.sshBroadcast = std::move(sshBroadcast);
+    m_gate->target = this;
+    // Nur belegte Rueckrufe umhuellen — ein leerer bleibt leer, damit
+    // executeAction weiterhin "Keine aktive Konsole" melden kann.
+    if (sshSend) {
+        m_context->sshSend = [gate = m_gate, fn = std::move(sshSend)](const QString &cmd,
+                                                                      bool run) {
+            gate->post([fn, cmd, run] { fn(cmd, run); });
+        };
+    }
+    if (sshBroadcast) {
+        m_context->sshBroadcast = [gate = m_gate, fn = std::move(sshBroadcast)](
+                                      const QString &cmd, bool run) {
+            gate->post([fn, cmd, run] { fn(cmd, run); });
+        };
+    }
+    // Zwischenablage-Verlauf fuer die Aktion clipboard_history mitschreiben.
+    if (QClipboard *clipboard = QGuiApplication::clipboard())
+        connect(clipboard, &QClipboard::dataChanged, this,
+                &MacroManagerDialog::onClipboardChanged);
     m_currentLayer = m_config.layerNames().value(0, mc::kDefaultLayer);
     m_runMode = (m_config.mode == QLatin1String("run"));
 
@@ -239,6 +327,11 @@ MacroManagerDialog::MacroManagerDialog(AsyncBridge *bridge,
 
 MacroManagerDialog::~MacroManagerDialog()
 {
+    // Laufende Worker duerfen ab jetzt nichts mehr an diesen Dialog posten.
+    {
+        QMutexLocker lock(&m_gate->mutex);
+        m_gate->target = nullptr;
+    }
     // Zustand sichern (Modus, Kontext-Schalter, Tastengroesse).
     saveConfig();
 }
@@ -498,7 +591,7 @@ void MacroManagerDialog::deleteLayer()
         return;
     }
     if (QMessageBox::question(this, _t("Löschen"),
-                              QStringLiteral("Layer \"%1\" löschen?").arg(m_currentLayer))
+                              _t("Layer \"%1\" löschen?").arg(m_currentLayer))
         != QMessageBox::Yes)
         return;
     m_config.removeLayer(m_currentLayer);
@@ -545,6 +638,16 @@ void MacroManagerDialog::drawGrid()
         auto *tile = new KeyTile(index, m_gridHost);
         const auto key = layer->key(index);
         tile->setConfig(key.value_or(QJsonObject()), size);
+        // Mehrzustands-Taste: Beschriftung des aktuellen Zustands behalten,
+        // auch nach Layerwechsel/Neuaufbau.
+        if (key && key->value(QStringLiteral("action_type")).toString()
+                       == QLatin1String("toggle_state")) {
+            const QString label = toggleStateLabel(
+                key->value(QStringLiteral("payload")),
+                QStringLiteral("%1:%2").arg(m_currentLayer).arg(index));
+            if (!label.isEmpty())
+                tile->setDynamicText(label);
+        }
         connect(tile, &KeyTile::clickedTile, this, &MacroManagerDialog::onTileClicked);
         connect(tile, &KeyTile::heldTile, this, &MacroManagerDialog::onTileHeld);
         connect(tile, &KeyTile::contextRequested, this, &MacroManagerDialog::onTileContextMenu);
@@ -629,86 +732,259 @@ void MacroManagerDialog::runKey(const QJsonObject &config, int index)
 {
     const QString type = config.value(QStringLiteral("action_type")).toString();
     const QJsonValue payload = config.value(QStringLiteral("payload"));
-    const ma::ActionSpec &spec = ma::spec(type);
-
-    // Navigations-Aktionen behandelt das Fenster selbst.
-    if (spec.navigation) {
-        if (type == QLatin1String("layer") || type == QLatin1String("jump_to_layer")) {
-            const QString target = payload.toString();
-            if (m_config.layers.contains(target)) {
-                m_layerHistory.append(m_currentLayer);
-                m_currentLayer = target;
-                refreshLayers();
-                drawGrid();
-            }
-        } else if (type == QLatin1String("back")) {
-            if (!m_layerHistory.isEmpty()) {
-                m_currentLayer = m_layerHistory.takeLast();
-                refreshLayers();
-                drawGrid();
-            }
-        } else if (type == QLatin1String("back_to_main")) {
-            m_currentLayer = mc::kDefaultLayer;
-            refreshLayers();
-            drawGrid();
-        }
-        return;
-    }
-
     const QString keyId = QStringLiteral("%1:%2").arg(m_currentLayer).arg(index);
 
-    // Sequenz: Schritte der Reihe nach, jeder erst nach Abschluss des
-    // vorherigen — sonst wuerden Verzoegerungen und Reihenfolge wirkungslos.
-    if (type == QLatin1String("sequence")) {
+    // Sequenz/Mehrere Aktionen: Schritte der Reihe nach, jeder erst nach
+    // Abschluss des vorherigen — sonst wuerden Verzoegerungen und Reihenfolge
+    // wirkungslos. Ueber den Dialog statt komplett im Worker, damit auch
+    // Navigations- und GUI-Schritte wirken (executeAction ueberspringt sie).
+    if (type == QLatin1String("sequence") || type == QLatin1String("multi_action")) {
         std::vector<QJsonObject> steps;
         for (const QJsonValue &v : payload.toArray()) {
             if (v.isObject())
                 steps.push_back(v.toObject());
         }
-        runSteps(std::move(steps), keyId);
+        runSteps(std::move(steps), keyId, index);
+        return;
+    }
+    runAction(type, payload, keyId, index, {});
+}
+
+void MacroManagerDialog::runAction(const QString &type, const QJsonValue &payload,
+                                   const QString &keyId, int index,
+                                   std::function<void(bool)> done)
+{
+    const ma::ActionSpec &spec = ma::spec(type);
+    // Navigations-Aktionen behandelt das Fenster selbst.
+    if (spec.navigation) {
+        navigate(type, payload);
+        if (done)
+            done(true);
+        return;
+    }
+    // GUI-Aktionen (Popups, Zustandstasten, Bildschirmfoto) gehoeren in den
+    // GUI-Thread — executeAction gibt fuer sie nur still nullopt zurueck.
+    if (spec.gui) {
+        runGuiAction(type, payload, keyId, index, std::move(done));
         return;
     }
 
     // Alles Uebrige laeuft im Worker (Tastatur/Maus/HTTP koennen blockieren).
-    ma::ExecContext *ctx = &m_context;
+    // Den Kontext als shared_ptr mitnehmen: der Job darf den Dialog ueberleben.
+    const std::shared_ptr<ma::ExecContext> ctx = m_context;
     m_bridge->run<QString>(
         [type, payload, ctx, keyId]() -> QString {
-            const auto error = ma::executeAction(type, payload, ctx, keyId);
+            const auto error = ma::executeAction(type, payload, ctx.get(), keyId);
             return error.value_or(QString());
         },
-        [this](const QString &error) {
+        [this, done](const QString &error) {
             if (!error.isEmpty())
                 m_status->setText(error);
+            if (done)
+                done(error.isEmpty());
         },
-        [this](const QString &err) { m_status->setText(err); }, this);
+        [this, done](const QString &err) {
+            if (err != QLatin1String("cancelled"))
+                m_status->setText(err);
+            if (done)
+                done(false);
+        }, this);
 }
 
-void MacroManagerDialog::runSteps(std::vector<QJsonObject> steps, const QString &keyId)
+void MacroManagerDialog::navigate(const QString &type, const QJsonValue &payload)
+{
+    if (type == QLatin1String("layer") || type == QLatin1String("jump_to_layer")) {
+        const QString target = payload.toString();
+        if (m_config.layers.contains(target)) {
+            m_layerHistory.append(m_currentLayer);
+            m_currentLayer = target;
+            refreshLayers();
+            drawGrid();
+        }
+    } else if (type == QLatin1String("back")) {
+        if (!m_layerHistory.isEmpty()) {
+            m_currentLayer = m_layerHistory.takeLast();
+            refreshLayers();
+            drawGrid();
+        }
+    } else if (type == QLatin1String("back_to_main")) {
+        m_currentLayer = mc::kDefaultLayer;
+        refreshLayers();
+        drawGrid();
+    }
+}
+
+void MacroManagerDialog::runSteps(std::vector<QJsonObject> steps, const QString &keyId,
+                                  int index)
 {
     if (steps.empty())
         return;
     const QJsonObject step = steps.front();
     steps.erase(steps.begin());
 
-    const QString type = step.value(QStringLiteral("action_type")).toString();
+    const QString type =
+        step.value(QStringLiteral("action_type")).toString(QStringLiteral("none"));
     const QJsonValue payload = step.value(QStringLiteral("payload"));
-    ma::ExecContext *ctx = &m_context;
-    m_bridge->run<QString>(
-        [type, payload, ctx, keyId]() -> QString {
-            const auto error = ma::executeAction(type, payload, ctx, keyId);
-            return error.value_or(QString());
-        },
-        // Naechster Schritt erst, wenn dieser durch ist.
-        [this, steps = std::move(steps), keyId](const QString &error) mutable {
-            if (!error.isEmpty()) {
-                // Bei einem Fehler die Sequenz abbrechen, statt blind
-                // weiterzumachen — die Folgeschritte bauen darauf auf.
-                m_status->setText(error);
-                return;
-            }
-            runSteps(std::move(steps), keyId);
-        },
-        [this](const QString &err) { m_status->setText(err); }, this);
+    // Naechster Schritt erst, wenn dieser durch ist. Bei einem Fehler (oder
+    // abgebrochener Auswahl) die Sequenz beenden, statt blind weiterzumachen —
+    // die Folgeschritte bauen darauf auf. Die Fehlermeldung setzt runAction.
+    runAction(type, payload, keyId, index, [this, steps, keyId, index](bool ok) {
+        if (ok)
+            runSteps(steps, keyId, index);
+    });
+}
+
+void MacroManagerDialog::runGuiAction(const QString &type, const QJsonValue &payload,
+                                      const QString &keyId, int index,
+                                      std::function<void(bool)> done)
+{
+    const auto finish = [&done](bool ok) {
+        if (done)
+            done(ok);
+    };
+    // Menues laufen in einer eigenen Ereignisschleife — danach pruefen, ob es
+    // den Dialog noch gibt.
+    QPointer<MacroManagerDialog> self(this);
+
+    if (type == QLatin1String("screenshot")) {
+        finish(takeScreenshot(payload.toString()));
+        return;
+    }
+
+    if (type == QLatin1String("toggle_state")) {
+        // Jeder Druck fuehrt die Aktion des aktuellen Zustands aus und
+        // wechselt zum naechsten.
+        const QJsonArray states = toggleStates(payload);
+        if (states.isEmpty()) {
+            m_status->setText(_t("Mehrzustands-Taste: keine Zustände hinterlegt "
+                                 "(JSON-Liste mit action_type/payload/label)."));
+            finish(false);
+            return;
+        }
+        int current = 0;
+        {
+            QMutexLocker lock(&m_context->stateMutex);
+            current = m_context->cycleIndex.value(keyId, 0) % int(states.size());
+            m_context->cycleIndex.insert(keyId, (current + 1) % int(states.size()));
+        }
+        // Beschriftung zeigt den Zustand, der beim naechsten Druck dran ist.
+        const QString nextLabel = toggleStateLabel(payload, keyId);
+        if (!nextLabel.isEmpty() && keyId.startsWith(m_currentLayer + QLatin1Char(':'))
+            && index >= 0 && index < int(m_tiles.size()))
+            m_tiles[size_t(index)]->setDynamicText(nextLabel);
+
+        const QJsonObject state = states.at(current).toObject();
+        const QString stateType =
+            state.value(QStringLiteral("action_type")).toString(QStringLiteral("none"));
+        // Keine verschachtelten Mehrzustands-Tasten (Endlosschleife).
+        if (stateType == QLatin1String("toggle_state")) {
+            finish(true);
+            return;
+        }
+        runAction(stateType, state.value(QStringLiteral("payload")),
+                  keyId + QStringLiteral("/") + QString::number(current), index,
+                  std::move(done));
+        return;
+    }
+
+    if (type == QLatin1String("command_cycle")) {
+        // Eine Zeile pro Eintrag; der gewaehlte Text wird getippt.
+        QStringList entries;
+        for (const QString &line : payload.toString().split(QLatin1Char('\n'))) {
+            const QString trimmed = line.trimmed();
+            if (!trimmed.isEmpty())
+                entries << trimmed;
+        }
+        if (entries.isEmpty()) {
+            finish(false);
+            return;
+        }
+        const QString chosen = pickFromMenu(this, entries);
+        if (!self)
+            return;
+        if (chosen.isEmpty()) {
+            finish(false);   // abgebrochen -> Sequenz nicht fortsetzen
+            return;
+        }
+        runAction(QStringLiteral("write"), chosen, keyId, index, std::move(done));
+        return;
+    }
+
+    if (type == QLatin1String("clipboard_history")) {
+        if (m_clipHistory.isEmpty()) {
+            m_status->setText(_t("Zwischenablage-Verlauf ist leer."));
+            finish(false);
+            return;
+        }
+        const QString chosen = pickFromMenu(this, m_clipHistory);
+        if (!self)
+            return;
+        if (chosen.isEmpty()) {
+            finish(false);
+            return;
+        }
+        QGuiApplication::clipboard()->setText(chosen);
+        finish(true);
+        return;
+    }
+
+    finish(true);
+}
+
+bool MacroManagerDialog::takeScreenshot(const QString &folderIn)
+{
+    // Bildschirm unter dem Mauszeiger (dort wurde die Taste geklickt).
+    QScreen *screen = QGuiApplication::screenAt(QCursor::pos());
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    const QPixmap shot = screen ? screen->grabWindow(0) : QPixmap();
+    if (shot.isNull()) {
+        m_status->setText(_t("Bildschirmfoto fehlgeschlagen."));
+        return false;
+    }
+    QString folder = folderIn.trimmed();
+    if (folder.isEmpty())
+        folder = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    if (folder.isEmpty())
+        folder = QDir::homePath();
+    const QString file = QDir(folder).filePath(
+        QStringLiteral("screenshot-%1.png")
+            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss-zzz"))));
+    if (!QDir().mkpath(folder) || !shot.save(file, "PNG")) {
+        m_status->setText(_t("Bildschirmfoto konnte nicht gespeichert werden: %1")
+                              .arg(QDir::toNativeSeparators(file)));
+        return false;
+    }
+    QGuiApplication::clipboard()->setPixmap(shot);
+    m_status->setText(_t("Bildschirmfoto gespeichert: %1").arg(QDir::toNativeSeparators(file)));
+    return true;
+}
+
+QString MacroManagerDialog::toggleStateLabel(const QJsonValue &payload, const QString &keyId)
+{
+    const QJsonArray states = toggleStates(payload);
+    if (states.isEmpty())
+        return {};
+    int current = 0;
+    {
+        QMutexLocker lock(&m_context->stateMutex);
+        if (!m_context->cycleIndex.contains(keyId))
+            return {};   // noch nie gedrueckt -> normale Beschriftung
+        current = m_context->cycleIndex.value(keyId) % int(states.size());
+    }
+    return states.at(current).toObject().value(QStringLiteral("label")).toString();
+}
+
+void MacroManagerDialog::onClipboardChanged()
+{
+    const QString text = QGuiApplication::clipboard()->text();
+    if (text.trimmed().isEmpty())
+        return;
+    // Neueste zuerst, ohne Dubletten, begrenzt.
+    m_clipHistory.removeAll(text);
+    m_clipHistory.prepend(text);
+    while (m_clipHistory.size() > 20)
+        m_clipHistory.removeLast();
 }
 
 void MacroManagerDialog::exportLayers()

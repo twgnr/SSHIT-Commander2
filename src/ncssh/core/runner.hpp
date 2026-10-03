@@ -12,10 +12,25 @@
 #include <functional>
 #include <optional>
 
+class QProcess;
+
 namespace ncssh::core {
 
 using ncssh::gui::CancelTokenPtr;
 using LineCallback = std::function<void(const QString &)>;
+
+// Richtet proc so ein, dass `command` WOERTLICH bei der System-Shell ankommt
+// (Windows: cmd.exe, sonst /bin/sh -c). Danach proc.start()/startDetached().
+// Unter Windows ueber setNativeArguments: die normale Argumentliste quotet im
+// MSVC-Stil (\"), den cmd.exe nicht versteht — jeder Befehl mit
+// Anfuehrungszeichen (dir "C:\Program Files") ginge sonst kaputt.
+// delayedExpansion schaltet /v:on ein (!VAR! wird erst NACH dem Parsen
+// ersetzt — so koennen Variablenwerte keine Befehle einschleusen).
+void setShellCommand(QProcess &proc, const QString &command, bool delayedExpansion = false);
+
+// Die Kommandozeilen-Argumente fuer cmd.exe (ohne Programmname), z.B.
+// /s /c "<command>". Oeffentlich fuer Tests.
+QString cmdNativeArguments(const QString &command, bool delayedExpansion = false);
 
 // Fuehrt Shell-Befehle in einem Arbeitsverzeichnis aus.
 class CommandRunner {

@@ -13,6 +13,8 @@
 
 #include <QHash>
 #include <QJsonObject>
+#include <QList>
+#include <QPointer>
 #include <QSet>
 #include <QWidget>
 #include <functional>
@@ -88,6 +90,12 @@ public:
     // Dateisystem-Provider dieses Tabs — fuer SFTP-Batch/geplante Aufgaben.
     core::FileSystemProvider *localFs() const { return m_localFs.get(); }
     core::FileSystemProvider *remoteFs() const { return m_remoteFs.get(); }  // null wenn getrennt
+    // Alle Provider, die dieser Tab besitzt (auch stillgelegte) — das
+    // Hauptfenster fragt damit beim Schliessen nach laufenden Transfers.
+    QSet<const core::FileSystemProvider *> ownedProviders() const;
+    // Bindet einen nicht-modalen Dialog an diesen Tab: er haelt rohe Zeiger auf
+    // Panes/Provider und wird deshalb geschlossen, sobald der Tab stirbt.
+    void bindDialog(QWidget *dialog);
 
     // Zustand des Tabs fuer Tab-Favoriten / Sitzungswiederherstellung.
     QJsonObject toJson() const;
@@ -189,6 +197,15 @@ private:
     };
     std::vector<RetiredRemote> m_retired;
     void retireRemoteObjects();
+    // sudo aus: das sudo-Dateisystem stilllegen statt freigeben — Transfers,
+    // Listings und Vorschauen koennen es noch benutzen.
+    void retireSudoFs();
+    // Begrenzt m_retired; gibt nur Eintraege frei, die kein Transfer mehr nutzt.
+    void trimRetired();
+    // Zaehler fuer sudo-Umschaltungen: eine verspaetete Antwort einer frueheren
+    // Einschaltung darf das sudo-Dateisystem nicht mehr einhaengen.
+    quint64 m_sudoSeq = 0;
+    QList<QPointer<QWidget>> m_boundDialogs;   // siehe bindDialog()
 
     FilePanel *m_leftPanel = nullptr;
     FilePanel *m_rightPanel = nullptr;

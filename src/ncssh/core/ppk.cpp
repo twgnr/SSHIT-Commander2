@@ -35,14 +35,17 @@ static quint32 be32(const QByteArray &buf, int off)
 // Liest ein laengenpraefigiertes Feld ab off; setzt off hinter das Feld.
 static QByteArray rd(const QByteArray &buf, int &off)
 {
-    if (off + 4 > buf.size())
+    // Grenzen ohne Addition pruefen: "off + n" konnte bei manipulierten
+    // Laengen (z.B. 0x80000000 -> als int negativ) ueberlaufen und die
+    // Pruefung bestehen -> Lesen ausserhalb des Puffers.
+    if (off < 0 || buf.size() - off < 4)
         fail("PPK/Key beschaedigt (Laengenfeld).");
     const quint32 n = be32(buf, off);
     off += 4;
-    if (off + int(n) > buf.size())
+    if (quint64(n) > quint64(buf.size() - off))
         fail("PPK/Key beschaedigt (Feldlaenge).");
-    const QByteArray out = buf.mid(off, n);
-    off += n;
+    const QByteArray out = buf.mid(off, qsizetype(n));
+    off += int(n);
     return out;
 }
 
@@ -94,6 +97,27 @@ struct PpkInfo {
     QByteArray comment;
 };
 
+// Liest den Zeilenzaehler eines "Public-/Private-Lines"-Kopfes und die
+// folgenden Base64-Zeilen. Der Zaehler kommt aus der Datei: ein negativer Wert
+// liess die Hauptschleife frueher rueckwaerts laufen (Endlosschleife), ein
+// riesiger Wert ueber das Dateiende hinaus zaehlen — daher hart pruefen.
+static QByteArray readB64Block(const QList<QByteArray> &lines, int &i, const QByteArray &val)
+{
+    // Grosszuegige Obergrenze: selbst RSA-16384 braucht < 100 Zeilen a 64 Zeichen.
+    constexpr int kMaxLines = 4096;
+    bool ok = false;
+    const int n = val.toInt(&ok);
+    if (!ok || n < 0 || n > kMaxLines)
+        fail("PPK beschaedigt (ungueltige Zeilenanzahl).");
+    if (n > int(lines.size()) - 1 - i)
+        fail("PPK beschaedigt (Datei endet vor dem Schluesselblock).");
+    QByteArray joined;
+    for (int k = i + 1; k <= i + n; ++k)
+        joined += lines[k].trimmed();
+    i += n;
+    return QByteArray::fromBase64(joined);
+}
+
 static PpkInfo parsePpk(const QByteArray &data)
 {
     QByteArray norm = data;
@@ -113,19 +137,9 @@ static PpkInfo parsePpk(const QByteArray &data)
         if (key.startsWith("PuTTY-User-Key-File")) {
             out.algo = val;
         } else if (key == "Public-Lines") {
-            const int n = val.toInt();
-            QByteArray joined;
-            for (int k = i + 1; k <= i + n && k < lines.size(); ++k)
-                joined += lines[k];
-            out.pub = QByteArray::fromBase64(joined);
-            i += n;
+            out.pub = readB64Block(lines, i, val);
         } else if (key == "Private-Lines") {
-            const int n = val.toInt();
-            QByteArray joined;
-            for (int k = i + 1; k <= i + n && k < lines.size(); ++k)
-                joined += lines[k];
-            out.priv = QByteArray::fromBase64(joined);
-            i += n;
+            out.priv = readB64Block(lines, i, val);
         } else if (key == "Encryption") {
             out.encryption = val;
         } else if (key == "Comment") {
@@ -146,6 +160,10 @@ static QByteArray perKey(const QByteArray &algo, const QByteArray &pub,
         int po = 0;
         const QByteArray seedRaw = rd(priv, po);
         const QByteArray seed = rjust(lstripZero(seedRaw), 32);  // mpint -> 32 Byte
+        // Falsche Laengen ergaeben einen kaputten OpenSSH-Key, der erst beim
+        // Verbinden (in libssh2) scheitert — lieber hier klar abweisen.
+        if (a.size() != 32 || seed.size() != 32)
+            fail("PPK beschaedigt (ed25519-Schluessellaenge).");
         return ws("ssh-ed25519") + ws(a) + ws(seed + a) + ws(comment);
     }
     if (algo == "ssh-rsa") {
@@ -187,6 +205,8 @@ static QByteArray perKey(const QByteArray &algo, const QByteArray &pub,
 QByteArray ppkToOpenssh(const QByteArray &data, const QString & /*passphrase*/)
 {
     const PpkInfo info = parsePpk(data);
+    if (info.algo.isEmpty() || info.pub.isEmpty() || info.priv.isEmpty())
+        fail("PPK beschaedigt (Kopf, Public- oder Private-Block fehlt).");
     if (info.encryption != "none")
         fail("Verschlüsselte PPK können nicht direkt gelesen werden. Bitte in "
              "PuTTYgen über 'Conversions → Export OpenSSH key' konvertieren.");

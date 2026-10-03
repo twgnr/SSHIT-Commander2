@@ -124,6 +124,7 @@ private:
     int m_historyPos = -1;
     QString m_historyDraft;   // halb getippte Zeile beim Blättern in der Historie
     BridgeTask *m_running = nullptr;
+    quint64 m_runSeq = 0;     // Laufnummer des aktuellen Befehls (veraltete Rueckrufe erkennen)
 };
 
 } // namespace ncssh::gui

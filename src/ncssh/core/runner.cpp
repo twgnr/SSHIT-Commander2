@@ -6,6 +6,34 @@
 
 namespace ncssh::core {
 
+QString cmdNativeArguments(const QString &command, bool delayedExpansion)
+{
+    // /s: cmd entfernt genau das AEUSSERSTE Anfuehrungszeichenpaar und laesst
+    // den Rest unangetastet. Ohne /s greift die "genau zwei Quotes"-Heuristik
+    // und zerlegt z.B. "C:\Program Files\x.exe" "arg". Bewusst Verkettung
+    // statt QString::arg — ein %1 im Befehl darf nicht ersetzt werden.
+    QString args;
+    if (delayedExpansion)
+        args += QStringLiteral("/v:on ");
+    args += QStringLiteral("/s /c \"");
+    args += command;
+    args += QLatin1Char('"');
+    return args;
+}
+
+void setShellCommand(QProcess &proc, const QString &command, bool delayedExpansion)
+{
+#ifdef Q_OS_WIN
+    proc.setProgram(QStringLiteral("cmd.exe"));
+    proc.setArguments({});
+    proc.setNativeArguments(cmdNativeArguments(command, delayedExpansion));
+#else
+    Q_UNUSED(delayedExpansion);
+    proc.setProgram(QStringLiteral("/bin/sh"));
+    proc.setArguments({QStringLiteral("-c"), command});
+#endif
+}
+
 void CommandRunner::runTerminal(const QString &command, const QString &cwd,
                                 const LineCallback &onChunk, const CancelTokenPtr &cancel,
                                 int /*cols*/, int /*rows*/)
@@ -42,11 +70,9 @@ void LocalCommandRunner::stream(const QString &command, const QString &cwd,
     proc.setProcessChannelMode(QProcess::MergedChannels);
     if (!cwd.isEmpty())
         proc.setWorkingDirectory(cwd);
-#ifdef Q_OS_WIN
-    proc.start(QStringLiteral("cmd.exe"), {QStringLiteral("/c"), command});
-#else
-    proc.start(QStringLiteral("/bin/sh"), {QStringLiteral("-c"), command});
-#endif
+    // Befehl unveraendert an die Shell (siehe setShellCommand).
+    setShellCommand(proc, command);
+    proc.start();
     if (!proc.waitForStarted(10000)) {
         lastExitStatus = -1;
         throw std::runtime_error("Prozessstart fehlgeschlagen");

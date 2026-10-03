@@ -67,6 +67,9 @@ private:
     std::atomic_bool m_alive{false};
     std::atomic_bool m_closing{false};   // close() darf nur einmal abbauen
     std::thread m_thread;
+    // Wartet auf das Ende des Shell-Prozesses und meldet dann closed() —
+    // die ConPTY haelt die Ausgabe-Pipe sonst bis ClosePseudoConsole offen.
+    std::thread m_waitThread;
 };
 
 class RemoteShellBackend : public ShellBackend {

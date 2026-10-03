@@ -6,6 +6,8 @@
 
 #include <QDialog>
 #include <QHash>
+#include <QVariant>
+#include <functional>
 
 class QFormLayout;
 class QComboBox;
@@ -39,6 +41,12 @@ private:
     void testAiConnection();          // je Anbieter: Ollama-Version bzw. Modellliste
     void loadAiModels();
     void startPull();                 // Modell ueber Ollama herunterladen
+    // Blockierender KI-Netzaufruf (Modellliste, Version): mit Bridge im Worker,
+    // ohne Bridge (Tests) direkt. Knoepfe/Anbieterwahl sind solange gesperrt.
+    void runAiJob(std::function<QVariant()> job,
+                  std::function<void(const QVariant &)> onDone,
+                  std::function<void(const QString &)> onError);
+    void setAiBusy(bool busy);
     void updateExecColorButton();
     void pickExecColor();
     void exportConfig();
@@ -90,6 +98,9 @@ private:
     QProgressBar *m_pullProgress = nullptr;
     QPushButton *m_pullButton = nullptr;
     QLabel *m_aiStatus = nullptr;
+    QPushButton *m_aiLoadBtn = nullptr;   // "Modelle laden"
+    QPushButton *m_aiTestBtn = nullptr;   // "Verbindung testen"
+    int m_aiJobs = 0;                     // laufende KI-Netzaufrufe
     BridgeTask *m_pullTask = nullptr;
 
     // Tastenkuerzel

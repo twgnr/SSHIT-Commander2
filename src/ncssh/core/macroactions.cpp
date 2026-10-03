@@ -1,6 +1,9 @@
 #include "ncssh/core/macroactions.hpp"
 
+#include "ncssh/core/runner.hpp"
+
 #include <QDateTime>
+#include <QMutexLocker>
 #include <QDesktopServices>
 #include <QEventLoop>
 #include <QGuiApplication>
@@ -468,13 +471,11 @@ std::optional<QString> executeAction(const QString &actionType, const QJsonValue
             return std::nullopt;  // leer / Navigation / GUI -> vom Fenster behandelt
 
         if (actionType == QLatin1String("execute")) {
-            const QString cmd = payloadStr(payload);
-#ifdef Q_OS_WIN
-            QProcess::startDetached(QStringLiteral("cmd.exe"),
-                                    {QStringLiteral("/c"), cmd});
-#else
-            QProcess::startDetached(QStringLiteral("/bin/sh"), {QStringLiteral("-c"), cmd});
-#endif
+            // Woertlich an die Shell — QProcess wuerde Anfuehrungszeichen sonst
+            // im MSVC-Stil (\") quoten, die cmd.exe nicht versteht.
+            QProcess proc;
+            setShellCommand(proc, payloadStr(payload));
+            proc.startDetached();
         } else if (actionType == QLatin1String("open")) {
             openTarget(payloadStr(payload));
         } else if (actionType == QLatin1String("http_request")) {
@@ -526,10 +527,16 @@ std::optional<QString> executeAction(const QString &actionType, const QJsonValue
                 keyEvent(resolveVk(payloadStr(payload)), false);
             } else if (actionType == QLatin1String("toggle_key")) {
                 const QString id = keyId.isEmpty() ? payloadStr(payload) : keyId;
-                const bool held = ctx->toggleState.value(id, false);
+                // Lesen+Umschalten unter dem Kontext-Mutex: zwei schnelle Klicks
+                // laufen in parallelen Workern und teilen sich die QHash.
+                bool held = false;
+                {
+                    QMutexLocker lock(&ctx->stateMutex);
+                    held = ctx->toggleState.value(id, false);
+                    ctx->toggleState.insert(id, !held);
+                }
                 const WORD k = resolveVk(payloadStr(payload));
                 keyEvent(k, !held);
-                ctx->toggleState.insert(id, !held);
             } else if (actionType == QLatin1String("toggle_key_timer")) {
                 const QStringList parts = payloadStr(payload).split(QLatin1Char('|'));
                 const WORD k = resolveVk(parts.value(0));
@@ -581,8 +588,9 @@ std::optional<QString> executeAction(const QString &actionType, const QJsonValue
                 if (HWND h = findWindowByTitle(search)) {
                     activate(h);
                 } else {
-                    QProcess::startDetached(QStringLiteral("cmd.exe"),
-                                            {QStringLiteral("/c"), launch});
+                    QProcess proc;
+                    setShellCommand(proc, launch);
+                    proc.startDetached();
                 }
             } else if (actionType == QLatin1String("cycle_windows")) {
                 QStringList names;

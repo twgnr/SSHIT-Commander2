@@ -108,6 +108,10 @@ public:
     static core::FileSystemProvider *clipboardProvider() { return s_clipProvider; }
     static QStringList clipboardPaths() { return s_clipPaths; }
     static bool clipboardIsMove() { return s_clipMove; }
+    // Leert die Zwischenablage, wenn sie auf provider zeigt. Der Workspace ruft
+    // das, bevor er einen Provider stilllegt oder freigibt — sonst fuehrte
+    // Strg+X in Tab A, Tab A schliessen, Strg+V in Tab B auf einen toten Zeiger.
+    static void forgetProvider(const core::FileSystemProvider *provider);
 
 signals:
     void activated();                             // Pane wurde fokussiert

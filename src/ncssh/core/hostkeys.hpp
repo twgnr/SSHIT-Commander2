@@ -12,13 +12,20 @@
 
 #include <QHash>
 #include <QString>
+#include <mutex>
 #include <optional>
 
 namespace ncssh::core {
 
+// Thread-safe: connectSession liest auf Worker-Threads (parallele Tab-
+// Verbindungen), waehrend der GUI-Thread add()/save()/removeKey() ausfuehrt.
+// Ein QHash ist dafuer nicht reentrant genug — jeder Zugriff laeuft daher unter
+// m_mutex, und nach aussen gehen nur Kopien.
 class HostKeyStore {
 public:
     HostKeyStore();
+    HostKeyStore(const HostKeyStore &) = delete;
+    HostKeyStore &operator=(const HostKeyStore &) = delete;
 
     void load();
     void save() const;
@@ -37,11 +44,14 @@ public:
     void removeKey(const QString &rawKey);
 
     // Alle Eintraege (Speicher-Schluessel -> Fingerprint) — fuer die Verwaltung.
-    QHash<QString, QString> entries() const { return m_data; }
+    QHash<QString, QString> entries() const;
 
 private:
     static QString key(const QString &host, int port, const QString &algo = {});
+    // Schreibt den Bestand; Aufrufer haelt m_mutex bereits.
+    void saveLocked() const;
 
+    mutable std::mutex m_mutex;
     QHash<QString, QString> m_data;
 };
 

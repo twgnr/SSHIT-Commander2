@@ -136,7 +136,10 @@ void walkDir(const QString &dirpath, int depth, const SearchOptions &opts,
     for (const QFileInfo &fi : infos) {
         if (fi.isDir()) {
             dirnames << fi.fileName();
-            if (fi.isSymLink())
+            // NTFS-Junctions sind fuer Qt KEINE Symlinks (isSymLink() == false),
+            // fuehren aber genauso aus dem Baum heraus bzw. in Zyklen
+            // (z.B. "Anwendungsdaten" -> AppData) — daher ebenfalls nicht folgen.
+            if (fi.isSymLink() || fi.isJunction())
                 symlinkDirs.insert(fi.fileName());
         } else {
             filenames << fi.fileName();
@@ -159,7 +162,7 @@ void walkDir(const QString &dirpath, int depth, const SearchOptions &opts,
         return;
     }
     for (const QString &d : std::as_const(dirnames)) {
-        if (symlinkDirs.contains(d))  // Symlinks nicht folgen (os.walk followlinks=False)
+        if (symlinkDirs.contains(d))  // Symlinks/Junctions nicht folgen (os.walk followlinks=False)
             continue;
         walkDir(joinPath(dirpath, d), depth + 1, opts, excl, cancel, visit, stop);
         if (stop)

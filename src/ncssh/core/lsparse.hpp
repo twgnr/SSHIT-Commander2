@@ -14,6 +14,9 @@
 namespace ncssh::core {
 
 // "ls -lnA --time-style=long-iso"-Ausgabe -> [FileEntry] (ohne "..").
+// Die Zeiten muessen in UTC vorliegen (ls mit TZ=UTC0 aufrufen); der Name ist
+// alles nach dem EINEN Leerzeichen hinter der Uhrzeit (fuehrende Leerzeichen
+// bleiben erhalten).
 std::vector<FileEntry> parseLsLong(const QString &text);
 
 // Rechte-String ("drwxr-xr-x") -> st_mode inkl. Typ-Bits und setuid/setgid/

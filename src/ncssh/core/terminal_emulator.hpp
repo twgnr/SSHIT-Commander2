@@ -82,6 +82,7 @@ private:
 
     TermCell blankCell() const;  // Leerzelle mit aktueller Hintergrundfarbe
     void clampCursor();
+    void clampRegion();          // m_top/m_bottom in [0, m_rows) halten
     std::vector<int> params(int def, int count = 16) const;
 
     std::vector<std::vector<TermCell>> m_grid;

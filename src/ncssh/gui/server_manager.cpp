@@ -273,6 +273,7 @@ void ServerManagerDialog::testReachability()
 
 void ServerManagerDialog::loadIntoForm(const ServerProfile &p)
 {
+    m_loadedName = p.name;
     m_name->setText(p.name);
     m_host->setText(p.host);
     m_port->setValue(p.port ? p.port : 22);
@@ -321,14 +322,16 @@ ServerProfile ServerManagerDialog::formToProfile() const
     p.color = m_tabColor;
     p.startPath = m_startPath->text().trimmed().isEmpty() ? QStringLiteral(".")
                                                           : m_startPath->text().trimmed();
-    // Bestehenden Zeitstempel erhalten — das Formular zeigt ihn nur an.
-    if (const auto existing = m_store.get(p.name)) {
+    // Bestehenden Zeitstempel erhalten — das Formular zeigt ihn nur an. Beim
+    // Umbenennen gehoeren Zeitstempel/Passphrase zum geladenen (alten) Namen.
+    const QString source = m_loadedName.isEmpty() ? p.name : m_loadedName;
+    if (const auto existing = m_store.get(source)) {
         p.lastConnected = existing->lastConnected;
         // Die Passphrase hat kein Formularfeld — gespeicherten Wert erhalten,
         // damit ein erneutes Speichern sie nicht aus dem Keyring wirft.
         if (p.savePassword)
             p.passphrase =
-                core::getSecret(p.name, QStringLiteral("passphrase")).value_or(QString());
+                core::getSecret(source, QStringLiteral("passphrase")).value_or(QString());
     }
     return p;
 }
@@ -340,8 +343,21 @@ void ServerManagerDialog::onSave()
         QMessageBox::warning(this, _t("Fehlende Angaben"), _t("Name und Host sind Pflicht."));
         return;
     }
-    m_store.upsert(p);
+    if (!m_loadedName.isEmpty() && p.name != m_loadedName) {
+        // Umbenennen: altes Profil ersetzen und Keyring-Secrets mitnehmen —
+        // upsert legte ein Duplikat an und liess die Secrets unter dem alten
+        // Namen liegen. Gehoert der neue Name einem anderen Profil, ablehnen.
+        if (m_store.get(p.name)) {
+            QMessageBox::warning(this, _t("Fehlende Angaben"),
+                                 _t("Ein Profil namens „%1“ existiert bereits.").arg(p.name));
+            return;
+        }
+        m_store.rename(m_loadedName, p);
+    } else {
+        m_store.upsert(p);
+    }
     m_store.save();
+    m_loadedName = p.name;
     reload();
     for (int i = 0; i < m_list->count(); ++i) {
         if (m_list->item(i)->text() == p.name) {
@@ -400,11 +416,16 @@ void ServerManagerDialog::onImport()
     layout->addWidget(info);
 
     auto *list = new QListWidget(&dlg);
-    // Vorhandene Profile kenntlich machen — sie werden beim Import ersetzt.
+    // Vorhandene Profile kenntlich machen (gleicher Host:Port ODER gleicher
+    // Name) und standardmaessig nicht ankreuzen. Wird trotzdem importiert,
+    // bekommt ein Namensvetter einen freien Namen (siehe unten).
     QSet<QString> known;
-    for (const auto &existing : m_store.profiles())
+    QSet<QString> knownNames;
+    for (const auto &existing : m_store.profiles()) {
         known.insert(existing.host + QLatin1Char(':') + QString::number(existing.port));
-    const auto fill = [&list, &found, &known] {
+        knownNames.insert(existing.name);
+    }
+    const auto fill = [&list, &found, &known, &knownNames] {
         list->clear();
         if (found.empty()) {
             auto *empty = new QListWidgetItem(_t("Keine Sitzungen automatisch gefunden"), list);
@@ -414,13 +435,14 @@ void ServerManagerDialog::onImport()
         for (int i = 0; i < int(found.size()); ++i) {
             const QString key =
                 found[i].host + QLatin1Char(':') + QString::number(found[i].port);
+            const bool exists = known.contains(key) || knownNames.contains(found[i].name);
             QString label = QStringLiteral("%1  —  %2").arg(found[i].name, found[i].display());
-            if (known.contains(key))
+            if (exists)
                 label = _t("%1  (bereits vorhanden)").arg(label);
             auto *item = new QListWidgetItem(label, list);
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-            // Vorhandene nicht standardmaessig ueberschreiben.
-            item->setCheckState(known.contains(key) ? Qt::Unchecked : Qt::Checked);
+            // Vorhandene nicht standardmaessig erneut importieren.
+            item->setCheckState(exists ? Qt::Unchecked : Qt::Checked);
             item->setData(Qt::UserRole, i);
         }
     };
@@ -484,7 +506,12 @@ void ServerManagerDialog::onImport()
             continue;
         const int idx = list->item(i)->data(Qt::UserRole).toInt();
         if (idx >= 0 && idx < int(found.size())) {
-            m_store.upsert(found[idx]);
+            // Nie ein vorhandenes Profil gleichen Namens ersetzen: importierte
+            // Profile haben savePassword=false, upsert loeschte damit dessen
+            // Keyring-Secrets. Stattdessen unter freiem Namen anlegen.
+            core::ServerProfile imported = found[idx];
+            imported.name = m_store.uniqueName(imported.name);
+            m_store.upsert(imported);
             ++added;
         }
     }

@@ -19,7 +19,8 @@ class AnsiRenderer {
 public:
     explicit AnsiRenderer(QPlainTextEdit *editor);
 
-    // Setzt Farben/Attribute auf die Theme-Vorgaben zurueck.
+    // Setzt Farben/Attribute auf die Theme-Vorgaben zurueck und verwirft eine
+    // angeschnittene Steuersequenz.
     void reset();
 
     // Verarbeitet einen Ausgabe-Chunk (darf mitten in einer Sequenz enden).
@@ -45,6 +46,9 @@ private:
     bool m_underline = false;
     bool m_reverse = false;
     bool m_pendingCr = false;  // \r am Chunk-Ende (moegliches \r\n ueber die Grenze)
+    QString m_carry;           // angeschnittene Escape-Sequenz vom letzten Chunk
+    bool m_inString = false;   // mitten in OSC/DCS (bis BEL bzw. ESC \ ueberspringen)
+    int m_stringLen = 0;       // bisher uebersprungene Zeichen dieser Zeichenkette
 };
 
 } // namespace ncssh::gui

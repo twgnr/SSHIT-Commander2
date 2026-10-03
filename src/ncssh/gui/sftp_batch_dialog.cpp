@@ -17,6 +17,7 @@
 #include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <memory>
 
 namespace ncssh::gui {
 
@@ -142,6 +143,9 @@ void SftpBatchDialog::runBatch()
     m_running = true;
     updateButtons();
 
+    // Hat der Lauf schon seine Zaehler gemeldet (__DONE__), duerfen sie beim
+    // anschliessenden failed("cancelled") nicht ueberschrieben werden.
+    const auto countsShown = std::make_shared<bool>(false);
     m_task = m_bridge->stream(
         [script, session, stopOnError, localCwd, remoteCwd](
             const AsyncBridge::EmitLine &emitLine, const CancelTokenPtr &cancel) {
@@ -157,8 +161,9 @@ void SftpBatchDialog::runBatch()
                          .arg(r.ok).arg(r.failed).arg(r.aborted ? 1 : 0));
         },
         // onLine
-        [this](const QString &line) {
+        [this, countsShown](const QString &line) {
             if (line.startsWith(QStringLiteral("__DONE__"))) {
+                *countsShown = true;
                 const QStringList p = line.split(QLatin1Char(' '));
                 if (p.size() >= 4 && p[3] == QLatin1String("1"))
                     m_status->setText(_t("Abgebrochen: %1 ok, %2 Fehler").arg(p[1], p[2]));
@@ -175,9 +180,17 @@ void SftpBatchDialog::runBatch()
             updateButtons();
         },
         // onError
-        [this](const QString &err) {
-            appendLog(_t("Abbruch: %1").arg(err));
-            m_status->setText(_t("Abgebrochen"));
+        [this, countsShown](const QString &err) {
+            // Stop ist der Normalfall, kein Fehler: kein rohes "cancelled" ins
+            // Protokoll, und die bereits gemeldeten ok/Fehler-Zaehler behalten.
+            if (err == QLatin1String("cancelled")) {
+                appendLog(_t("Abgebrochen"));
+                if (!*countsShown)
+                    m_status->setText(_t("Abgebrochen"));
+            } else {
+                appendLog(_t("Abbruch: %1").arg(err));
+                m_status->setText(_t("Abgebrochen"));
+            }
             m_running = false;
             m_task = nullptr;
             updateButtons();

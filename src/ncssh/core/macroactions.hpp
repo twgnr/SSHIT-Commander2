@@ -15,6 +15,7 @@
 
 #include <QHash>
 #include <QJsonValue>
+#include <QMutex>
 #include <QString>
 #include <functional>
 #include <optional>
@@ -40,14 +41,20 @@ const ActionSpec &spec(const QString &actionType);
 std::vector<std::pair<QString, std::vector<ActionSpec>>> groupedActions();
 
 // Ausfuehrungskontext — Bruecke zur Anwendung (z.B. SSH-Konsole).
+// executeAction laeuft auf WORKER-Threads (oft mehrere parallel): die
+// Rueckrufe muessen daher selbst in den GUI-Thread wechseln (der
+// Makro-Manager haengt dafuer eine Weiterleitung davor), und die Zustands-
+// Tabellen duerfen nur unter stateMutex angefasst werden.
 struct ExecContext {
-    // Befehl an die aktive Konsole (cmd, run).
+    // Befehl an die aktive Konsole (cmd, run). Wird im Worker gerufen.
     std::function<void(const QString &, bool)> sshSend;
-    // Befehl an alle Konsolen des aktiven Tabs.
+    // Befehl an alle Konsolen des aktiven Tabs. Wird im Worker gerufen.
     std::function<void(const QString &, bool)> sshBroadcast;
+    // Schuetzt toggleState/cycleIndex (parallele Worker + GUI-Thread).
+    QMutex stateMutex;
     // Zustand fuer toggle_key ueber mehrere Tastendruecke.
     QHash<QString, bool> toggleState;
-    // Laufende Index-Position je Taste fuer cycle_windows.
+    // Laufende Index-Position je Taste (Mehrzustands-Tasten im Makro-Manager).
     QHash<QString, int> cycleIndex;
 };
 
