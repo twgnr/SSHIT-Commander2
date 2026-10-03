@@ -1,6 +1,7 @@
 #include "ncssh/gui/settings_dialog.hpp"
 
 #include "ncssh/core/ai.hpp"
+#include "ncssh/net/cloudai.hpp"
 #include "ncssh/core/configio.hpp"
 #include "ncssh/core/dateformat.hpp"
 #include "ncssh/core/i18n.hpp"
@@ -10,6 +11,7 @@
 #include "ncssh/net/ollama.hpp"
 
 #include <QCheckBox>
+#include <QCoreApplication>
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -207,31 +209,56 @@ QWidget *SettingsDialog::buildAiTab()
     auto *page = new QWidget(this);
     auto *form = new QFormLayout(page);
 
-    m_aiEnabled = new QCheckBox(_t("KI-Assistent aktivieren (lokales Ollama)"), page);
+    m_aiForm = form;
+    m_aiEnabled = new QCheckBox(_t("KI-Assistent aktivieren"), page);
     m_aiEnabled->setChecked(core::getSettingBool(QStringLiteral("ai_enabled"), false));
     form->addRow(QString(), m_aiEnabled);
 
-    auto *urlRow = new QHBoxLayout();
-    // Schluessel aus core/ai — sonst schreibt der Dialog woandershin, als die
-    // KI-Schicht liest, und die Einstellung bleibt wirkungslos.
-    m_aiUrl = new QLineEdit(
-        core::getSettingString(QString::fromLatin1(core::OLLAMA_URL),
-                               QString::fromLatin1(core::OLLAMA_DEFAULT_BASE_URL)), page);
-    auto *testBtn = new QPushButton(_t("Verbindung testen"), page);
-    connect(testBtn, &QPushButton::clicked, this, &SettingsDialog::testOllama);
-    urlRow->addWidget(m_aiUrl, 1);
-    urlRow->addWidget(testBtn);
-    form->addRow(_t("Ollama-Adresse"), urlRow);
+    // Anbieter: lokal (Ollama) oder Cloud (Claude, OpenAI, Gemini, kompatibel).
+    m_aiProvider = new QComboBox(page);
+    for (const QString &provider : core::aiProviders()) {
+        const QString name = provider == QLatin1String("ollama")
+                                 ? _t("Ollama (lokal)")
+                                 : core::aiProviderName(provider);
+        m_aiProvider->addItem(name, provider);
+    }
+    form->addRow(_t("Anbieter"), m_aiProvider);
+
+    // Eingaben je Anbieter vorladen. Schluessel aus core/ai — sonst schreibt der
+    // Dialog woandershin, als die KI-Schicht liest.
+    for (const QString &provider : core::aiProviders()) {
+        const QString urlKey = core::aiUrlKey(provider);
+        if (!urlKey.isEmpty())
+            m_aiUrls.insert(provider, core::getSettingString(urlKey, core::aiDefaultUrl(provider)));
+        const QString model = core::getSettingString(core::aiModelKey(provider));
+        m_aiModels.insert(provider, model.isEmpty() ? core::aiDefaultModel(provider) : model);
+        if (core::isCloudProvider(provider)) {
+            const QString key = core::aiApiKey(provider);
+            m_aiKeys.insert(provider, key);
+            m_aiKeysLoaded.insert(provider, key);
+        }
+    }
+
+    m_aiUrl = new QLineEdit(m_aiUrls.value(QStringLiteral("ollama")), page);
+    form->addRow(_t("Adresse"), m_aiUrl);
+
+    m_aiKey = new QLineEdit(page);
+    m_aiKey->setEchoMode(QLineEdit::Password);
+    m_aiKey->setPlaceholderText(_t("API-Schlüssel — wird im Windows-Schlüsselbund gespeichert"));
+    m_aiKey->setClearButtonEnabled(true);
+    form->addRow(_t("API-Schlüssel"), m_aiKey);
 
     auto *modelRow = new QHBoxLayout();
     m_aiModel = new QComboBox(page);
     m_aiModel->setEditable(true);
-    m_aiModel->setCurrentText(
-        core::getSettingString(QString::fromLatin1(core::AI_MODEL)));
+    m_aiModel->setCurrentText(m_aiModels.value(QStringLiteral("ollama")));
     auto *loadBtn = new QPushButton(_t("Modelle laden"), page);
-    connect(loadBtn, &QPushButton::clicked, this, &SettingsDialog::loadOllamaModels);
+    connect(loadBtn, &QPushButton::clicked, this, &SettingsDialog::loadAiModels);
+    auto *testBtn = new QPushButton(_t("Verbindung testen"), page);
+    connect(testBtn, &QPushButton::clicked, this, &SettingsDialog::testAiConnection);
     modelRow->addWidget(m_aiModel, 1);
     modelRow->addWidget(loadBtn);
+    modelRow->addWidget(testBtn);
     form->addRow(_t("Modell"), modelRow);
 
     m_aiStatus = new QLabel(page);
@@ -241,7 +268,9 @@ QWidget *SettingsDialog::buildAiTab()
 
     // --- Modell herunterladen -------------------------------------------------
     // Vorschlaege mit Groessenangabe; eigene Tags bleiben eintippbar.
-    auto *pullRow = new QHBoxLayout();
+    m_pullRowWidget = new QWidget(page);
+    auto *pullRow = new QHBoxLayout(m_pullRowWidget);
+    pullRow->setContentsMargins(0, 0, 0, 0);
     m_pullModel = new QComboBox(page);
     m_pullModel->setEditable(true);
     m_pullModel->lineEdit()->setPlaceholderText(_t("Modell wählen oder Tag eintippen …"));
@@ -264,19 +293,126 @@ QWidget *SettingsDialog::buildAiTab()
     connect(m_pullButton, &QPushButton::clicked, this, &SettingsDialog::startPull);
     pullRow->addWidget(m_pullModel, 1);
     pullRow->addWidget(m_pullButton);
-    form->addRow(_t("Modell laden"), pullRow);
+    form->addRow(_t("Modell laden"), m_pullRowWidget);
 
     m_pullProgress = new QProgressBar(page);
     m_pullProgress->setVisible(false);
     form->addRow(QString(), m_pullProgress);
 
-    auto *privacy = new QLabel(
-        _t("Modelle werden lokal über Ollama ausgeführt — Inhalte verlassen den Rechner nicht."),
-        page);
-    privacy->setObjectName(QStringLiteral("Muted"));
-    privacy->setWordWrap(true);
-    form->addRow(privacy);
+    m_aiPrivacy = new QLabel(page);
+    m_aiPrivacy->setObjectName(QStringLiteral("Muted"));
+    m_aiPrivacy->setWordWrap(true);
+    form->addRow(m_aiPrivacy);
+
+    // Die "nicht mehr fragen"-Zustimmung je Cloud-Anbieter zuruecknehmen.
+    m_aiConsentReset = new QPushButton(_t("Rückfrage vor dem Senden wieder einschalten"), page);
+    connect(m_aiConsentReset, &QPushButton::clicked, this, [this] {
+        const QString key = QString::fromLatin1(core::AI_CLOUD_CONSENT);
+        QJsonObject consent = QJsonObject::fromVariantMap(core::getSetting(key).toMap());
+        consent.remove(m_aiShownProvider);
+        core::setSetting(key, consent);
+        m_aiStatus->setText(_t("Vor dem nächsten Senden an %1 wird wieder gefragt.")
+                                .arg(core::aiProviderName(m_aiShownProvider)));
+    });
+    form->addRow(QString(), m_aiConsentReset);
+
+    connect(m_aiProvider, &QComboBox::currentIndexChanged, this, [this](int) {
+        stashAiProvider();
+        showAiProvider(m_aiProvider->currentData().toString());
+    });
+    const int index = m_aiProvider->findData(core::aiProvider());
+    m_aiProvider->setCurrentIndex(qMax(0, index));
+    showAiProvider(m_aiProvider->currentData().toString());
     return page;
+}
+
+void SettingsDialog::stashAiProvider()
+{
+    if (m_aiShownProvider.isEmpty())
+        return;
+    if (!core::aiUrlKey(m_aiShownProvider).isEmpty())
+        m_aiUrls.insert(m_aiShownProvider, m_aiUrl->text().trimmed());
+    m_aiModels.insert(m_aiShownProvider, m_aiModel->currentText().trimmed());
+    if (core::isCloudProvider(m_aiShownProvider))
+        m_aiKeys.insert(m_aiShownProvider, m_aiKey->text().trimmed());
+}
+
+void SettingsDialog::showAiProvider(const QString &provider)
+{
+    m_aiShownProvider = provider;
+    const bool local = provider == QLatin1String("ollama");
+    const bool hasUrl = !core::aiUrlKey(provider).isEmpty();
+    const bool cloud = core::isCloudProvider(provider);
+    m_aiForm->setRowVisible(m_aiUrl, hasUrl);
+    m_aiForm->setRowVisible(m_aiKey, cloud);
+    m_aiForm->setRowVisible(m_pullRowWidget, local);
+    m_aiForm->setRowVisible(m_pullProgress, local && m_pullTask);
+    m_aiForm->setRowVisible(m_aiConsentReset, cloud);
+    if (hasUrl)
+        m_aiUrl->setText(m_aiUrls.value(provider));
+    m_aiKey->setText(m_aiKeys.value(provider));
+    m_aiKey->setPlaceholderText(
+        provider == QLatin1String("openai_compat")
+            ? _t("API-Schlüssel (optional) — wird im Windows-Schlüsselbund gespeichert")
+            : _t("API-Schlüssel — wird im Windows-Schlüsselbund gespeichert"));
+    m_aiModel->clear();
+    m_aiModel->setCurrentText(m_aiModels.value(provider));
+    m_aiModel->lineEdit()->setPlaceholderText(
+        local ? QString() : _t("Modell wählen — „Modelle laden“ fragt den Anbieter"));
+    m_aiStatus->clear();
+    m_aiPrivacy->setText(
+        local ? _t("Modelle werden lokal über Ollama ausgeführt — Inhalte verlassen den "
+                   "Rechner nicht.")
+              : _t("Achtung: Terminalausgaben und Dateiinhalte werden an %1 gesendet und "
+                   "dort verarbeitet. Vor dem ersten Senden fragt die App einmal nach. "
+                   "Nutzung kostet je nach Anbieter Geld (Abrechnung über deinen Schlüssel).")
+                    .arg(core::aiProviderName(provider)));
+}
+
+void SettingsDialog::testAiConnection()
+{
+    stashAiProvider();
+    if (m_aiShownProvider == QLatin1String("ollama")) {
+        testOllama();
+        return;
+    }
+    m_aiStatus->setText(_t("Teste Verbindung …"));
+    QCoreApplication::processEvents();
+    try {
+        const QStringList ids = net::cloudListModels(
+            net::CloudTarget{m_aiShownProvider, m_aiUrls.value(m_aiShownProvider),
+                             m_aiModels.value(m_aiShownProvider),
+                             m_aiKeys.value(m_aiShownProvider)});
+        m_aiStatus->setText(_t("✓ Verbunden mit %1 — %2 Modell(e) verfügbar.")
+                                .arg(core::aiProviderName(m_aiShownProvider))
+                                .arg(ids.size()));
+    } catch (const std::exception &exc) {
+        m_aiStatus->setText(QStringLiteral("✗ %1").arg(QString::fromUtf8(exc.what())));
+    }
+}
+
+void SettingsDialog::loadAiModels()
+{
+    stashAiProvider();
+    if (m_aiShownProvider == QLatin1String("ollama")) {
+        loadOllamaModels();
+        return;
+    }
+    m_aiStatus->setText(_t("Lade Modelle …"));
+    QCoreApplication::processEvents();
+    try {
+        const QStringList ids = net::cloudListModels(
+            net::CloudTarget{m_aiShownProvider, m_aiUrls.value(m_aiShownProvider),
+                             m_aiModels.value(m_aiShownProvider),
+                             m_aiKeys.value(m_aiShownProvider)});
+        const QString keep = m_aiModel->currentText();
+        m_aiModel->clear();
+        m_aiModel->addItems(ids);
+        m_aiModel->setCurrentText(keep.isEmpty() && !ids.isEmpty() ? ids.first() : keep);
+        m_aiStatus->setText(_t("✓ %1 Modell(e) verfügbar.").arg(ids.size()));
+    } catch (const std::exception &exc) {
+        m_aiStatus->setText(QStringLiteral("✗ %1").arg(QString::fromUtf8(exc.what())));
+    }
 }
 
 void SettingsDialog::startPull()
@@ -575,9 +711,19 @@ void SettingsDialog::save()
     core::setSetting(QStringLiteral("auto_connect_last"), m_autoConnect->isChecked());
     core::setSetting(QStringLiteral("start_path"), m_startPath->text());
     core::setSetting(QString::fromLatin1(core::AI_ENABLED), m_aiEnabled->isChecked());
-    core::setSetting(QString::fromLatin1(core::OLLAMA_URL), m_aiUrl->text().trimmed());
-    core::setSetting(QString::fromLatin1(core::AI_MODEL),
-                     m_aiModel->currentText().trimmed());
+    stashAiProvider();
+    core::setSetting(QString::fromLatin1(core::AI_PROVIDER), m_aiShownProvider);
+    for (const QString &provider : core::aiProviders()) {
+        const QString urlKey = core::aiUrlKey(provider);
+        if (!urlKey.isEmpty())
+            core::setSetting(urlKey, m_aiUrls.value(provider));
+        core::setSetting(core::aiModelKey(provider), m_aiModels.value(provider));
+        // Nur Geaendertes in den Schluesselbund — sonst liefe jedes Speichern
+        // ueber alle Anbieter-Eintraege.
+        if (core::isCloudProvider(provider)
+            && m_aiKeys.value(provider) != m_aiKeysLoaded.value(provider))
+            core::setAiApiKey(provider, m_aiKeys.value(provider));
+    }
     core::saveShortcuts(mapping);
 
     // Sprache geaendert? Dann ist ein Neustart noetig — fragen und ggf. sofort

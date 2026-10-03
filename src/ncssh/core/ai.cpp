@@ -1,5 +1,6 @@
 #include "ncssh/core/ai.hpp"
 
+#include "ncssh/core/secrets.hpp"
 #include "ncssh/core/settings.hpp"
 
 #include <QFileInfo>
@@ -24,7 +25,117 @@ QString ollamaUrl()
 
 QString aiModel()
 {
-    return getSettingString(QString::fromLatin1(AI_MODEL));
+    const QString provider = aiProvider();
+    const QString model = getSettingString(aiModelKey(provider));
+    return model.isEmpty() ? aiDefaultModel(provider) : model;
+}
+
+// --- Anbieter ------------------------------------------------------------------
+
+QString aiProvider()
+{
+    const QString p = getSettingString(QString::fromLatin1(AI_PROVIDER), net::kProviderOllama);
+    return aiProviders().contains(p) ? p : net::kProviderOllama;
+}
+
+QStringList aiProviders()
+{
+    return {net::kProviderOllama, net::kProviderAnthropic, net::kProviderOpenAi,
+            net::kProviderGemini, net::kProviderOpenAiCompat};
+}
+
+QString aiProviderName(const QString &provider)
+{
+    if (provider == net::kProviderAnthropic)
+        return QStringLiteral("Anthropic Claude");
+    if (provider == net::kProviderOpenAi)
+        return QStringLiteral("OpenAI");
+    if (provider == net::kProviderGemini)
+        return QStringLiteral("Google Gemini");
+    if (provider == net::kProviderOpenAiCompat)
+        return QStringLiteral("OpenAI-kompatibel");
+    return QStringLiteral("Ollama");
+}
+
+bool isCloudProvider(const QString &provider)
+{
+    // OpenAI-kompatibel kann auch ein lokaler Server sein (LM Studio) — die
+    // Rueckfrage schadet dort nicht und schuetzt bei Cloud-Diensten.
+    return provider != net::kProviderOllama;
+}
+
+QString aiModelKey(const QString &provider)
+{
+    // Ollama behaelt den bisherigen Schluessel (bestehende Einstellungen).
+    return provider == net::kProviderOllama ? QString::fromLatin1(AI_MODEL)
+                                            : QStringLiteral("ai_model_") + provider;
+}
+
+QString aiUrlKey(const QString &provider)
+{
+    if (provider == net::kProviderOllama)
+        return QString::fromLatin1(OLLAMA_URL);
+    if (provider == net::kProviderOpenAiCompat)
+        return QStringLiteral("ai_url_openai_compat");
+    return {};
+}
+
+QString aiDefaultModel(const QString &provider)
+{
+    // Nur fuer Claude ein fest vorbelegtes Modell; bei den anderen waehlt man
+    // aus der Liste, die der Anbieter liefert (Modelle wechseln dort laufend).
+    if (provider == net::kProviderAnthropic)
+        return QStringLiteral("claude-opus-5-5");
+    return {};
+}
+
+QString aiDefaultUrl(const QString &provider)
+{
+    if (provider == net::kProviderOllama)
+        return QString::fromLatin1(OLLAMA_DEFAULT_BASE_URL);
+    if (provider == net::kProviderOpenAiCompat)
+        return QStringLiteral("http://localhost:1234/v1");
+    return {};
+}
+
+QString aiApiKey(const QString &provider)
+{
+    return getSecret(QStringLiteral("__ai__"), provider).value_or(QString());
+}
+
+void setAiApiKey(const QString &provider, const QString &key)
+{
+    setSecret(QStringLiteral("__ai__"), provider, key.trimmed());   // leer = loeschen
+}
+
+AiTarget currentAiTarget()
+{
+    AiTarget t;
+    t.provider = aiProvider();
+    t.model = aiModel();
+    const QString urlKey = aiUrlKey(t.provider);
+    if (!urlKey.isEmpty()) {
+        t.baseUrl = getSettingString(urlKey);
+        if (t.baseUrl.isEmpty())
+            t.baseUrl = aiDefaultUrl(t.provider);
+    }
+    if (isCloudProvider(t.provider))
+        t.apiKey = aiApiKey(t.provider);
+    return t;
+}
+
+void chatStream(const AiTarget &target, const QJsonArray &messages,
+                const LineCallback &onText, const CancelTokenPtr &cancel)
+{
+    if (target.provider == net::kProviderOllama) {
+        if (target.model.isEmpty())
+            throw net::OllamaError(QStringLiteral("Kein Modell gewählt (Einstellungen → KI)."));
+        chatStream(target.baseUrl, target.model, messages, QJsonObject{}, onText, cancel);
+        return;
+    }
+    net::cloudChat(net::CloudTarget{target.provider, target.baseUrl, target.model, target.apiKey},
+                   messages, [&onText](const QString &text) { if (onText) onText(text); },
+                   cancel);
 }
 
 // --- Ollama-Anbindung --------------------------------------------------------

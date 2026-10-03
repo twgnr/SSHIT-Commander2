@@ -1,4 +1,5 @@
 #include "ncssh/gui/encoding_converter_dialog.hpp"
+#include "ncssh/gui/ai_consent.hpp"
 
 #include "ncssh/core/ai.hpp"
 #include "ncssh/core/encodings.hpp"
@@ -123,6 +124,9 @@ void EncodingConverterDialog::repairWithAi()
     const QString source = m_preview->toPlainText();
     if (source.trimmed().isEmpty())
         return;
+    const core::AiTarget target = core::currentAiTarget();
+    if (!confirmCloudAi(target.provider, this))
+        return;
     const auto [text, truncated] = core::truncateFile(source);
     m_repairButton->setEnabled(false);
     m_status->setText(_t("KI repariert … (kann je nach Modell dauern)"));
@@ -130,13 +134,11 @@ void EncodingConverterDialog::repairWithAi()
     m_repairPreview->setVisible(true);
     m_repairPreview->clear();
 
-    const QString baseUrl = core::ollamaUrl();
-    const QString model = core::aiModel();
     const QJsonArray messages = core::buildRepairMessages(text);
     m_bridge->stream(
-        [baseUrl, model, messages](const AsyncBridge::EmitLine &emitLine,
-                                   const CancelTokenPtr &cancel) {
-            core::chatStream(baseUrl, model, messages, {}, emitLine, cancel);
+        [target, messages](const AsyncBridge::EmitLine &emitLine,
+                           const CancelTokenPtr &cancel) {
+            core::chatStream(target, messages, emitLine, cancel);
         },
         [this](const QString &chunk) { m_repairPreview->insertPlainText(chunk); },
         [this, truncated] {

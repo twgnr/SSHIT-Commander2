@@ -666,15 +666,23 @@ void MainWindow::openKeyTools()
 
 void MainWindow::showAbout()
 {
-    QMessageBox::about(
-        this, _t("Über SSHIT-Commander"),
-        QStringLiteral("<b>SSHIT-Commander</b><br>"
-                       "%1<br><br>"
-                       "Version %2 (%3)<br>"
-                       "Copyright (c) by Tobias Wagner")
-            .arg(_t("Dual-Pane-Dateimanager mit SSH/SFTP und Terminal."),
-                 QString::fromLatin1(SSHIT_VERSION),
-                 QString::fromLatin1(SSHIT_VERSION_STAGE)));
+    QMessageBox box(this);
+    box.setWindowTitle(_t("Über SSHIT-Commander"));
+    if (!windowIcon().isNull())
+        box.setIconPixmap(windowIcon().pixmap(64, 64));
+    box.setTextFormat(Qt::RichText);
+    box.setText(QStringLiteral("<b>SSHIT-Commander</b><br>"
+                               "%1<br><br>"
+                               "Version %2 (%3)<br>"
+                               "Copyright (c) by Tobias Wagner<br><br>"
+                               "<a href=\"https://www.twgnr.de\">www.twgnr.de</a><br>"
+                               "GitHub: <a href=\"https://github.com/twgnr\">github.com/twgnr</a>")
+                    .arg(_t("Dual-Pane-Dateimanager mit SSH/SFTP und Terminal."),
+                         QString::fromLatin1(SSHIT_VERSION),
+                         QString::fromLatin1(SSHIT_VERSION_STAGE)));
+    // Links anklickbar machen (oeffnen im Standardbrowser).
+    box.setTextInteractionFlags(Qt::TextBrowserInteraction);
+    box.exec();
 }
 
 void MainWindow::renameCurrentTab()

@@ -17,6 +17,7 @@
 #pragma once
 
 #include "ncssh/core/runner.hpp"   // LineCallback, CancelTokenPtr
+#include "ncssh/net/cloudai.hpp"   // Cloud-Anbieter (Claude, OpenAI, Gemini)
 #include "ncssh/net/ollama.hpp"    // HTTP-Schicht
 
 #include <QJsonArray>
@@ -32,9 +33,43 @@ inline constexpr const char *AI_ENABLED = "ai_enabled";
 inline constexpr const char *OLLAMA_URL = "ollama_url";
 inline constexpr const char *AI_MODEL = "ai_model";
 
+inline constexpr const char *AI_PROVIDER = "ai_provider";
+// Einmalige Zustimmung je Cloud-Anbieter (Inhalte verlassen den Rechner).
+inline constexpr const char *AI_CLOUD_CONSENT = "ai_cloud_consent";
+
 bool aiEnabled();
 QString ollamaUrl();
+// Modell des AKTIVEN Anbieters.
 QString aiModel();
+
+// --- Anbieter ------------------------------------------------------------------
+// "ollama" (lokal, Standard) | "anthropic" | "openai" | "openai_compat" | "gemini"
+QString aiProvider();
+QStringList aiProviders();
+QString aiProviderName(const QString &provider);
+bool isCloudProvider(const QString &provider);
+// Einstellungsschluessel je Anbieter (Modell bzw. Adresse; Adresse nur fuer
+// Ollama und OpenAI-kompatibel — sonst leer).
+QString aiModelKey(const QString &provider);
+QString aiUrlKey(const QString &provider);
+QString aiDefaultModel(const QString &provider);
+QString aiDefaultUrl(const QString &provider);
+// API-Schluessel liegen im OS-Schluesselbund, nie in der Einstellungsdatei.
+QString aiApiKey(const QString &provider);
+void setAiApiKey(const QString &provider, const QString &key);
+
+// Alles, was ein Aufruf braucht — im GUI-Thread lesen, im Worker benutzen.
+struct AiTarget {
+    QString provider;
+    QString baseUrl;
+    QString model;
+    QString apiKey;
+};
+AiTarget currentAiTarget();
+
+// Gestreamte Antwort beim Anbieter des Ziels (Ollama oder Cloud). Blockierend.
+void chatStream(const AiTarget &target, const QJsonArray &messages,
+                const LineCallback &onText, const CancelTokenPtr &cancel);
 
 // --- Ollama-Anbindung --------------------------------------------------------
 // Die HTTP-Schicht selbst liegt in net/ollama; hier stehen nur die Adapter,

@@ -7,6 +7,7 @@
 #include <QDialog>
 #include <QHash>
 
+class QFormLayout;
 class QComboBox;
 class QLineEdit;
 class QCheckBox;
@@ -32,6 +33,11 @@ private:
     void save();
     void testOllama();
     void loadOllamaModels();
+    // KI-Anbieter: Eingaben des bisherigen Anbieters merken, neuen anzeigen.
+    void stashAiProvider();
+    void showAiProvider(const QString &provider);
+    void testAiConnection();          // je Anbieter: Ollama-Version bzw. Modellliste
+    void loadAiModels();
     void startPull();                 // Modell ueber Ollama herunterladen
     void updateExecColorButton();
     void pickExecColor();
@@ -65,6 +71,18 @@ private:
 
     // KI
     QCheckBox *m_aiEnabled = nullptr;
+    QComboBox *m_aiProvider = nullptr;
+    QFormLayout *m_aiForm = nullptr;
+    QLineEdit *m_aiKey = nullptr;
+    QLabel *m_aiPrivacy = nullptr;
+    QPushButton *m_aiConsentReset = nullptr;
+    QWidget *m_pullRowWidget = nullptr;
+    QString m_aiShownProvider;
+    // Eingaben je Anbieter (bis zum Speichern nur im Dialog).
+    QHash<QString, QString> m_aiUrls;
+    QHash<QString, QString> m_aiModels;
+    QHash<QString, QString> m_aiKeys;
+    QHash<QString, QString> m_aiKeysLoaded;   // nur Geaendertes in den Schluesselbund
     QLineEdit *m_aiUrl = nullptr;
     QComboBox *m_aiModel = nullptr;
     QComboBox *m_pullModel = nullptr;

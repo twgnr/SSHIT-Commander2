@@ -3,6 +3,7 @@
 #include "ncssh/core/ai.hpp"
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/markdown.hpp"
+#include "ncssh/gui/ai_consent.hpp"
 
 #include <QHBoxLayout>
 #include <QJsonObject>
@@ -25,9 +26,7 @@ AiChatPanel::AiChatPanel(AsyncBridge *bridge, const QJsonArray &messages,
     resize(820, 640);
 
     auto *layout = new QVBoxLayout(this);
-    auto *hint = new QLabel(
-        _t("Das Modell läuft lokal — Inhalte verlassen den Rechner nicht. "
-           "Der Assistent ist rein beratend und führt nichts aus."), this);
+    auto *hint = new QLabel(aiPrivacyHint(core::aiProvider()), this);
     hint->setObjectName(QStringLiteral("Muted"));
     hint->setWordWrap(true);
     layout->addWidget(hint);
@@ -98,10 +97,16 @@ void AiChatPanel::streamAnswer()
         m_status->setText(_t("KI ist nicht aktiviert (Einstellungen → KI)."));
         return;
     }
-    const QString baseUrl = core::ollamaUrl();
-    const QString model = core::aiModel();
-    if (model.isEmpty()) {
+    // Ziel (Anbieter, Modell, Schluessel) im GUI-Thread lesen — der Worker
+    // fasst weder Einstellungen noch den Schluesselbund an.
+    const core::AiTarget target = core::currentAiTarget();
+    if (target.model.isEmpty()) {
         m_status->setText(_t("Kein Modell gewählt (Einstellungen → KI)."));
+        return;
+    }
+    // Cloud-Anbieter: einmalig bestaetigen lassen, dass Inhalte gesendet werden.
+    if (!confirmCloudAi(target.provider, parentWidget() ? parentWidget() : this)) {
+        m_status->setText(_t("Nicht gesendet."));
         return;
     }
 
@@ -110,9 +115,9 @@ void AiChatPanel::streamAnswer()
     const QJsonArray messages = m_messages;
 
     m_task = m_bridge->stream(
-        [baseUrl, model, messages](const AsyncBridge::EmitLine &emitLine,
-                                   const CancelTokenPtr &cancel) {
-            core::chatStream(baseUrl, model, messages, QJsonObject{},
+        [target, messages](const AsyncBridge::EmitLine &emitLine,
+                           const CancelTokenPtr &cancel) {
+            core::chatStream(target, messages,
                              [&emitLine](const QString &chunk) { emitLine(chunk); }, cancel);
         },
         [this](const QString &chunk) { m_pending += chunk; },
