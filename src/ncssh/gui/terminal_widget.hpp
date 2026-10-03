@@ -32,9 +32,13 @@ public:
     void startRemote(const net::SSHSessionPtr &session);
     void stop();
     bool isRunning() const { return m_backend != nullptr; }
+    // Shell des laufenden Terminals: "posix" (Server), "powershell" oder "cmd".
+    QString shellKind() const { return m_shellKind; }
 
     // Sendet Text an die Shell (z.B. ein 'cd' beim Verzeichniswechsel).
     void sendText(const QString &text);
+    // Zwischenablage einfuegen; Zeilenenden werden zu CR wie bei getippter Eingabe.
+    void pasteClipboard();
     // Eigene Meldung der Anwendung anzeigen (nicht an die Shell gesendet).
     void printLocal(const QString &text, bool error = false);
 
@@ -89,6 +93,7 @@ private:
     AsyncBridge *m_bridge;
     std::unique_ptr<AnsiRenderer> m_renderer;
     ShellBackend *m_backend = nullptr;  // Qt-Parent = this
+    QString m_shellKind;
 
     // Vollwertiger Terminal-Emulator (Zellengitter) fuer den Alternate-Screen.
     // Der Primaerschirm laeuft weiter ueber m_renderer (Farben, Rollpuffer,

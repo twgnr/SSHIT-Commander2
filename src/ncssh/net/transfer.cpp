@@ -79,11 +79,21 @@ static void copyFileLocal(const QString &src, const QString &dst,
     }
     QByteArray buf;
     while (!(buf = in.read(kLocalChunk)).isEmpty()) {
-        out.write(buf);
+        // Volle Platte / weggefallenes Netzlaufwerk: abbrechen statt eine
+        // unvollstaendige Datei als "fertig" zu melden.
+        if (out.write(buf) != buf.size())
+            throw std::runtime_error(("Schreiben fehlgeschlagen: " + dst + " ("
+                                      + out.errorString() + ")").toStdString());
         copied += buf.size();
         progress(copied, total);
     }
+    if (in.error() != QFileDevice::NoError)
+        throw std::runtime_error(("Lesen fehlgeschlagen: " + src).toStdString());
+    if (!out.flush())
+        throw std::runtime_error(("Schreiben fehlgeschlagen: " + dst + " ("
+                                  + out.errorString() + ")").toStdString());
     out.setPermissions(in.permissions());
+    out.close();
 }
 
 // Resume-Offset einer lokalen Zieldatei: vorhandene Groesse, falls kleiner als
@@ -110,7 +120,16 @@ static void localCopyTree(const QString &src, const QString &dst, const Progress
             total += it.fileInfo().size();
             files << it.filePath();
         }
-        QDir().mkpath(dst);
+        if (!QDir().mkpath(dst))
+            throw std::runtime_error(("Kann Ordner nicht anlegen: " + dst).toStdString());
+        // Auch leere Unterordner anlegen — sonst fehlen sie im Ziel, und die
+        // Pruefung vor dem Loeschen der Quelle (Verschieben) schlaegt fehl.
+        QDirIterator dirs(src, QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
+                          QDirIterator::Subdirectories);
+        while (dirs.hasNext()) {
+            dirs.next();
+            QDir().mkpath(dst + QLatin1Char('/') + QDir(src).relativeFilePath(dirs.filePath()));
+        }
         qint64 copied = 0;
         for (const QString &fp : files) {
             const QString rel = QDir(src).relativeFilePath(fp);
@@ -131,6 +150,30 @@ static void localCopyTree(const QString &src, const QString &dst, const Progress
 }
 
 // --- SFTP-gestuetztes Streaming einer einzelnen Datei ----------------------
+
+// Schliesst ein SFTP-Handle beim Verlassen des Blocks — auch wenn der
+// Fortschritts-Callback mit "cancelled" wirft oder ein Fehler auftritt. Einer
+// sterbenden Session (closing) wird nichts mehr zugemutet.
+namespace {
+class SftpHandleGuard {
+public:
+    SftpHandleGuard(SFTPFileSystem *fs, LIBSSH2_SFTP_HANDLE *h) : m_fs(fs), m_h(h) {}
+    ~SftpHandleGuard()
+    {
+        if (!m_h)
+            return;
+        std::lock_guard<std::recursive_mutex> lock(m_fs->session()->mutex());
+        if (!m_fs->session()->closing)
+            libssh2_sftp_close(m_h);
+    }
+    SftpHandleGuard(const SftpHandleGuard &) = delete;
+    SftpHandleGuard &operator=(const SftpHandleGuard &) = delete;
+
+private:
+    SFTPFileSystem *m_fs;
+    LIBSSH2_SFTP_HANDLE *m_h;
+};
+} // namespace
 
 static void streamUpload(const QString &localPath, SFTPFileSystem *sftp, const QString &remotePath,
                          qint64 baseCopied, qint64 total, const ProgressFn &progress,
@@ -155,6 +198,7 @@ static void streamUpload(const QString &localPath, SFTPFileSystem *sftp, const Q
         if (offset > 0)
             libssh2_sftp_seek64(h, static_cast<libssh2_uint64_t>(offset));
     }
+    SftpHandleGuard guard(sftp, h);
     qint64 copied = baseCopied;
     if (offset > 0) {
         in.seek(offset);
@@ -172,20 +216,15 @@ static void streamUpload(const QString &localPath, SFTPFileSystem *sftp, const Q
                     throw std::runtime_error("Sitzung geschlossen.");
                 n = libssh2_sftp_write(h, buf.constData() + sent, buf.size() - sent);
             }
-            if (n < 0) {
-                std::lock_guard<std::recursive_mutex> lock(mutex);
-                if (!sftp->session()->closing)
-                    libssh2_sftp_close(h);
+            if (n < 0)
                 throw std::runtime_error(("Upload fehlgeschlagen: " + remotePath).toStdString());
-            }
             sent += n;
         }
         copied += buf.size();
         progress(copied, total);
     }
-    std::lock_guard<std::recursive_mutex> lock(mutex);
-    if (!sftp->session()->closing)
-        libssh2_sftp_close(h);
+    if (in.error() != QFileDevice::NoError)
+        throw std::runtime_error(("Lesen fehlgeschlagen: " + localPath).toStdString());
 }
 
 static void streamDownload(SFTPFileSystem *sftp, const QString &remotePath, const QString &localPath,
@@ -208,6 +247,7 @@ static void streamDownload(SFTPFileSystem *sftp, const QString &remotePath, cons
         if (offset > 0)
             libssh2_sftp_seek64(h, static_cast<libssh2_uint64_t>(offset));
     }
+    SftpHandleGuard guard(sftp, h);
     qint64 copied = baseCopied;
     if (offset > 0) {
         out.seek(offset);
@@ -223,15 +263,20 @@ static void streamDownload(SFTPFileSystem *sftp, const QString &remotePath, cons
                 throw std::runtime_error("Sitzung geschlossen.");
             n = libssh2_sftp_read(h, buf.data(), buf.size());
         }
-        if (n <= 0)
-            break;
-        out.write(buf.data(), n);
+        if (n == 0)
+            break;   // Dateiende
+        // Negativ = Fehler (Timeout, Verbindung weg) — frueher als Dateiende
+        // behandelt: die Datei war abgeschnitten und galt als "fertig".
+        if (n < 0)
+            throw std::runtime_error(("Download fehlgeschlagen: " + remotePath).toStdString());
+        if (out.write(buf.data(), n) != n)
+            throw std::runtime_error(("Schreiben fehlgeschlagen: " + localPath + " ("
+                                      + out.errorString() + ")").toStdString());
         copied += n;
         progress(copied, total);
     }
-    std::lock_guard<std::recursive_mutex> lock(mutex);
-    if (!sftp->session()->closing)
-        libssh2_sftp_close(h);
+    if (!out.flush())
+        throw std::runtime_error(("Schreiben fehlgeschlagen: " + localPath).toStdString());
 }
 
 // Kopiert EINE Datei mit dem schnellsten passenden Pfad.
@@ -325,6 +370,16 @@ void transferWithProgress(FileSystemProvider *src, const QString &srcPath,
     auto *lsrc = dynamic_cast<LocalFileSystem *>(src);
     auto *ldst = dynamic_cast<LocalFileSystem *>(dst);
     if (lsrc && ldst) {
+        // Letzte Sicherung (die Oberflaeche prueft schon): eine Datei auf sich
+        // selbst zu kopieren wuerde sie beim Oeffnen des Ziels leeren; ein
+        // Ordner in sich selbst wuchse endlos.
+        const QString a = QFileInfo(srcPath).absoluteFilePath();
+        const QString b = QFileInfo(dstPath).absoluteFilePath();
+        if (a.compare(b, Qt::CaseInsensitive) == 0)
+            throw std::runtime_error(("Quelle und Ziel sind identisch: " + srcPath).toStdString());
+        if (QFileInfo(srcPath).isDir() && b.startsWith(a + QLatin1Char('/'), Qt::CaseInsensitive))
+            throw std::runtime_error(("Ordner kann nicht in sich selbst kopiert werden: " + srcPath)
+                                         .toStdString());
         localCopyTree(srcPath, dstPath, progress, resume);
         return;
     }
@@ -361,12 +416,12 @@ void transferWithProgress(FileSystemProvider *src, const QString &srcPath,
     }
 
     // Verzeichnis: Baum einsammeln, dann Datei fuer Datei mit Gesamtfortschritt.
+    // dstPath ist IMMER der Zielordner selbst (wie lokal). Existiert er schon,
+    // wird hinein gemischt — frueher entstand dann "ziel/name/name", auch beim
+    // Fortsetzen/Wiederholen, und die Pruefung vor dem Loeschen der Quelle
+    // (Verschieben) verglich den falschen Ordner.
     std::vector<std::tuple<QString, QString, qint64>> tree;
-    // scp-Semantik: existiert das Zielverzeichnis, wird HINEIN gemischt.
-    QString effectiveDst = dstPath;
-    if (pathIsDir(dst, dstPath))
-        effectiveDst = dst->join(dstPath, src->basename(srcPath));
-    collectTree(src, srcPath, dst, effectiveDst, tree);
+    collectTree(src, srcPath, dst, dstPath, tree);
     if (tree.empty()) {
         progress(0, 0);
         return;

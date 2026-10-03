@@ -1534,7 +1534,24 @@ void FilePanel::opRename()
     if (target.isEmpty() || target == path)
         return;
     m_bridge->run(
-        [provider, path, target] { provider->rename(path, target); },
+        [provider, path, target] {
+            // Vorhandenes Ziel nicht wortlos ersetzen (sudo/mv wuerde zudem in
+            // einen vorhandenen Ordner HINEIN verschieben). Ausnahme: dieselbe
+            // Datei nur in anderer Gross-/Kleinschreibung (lokal, NTFS).
+            const Qt::CaseSensitivity cs =
+                provider->isRemote ? Qt::CaseSensitive : Qt::CaseInsensitive;
+            const bool sameFile = QDir::cleanPath(QDir::fromNativeSeparators(path))
+                                      .compare(QDir::cleanPath(QDir::fromNativeSeparators(target)),
+                                               cs) == 0;
+            if (!sameFile) {
+                const QString name = provider->basename(target);
+                for (const FileEntry &e : provider->listDir(provider->parent(target)))
+                    if (e.type != core::EntryType::Parent && e.name.compare(name, cs) == 0)
+                        throw std::runtime_error(
+                            _t("„%1“ existiert bereits im Zielordner.").arg(name).toStdString());
+            }
+            provider->rename(path, target);
+        },
         [this] { refresh(); },
         [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }
@@ -1606,9 +1623,20 @@ void FilePanel::opNewFile()
     if (!ok || name.isEmpty())
         return;
     core::FileSystemProvider *provider = m_provider;
-    const QString target = provider->join(m_path, name);
+    const QString dir = m_path;
+    const QString target = provider->join(dir, name);
     m_bridge->run(
-        [provider, target] { provider->writeBytes(target, QByteArray()); },
+        [provider, dir, name, target] {
+            // Vorhandene Datei NICHT anfassen — writeBytes wuerde sie leeren.
+            // Frisch listen statt der (evtl. veralteten) Anzeige zu trauen.
+            const Qt::CaseSensitivity cs =
+                provider->isRemote ? Qt::CaseSensitive : Qt::CaseInsensitive;
+            for (const FileEntry &e : provider->listDir(dir))
+                if (e.name.compare(name, cs) == 0)
+                    throw std::runtime_error(
+                        _t("„%1“ existiert bereits.").arg(name).toStdString());
+            provider->writeBytes(target, QByteArray());
+        },
         [this] { refresh(); },
         [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
 }

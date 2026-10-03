@@ -8,6 +8,8 @@
 #include <QDialog>
 #include <QPlainTextEdit>
 
+#include <functional>
+
 class QLineEdit;
 class QLabel;
 class QComboBox;
@@ -46,12 +48,18 @@ public:
     EditorDialog(AsyncBridge *bridge, core::FileSystemProvider *provider,
                  const QString &path, QWidget *parent = nullptr);
 
+    // Ungespeicherte Aenderungen? (Tab/App schliessen fragt dann nach.)
+    bool isDirty() const { return m_dirty && !m_readOnly; }
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
     void load();
-    void save(bool saveAs);
+    // onSaved laeuft nur nach ERFOLGREICHEM Schreiben (z. B. Fenster schliessen).
+    void save(bool saveAs, std::function<void()> onSaved = {});
+    void writeFile(const QString &target, const QByteArray &bytes,
+                   std::function<void()> onSaved);
     void findNext(bool backwards = false);
     void updateMatches();   // Suchtreffer in der Minimap markieren
     void replaceCurrent(bool all);

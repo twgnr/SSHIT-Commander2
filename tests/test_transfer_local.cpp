@@ -370,3 +370,64 @@ TEST(transfer, direction_and_verify_tree)
     dst.files.insert(QStringLiteral("/d/a.txt"), QByteArrayLiteral("kurz"));
     CHECK(!verifyTree(&src, QStringLiteral("/s"), &dst, QStringLiteral("/d")));
 }
+
+// --- Runde 1 (Datenverlust) -------------------------------------------------
+
+TEST(transfer, existing_target_dir_is_merged_not_nested)
+{
+    // Frueher: existierte das Ziel schon (Fortsetzen, Wiederholen, "ueber-
+    // schreiben"), landete die Kopie in /d/s/… statt in /d/… — und die Pruefung
+    // vor dem Loeschen der Quelle (Verschieben) verglich den falschen Ordner.
+    FakeFS src;
+    src.dirs.insert(QStringLiteral("/s"));
+    src.files.insert(QStringLiteral("/s/a.txt"), QByteArrayLiteral("hello"));
+    FakeFS dst;
+    dst.dirs.insert(QStringLiteral("/d"));
+    transferWithProgress(&src, QStringLiteral("/s"), &dst, QStringLiteral("/d"),
+                         [](qint64, qint64) {});
+    CHECK_EQ(dst.files.value(QStringLiteral("/d/a.txt")), QByteArrayLiteral("hello"));
+    CHECK(!dst.files.contains(QStringLiteral("/d/s/a.txt")));
+    CHECK(verifyTree(&src, QStringLiteral("/s"), &dst, QStringLiteral("/d")));
+}
+
+TEST(transfer, local_copy_onto_itself_is_refused_and_file_intact)
+{
+    QTemporaryDir tmp;
+    CHECK(tmp.isValid());
+    const QString file = tmp.filePath(QStringLiteral("wichtig.txt"));
+    QFile f(file);
+    CHECK(f.open(QIODevice::WriteOnly));
+    f.write("Inhalt");
+    f.close();
+    LocalFileSystem fs;
+    bool threw = false;
+    try {
+        // Andere Schreibweise desselben Pfads (Backslashes, Gross/Klein).
+        transferWithProgress(&fs, file, &fs,
+                             QDir::toNativeSeparators(file).toUpper(), [](qint64, qint64) {});
+    } catch (const std::exception &) {
+        threw = true;
+    }
+    CHECK(threw);
+    QFile in(file);
+    CHECK(in.open(QIODevice::ReadOnly));
+    CHECK_EQ(in.readAll(), QByteArrayLiteral("Inhalt"));   // nicht geleert
+}
+
+TEST(transfer, local_dir_copy_keeps_empty_subdirs)
+{
+    QTemporaryDir tmp;
+    CHECK(tmp.isValid());
+    QDir().mkpath(tmp.filePath(QStringLiteral("src/leer/tiefer")));
+    QFile f(tmp.filePath(QStringLiteral("src/datei.txt")));
+    CHECK(f.open(QIODevice::WriteOnly));
+    f.write("x");
+    f.close();
+    LocalFileSystem fs;
+    transferWithProgress(&fs, tmp.filePath(QStringLiteral("src")), &fs,
+                         tmp.filePath(QStringLiteral("dst")), [](qint64, qint64) {});
+    CHECK(QFileInfo(tmp.filePath(QStringLiteral("dst/leer/tiefer"))).isDir());
+    // Damit besteht auch die Pruefung vor dem Loeschen beim Verschieben.
+    CHECK(verifyTree(&fs, tmp.filePath(QStringLiteral("src")), &fs,
+                     tmp.filePath(QStringLiteral("dst"))));
+}

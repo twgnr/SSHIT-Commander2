@@ -58,6 +58,7 @@ private:
     QCheckBox *m_hideHidden = nullptr;
     QCheckBox *m_showIcons = nullptr;
     QCheckBox *m_restoreTabs = nullptr;
+    QComboBox *m_localShell = nullptr;
     QCheckBox *m_confirmCopy = nullptr;
     QCheckBox *m_confirmDelete = nullptr;
     QCheckBox *m_naturalSort = nullptr;

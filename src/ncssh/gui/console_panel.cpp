@@ -6,6 +6,7 @@
 #include "ncssh/core/ai.hpp"
 #include "ncssh/core/filesystem.hpp"
 #include "ncssh/gui/ai_chat_panel.hpp"
+#include "ncssh/gui/shell_backends.hpp"
 #include "ncssh/gui/terminal_widget.hpp"
 
 #include <QDir>
@@ -173,7 +174,7 @@ void ConsolePanel::setCwd(const QString &cwd)
     m_prompt->setToolTip(cwd);
     // Beim Verzeichniswechsel der Pane ein 'cd' ins laufende Terminal senden.
     if (changed && !cwd.isEmpty() && m_terminal->isRunning())
-        m_terminal->sendText(QStringLiteral("cd \"%1\"\r").arg(cwd));
+        m_terminal->sendText(cdCommand(m_terminal->shellKind(), cwd) + QStringLiteral("\r"));
 }
 
 void ConsolePanel::setDocked(bool docked)

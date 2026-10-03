@@ -231,6 +231,18 @@ AltScan scanAltTransition(const QString &s, int start)
 }
 }  // namespace
 
+void TerminalWidget::pasteClipboard()
+{
+    QString text = QApplication::clipboard()->text();
+    if (text.isEmpty())
+        return;
+    // Getippte Eingabe endet mit CR — LF bzw. CRLF aus der Zwischenablage
+    // sonst als doppelte bzw. fremde Zeilenenden.
+    text.replace(QStringLiteral("\r\n"), QStringLiteral("\r"));
+    text.replace(QLatin1Char('\n'), QLatin1Char('\r'));
+    sendText(text);
+}
+
 void TerminalWidget::printLocal(const QString &text, bool error)
 {
     // Eigene Zeile, farbig abgesetzt (Cyan = Info, Rot = Fehler).
@@ -358,6 +370,7 @@ void TerminalWidget::paintEmulator()
 
 void TerminalWidget::startLocal()
 {
+    m_shellKind = localShellKind();
     auto *backend = new LocalShellBackend(this);
     attachBackend(backend);
     backend->start(columns(), rows());
@@ -365,6 +378,10 @@ void TerminalWidget::startLocal()
 
 void TerminalWidget::startRemote(const net::SSHSessionPtr &session)
 {
+    // Windows-Server (OpenSSH) starten standardmaessig cmd, sonst POSIX-Shell.
+    m_shellKind = (session && session->osType == QLatin1String("windows"))
+                      ? QStringLiteral("cmd")
+                      : QStringLiteral("posix");
     if (!session)
         return;
     auto *backend = new RemoteShellBackend(m_bridge, this);
@@ -406,7 +423,13 @@ void TerminalWidget::keyPressEvent(QKeyEvent *event)
             return;
         }
         if (event->key() == Qt::Key_V) {
-            sendText(QApplication::clipboard()->text());
+            pasteClipboard();
+            return;
+        }
+        if (event->key() == Qt::Key_Z) {
+            // Echtes Strg+Z (0x1A): Vordergrundprogramm anhalten (bash: fg
+            // holt es zurueck) — einfaches Strg+Z ist jetzt Rueckgaengig.
+            sendText(QString(QChar(0x1A)));
             return;
         }
         if (event->key() == Qt::Key_F) {   // Suche im Rollpuffer
@@ -432,7 +455,25 @@ void TerminalWidget::keyPressEvent(QKeyEvent *event)
         return;
     }
     if ((mods & Qt::ShiftModifier) && event->key() == Qt::Key_Insert) {
-        sendText(QApplication::clipboard()->text());
+        pasteClipboard();
+        return;
+    }
+    // Strg+V = einfuegen (wie Windows Terminal). Das Steuerzeichen 0x16
+    // ("naechstes Zeichen woertlich") braucht im Terminal kaum jemand.
+    if ((mods & Qt::ControlModifier) && !(mods & Qt::ShiftModifier)
+        && event->key() == Qt::Key_V) {
+        pasteClipboard();
+        return;
+    }
+    // Strg+Z = Rueckgaengig in der Eingabezeile. bash/zsh (readline/zle)
+    // binden Undo auf Strg+_ (0x1F); 0x1A wuerde stattdessen das laufende
+    // Programm anhalten. In Vollbild-Programmen (vim, less, mc) bleibt Strg+Z
+    // unveraendert. Lokal reicht die Shell 0x1A selbst weiter (PowerShell:
+    // Rueckgaengig, cmd kennt kein Rueckgaengig).
+    if ((mods & Qt::ControlModifier) && !(mods & Qt::ShiftModifier)
+        && event->key() == Qt::Key_Z && !m_altScreen
+        && m_shellKind == QLatin1String("posix")) {
+        sendText(QString(QChar(0x1F)));
         return;
     }
     // Suchleiste offen: Esc schliesst, F3 blaettert durch die Treffer.
@@ -525,7 +566,7 @@ void TerminalWidget::contextMenuEvent(QContextMenuEvent *event)
     if (chosen == copyAct)
         copy();
     else if (chosen == pasteAct)
-        sendText(QApplication::clipboard()->text());
+        pasteClipboard();
     else if (chosen == copyAllAct)
         QApplication::clipboard()->setText((m_altScreen && m_emu) ? m_emu->screenText()
                                                                   : toPlainText());

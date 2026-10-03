@@ -72,6 +72,9 @@ private:
     void openMacroManager();
     void ensureMacroDialog();     // legt m_macroDialog bei Bedarf an
     void saveSession();      // offene Tabs fuer die Wiederherstellung sichern
+    // Fragt jeden geaenderten Editor unterhalb von scope ("speichern?").
+    // false = Schliessen abbrechen (Abbrechen gewaehlt oder Speichern laeuft).
+    bool closeDirtyEditors(QWidget *scope);
     void restoreSession();
     void applyThemeByName(const QString &name);
     void buildStatusBar();

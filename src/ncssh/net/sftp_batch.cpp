@@ -146,8 +146,11 @@ BatchResult runSftpBatch(const QString &script, FileSystemProvider *local,
                     throw std::runtime_error("put: lokale Quelle fehlt");
                 const QString lp = resolveLocal(lcwd, tok[1]);
                 const QString base = QFileInfo(lp).fileName();
-                const QString rp = (argCount >= 2) ? resolveRemote(remote, rcwd, tok[2])
-                                                   : remote->join(rcwd, base);
+                QString rp = (argCount >= 2) ? resolveRemote(remote, rcwd, tok[2])
+                                             : remote->join(rcwd, base);
+                // scp-Semantik: Ziel ist ein vorhandener Ordner -> hinein.
+                if (argCount >= 2 && remote->isDir(rp))
+                    rp = remote->join(rp, base);
                 transfer(local, lp, remote, rp);
                 logLine(QStringLiteral("✓ put %1 → %2").arg(lp, rp));
             } else if (cmd == QLatin1String("get")) {
@@ -155,8 +158,10 @@ BatchResult runSftpBatch(const QString &script, FileSystemProvider *local,
                     throw std::runtime_error("get: entfernte Quelle fehlt");
                 const QString rp = resolveRemote(remote, rcwd, tok[1]);
                 const QString base = remote->basename(rp);
-                const QString lp = (argCount >= 2) ? resolveLocal(lcwd, tok[2])
-                                                   : resolveLocal(lcwd, base);
+                QString lp = (argCount >= 2) ? resolveLocal(lcwd, tok[2])
+                                             : resolveLocal(lcwd, base);
+                if (argCount >= 2 && QFileInfo(lp).isDir())
+                    lp = QDir(lp).filePath(base);
                 transfer(remote, rp, local, lp);
                 logLine(QStringLiteral("✓ get %1 → %2").arg(rp, lp));
             } else {

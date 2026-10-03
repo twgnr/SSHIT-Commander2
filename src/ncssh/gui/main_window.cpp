@@ -18,6 +18,7 @@
 #include "ncssh/gui/bulk_rename_dialog.hpp"
 #include "ncssh/gui/clipboard_manager.hpp"
 #include "ncssh/gui/command_palette.hpp"
+#include "ncssh/gui/editor_dialog.hpp"
 #include "ncssh/gui/help_dialog.hpp"
 #include "ncssh/gui/icons.hpp"
 #include "ncssh/gui/theme_editor_dialog.hpp"
@@ -212,6 +213,10 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
         if (m_tabs->count() <= 1)
             return;
         QWidget *w = m_tabs->widget(index);
+        // Geaenderte Editoren dieses Tabs wuerden sonst ohne Rueckfrage mit
+        // ihm zerstoert — ihre Aenderungen waeren weg.
+        if (!closeDirtyEditors(w))
+            return;
         // Offene Verbindungen nicht stillschweigend kappen.
         if (auto *ws = qobject_cast<Workspace *>(w); ws && ws->isConnected()) {
             if (QMessageBox::question(
@@ -273,8 +278,37 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    // Ungespeicherte Editoren zuerst — beim Beenden wurden sie bisher ohne
+    // Rueckfrage zerstoert.
+    if (!closeDirtyEditors(this)) {
+        event->ignore();
+        return;
+    }
     saveSession();
     QMainWindow::closeEvent(event);
+}
+
+bool MainWindow::closeDirtyEditors(QWidget *scope)
+{
+    if (!scope)
+        return true;
+    for (const QPointer<EditorDialog> editor : scope->findChildren<EditorDialog *>()) {
+        if (!editor || !editor->isDirty())
+            continue;
+        editor->show();
+        editor->raise();
+        editor->activateWindow();
+        // close() laeuft durch closeEvent: Speichern / Verwerfen / Abbrechen.
+        // Bei "Speichern" schliesst der Editor erst nach erfolgreichem Schreiben
+        // selbst — bis dahin hier abbrechen; danach erneut schliessen.
+        if (!editor->close()) {
+            if (editor && editor->isDirty())
+                statusBar()->showMessage(
+                    _t("Schließen abgebrochen — ungespeicherte Änderungen im Editor."), 8000);
+            return false;
+        }
+    }
+    return true;
 }
 
 void MainWindow::saveSession()

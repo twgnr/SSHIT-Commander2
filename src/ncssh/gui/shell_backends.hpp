@@ -34,6 +34,18 @@ signals:
     void closed();
 };
 
+// Lokale Shell (Einstellung "local_shell"): "powershell" (Standard; pwsh 7,
+// falls installiert, sonst Windows PowerShell) oder "cmd".
+QString localShellKind();
+// Kommandozeile fuer CreateProcess (leer = nicht gefunden).
+QString localShellCommand(const QString &kind);
+
+// Befehl "in dieses Verzeichnis wechseln" fuer die jeweilige Shell — mit
+// korrektem Quoting, damit Pfade mit Leerzeichen, $, `, " oder ' weder
+// brechen noch etwas ausfuehren ("cd \"$(rm …)\"" lief in bash!).
+// shell: "posix" (Server), "powershell" oder "cmd".
+QString cdCommand(const QString &shell, const QString &path);
+
 class LocalShellBackend : public ShellBackend {
     Q_OBJECT
 public:

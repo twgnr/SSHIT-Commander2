@@ -1149,8 +1149,15 @@ std::vector<FileEntry> SFTPFileSystem::listDir(const QString &path)
     while (true) {
         const int rc = libssh2_sftp_readdir_ex(handle, name, sizeof(name),
                                                 longentry, sizeof(longentry), &attrs);
-        if (rc <= 0)
+        if (rc == 0)
             break;
+        if (rc < 0) {
+            // Fehler (Timeout, Verbindung weg) frueher als Listenende gewertet:
+            // die Liste war still unvollstaendig — fatal z. B. fuer die Pruefung
+            // vor dem Loeschen beim Verschieben.
+            libssh2_sftp_closedir(handle);
+            fail(QStringLiteral("Verzeichnis nicht vollständig lesbar: %1").arg(path));
+        }
         const QString fn = QString::fromUtf8(name, rc);
         if (fn == QLatin1String(".") || fn == QLatin1String(".."))
             continue;
@@ -1220,14 +1227,23 @@ void SFTPFileSystem::mkdir(const QString &path)
 void SFTPFileSystem::remove(const QString &path, bool recursive)
 {
     std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
-    if (isDir(path)) {
+    // lstat statt stat: ein Symlink auf einen Ordner ist KEIN Ordner. Frueher
+    // wurde er wie einer behandelt und rekursiv geleert — den Link "www" zu
+    // loeschen leerte /var/www. Links werden nur selbst entfernt (unlink).
+    LIBSSH2_SFTP_ATTRIBUTES attrs;
+    const bool known =
+        libssh2_sftp_lstat(m_session->sftp(), path.toUtf8().constData(), &attrs) == 0
+        && (attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS);
+    const bool realDir = known && LIBSSH2_SFTP_S_ISDIR(attrs.permissions);
+    if (realDir) {
         if (recursive) {
             for (const FileEntry &e : listDir(path)) {
                 if (e.type == core::EntryType::Parent)
                     continue;
                 remove(join(path, e.name), true);
             }
-            libssh2_sftp_rmdir(m_session->sftp(), path.toUtf8().constData());
+            if (libssh2_sftp_rmdir(m_session->sftp(), path.toUtf8().constData()) != 0)
+                fail(QStringLiteral("Verzeichnis konnte nicht gelöscht werden: %1").arg(path));
         } else {
             if (libssh2_sftp_rmdir(m_session->sftp(), path.toUtf8().constData()) != 0)
                 fail(QStringLiteral("Verzeichnis nicht leer oder gesperrt: %1").arg(path));
@@ -1264,8 +1280,16 @@ QByteArray SFTPFileSystem::readBytes(const QString &path, qint64 maxBytes)
             n = libssh2_sftp_read(handle, buf.data(),
                                   qMin<qint64>(qint64(buf.size()), maxBytes - out.size()));
         }
-        if (n <= 0)
-            break;
+        if (n == 0)
+            break;   // Dateiende
+        if (n < 0) {
+            // Lesefehler frueher als Dateiende gewertet: der Editor oeffnete
+            // eine abgeschnittene Datei, Speichern schrieb sie gekuerzt zurueck.
+            std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
+            if (!m_session->closing && m_session->raw())
+                libssh2_sftp_close(handle);
+            fail(QStringLiteral("Lesen fehlgeschlagen: %1").arg(path));
+        }
         out.append(buf.data(), n);
     }
     std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
@@ -1326,9 +1350,32 @@ void SFTPFileSystem::rename(const QString &oldPath, const QString &newPath)
 {
     std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
     LIBSSH2_SFTP *sftp = m_session->sftp();
-    libssh2_sftp_unlink(sftp, newPath.toUtf8().constData());  // best-effort overwrite
-    if (libssh2_sftp_rename(sftp, oldPath.toUtf8().constData(), newPath.toUtf8().constData()) != 0)
+    const QByteArray from = oldPath.toUtf8();
+    const QByteArray to = newPath.toUtf8();
+    // Zuerst direkt versuchen — klappt, wenn das Ziel nicht existiert, und auf
+    // Windows-Servern auch bei reiner Gross-/Kleinschreibung ("Readme" ->
+    // "README"). Frueher wurde das Ziel VORHER geloescht: dort war das die
+    // Datei selbst, und sie war weg.
+    if (libssh2_sftp_rename(sftp, from.constData(), to.constData()) == 0)
+        return;
+    // SFTPv3-Server ueberschreiben nicht. Vorhandenes Ziel erst beiseite
+    // legen und nur nach erfolgreichem Umbenennen entfernen — schlaegt es fehl,
+    // kommt das Ziel zurueck.
+    LIBSSH2_SFTP_ATTRIBUTES attrs;
+    if (libssh2_sftp_lstat(sftp, to.constData(), &attrs) != 0)
         fail(QStringLiteral("Umbenennen fehlgeschlagen: %1 → %2").arg(oldPath, newPath));
+    const QByteArray backup =
+        (newPath + QStringLiteral(".sshit-bak-%1").arg(QDateTime::currentMSecsSinceEpoch())).toUtf8();
+    if (libssh2_sftp_rename(sftp, to.constData(), backup.constData()) != 0)
+        fail(QStringLiteral("Umbenennen fehlgeschlagen (Ziel nicht ersetzbar): %1").arg(newPath));
+    if (libssh2_sftp_rename(sftp, from.constData(), to.constData()) != 0) {
+        libssh2_sftp_rename(sftp, backup.constData(), to.constData());   // Ziel zurueck
+        fail(QStringLiteral("Umbenennen fehlgeschlagen: %1 → %2").arg(oldPath, newPath));
+    }
+    if (LIBSSH2_SFTP_S_ISDIR(attrs.permissions) && (attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS))
+        remove(QString::fromUtf8(backup), true);
+    else
+        libssh2_sftp_unlink(sftp, backup.constData());
 }
 
 void SFTPFileSystem::symlink(const QString &target, const QString &linkPath)

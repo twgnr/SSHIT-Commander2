@@ -169,6 +169,15 @@ QWidget *SettingsDialog::buildGeneralTab()
     m_confirmDelete->setChecked(core::getSettingBool(QStringLiteral("confirm_delete"), true));
     form->addRow(QString(), m_confirmDelete);
 
+    // Shell des lokalen Terminals (gilt fuer neu gestartete Terminals).
+    m_localShell = new QComboBox(page);
+    m_localShell->addItem(_t("PowerShell (Strg+Z/Strg+Y = Rückgängig/Wiederholen)"),
+                          QStringLiteral("powershell"));
+    m_localShell->addItem(_t("Eingabeaufforderung (cmd)"), QStringLiteral("cmd"));
+    m_localShell->setCurrentIndex(qMax(0, m_localShell->findData(
+        core::getSettingString(QStringLiteral("local_shell"), QStringLiteral("powershell")))));
+    form->addRow(_t("Lokale Shell (Terminal)"), m_localShell);
+
     m_restoreTabs = new QCheckBox(_t("Tabs beim Start wiederherstellen"), page);
     m_restoreTabs->setChecked(core::getSettingBool(QStringLiteral("restore_tabs"), true));
     form->addRow(QString(), m_restoreTabs);
@@ -708,6 +717,7 @@ void SettingsDialog::save()
     core::setSetting(QStringLiteral("confirm_copy"), m_confirmCopy->isChecked());
     core::setSetting(QStringLiteral("confirm_delete"), m_confirmDelete->isChecked());
     core::setSetting(QStringLiteral("restore_tabs"), m_restoreTabs->isChecked());
+    core::setSetting(QStringLiteral("local_shell"), m_localShell->currentData().toString());
     core::setSetting(QStringLiteral("auto_connect_last"), m_autoConnect->isChecked());
     core::setSetting(QStringLiteral("start_path"), m_startPath->text());
     core::setSetting(QString::fromLatin1(core::AI_ENABLED), m_aiEnabled->isChecked());

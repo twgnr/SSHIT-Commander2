@@ -13,6 +13,7 @@
 #include <QCloseEvent>
 #include <QTimer>
 #include <QFileSystemWatcher>
+#include <QFile>
 #include <QFileInfo>
 #include <QComboBox>
 #include <QFileDialog>
@@ -298,6 +299,17 @@ void EditorDialog::watchFile()
 
 void EditorDialog::onFileChangedExternally()
 {
+    // Das eigene Speichern loest den Watcher ebenfalls aus. Steht auf der
+    // Platte genau das, was wir zuletzt geschrieben/gelesen haben, ist nichts
+    // extern passiert — sonst sprang der Cursor nach Strg+S an den Anfang, und
+    // wer schon weitertippte, wurde zum Verwerfen seiner Aenderungen gefragt.
+    if (!m_provider->isRemote) {
+        QFile f(m_path);
+        if (f.open(QIODevice::ReadOnly) && f.readAll() == m_raw) {
+            watchFile();
+            return;
+        }
+    }
     // Bei ungespeicherten Aenderungen nicht ungefragt ueberschreiben.
     if (m_dirty) {
         const auto answer = QMessageBox::question(
@@ -461,7 +473,7 @@ void EditorDialog::onSyntaxChosen()
     applyAutoSyntax();
 }
 
-void EditorDialog::save(bool saveAs)
+void EditorDialog::save(bool saveAs, std::function<void()> onSaved)
 {
     if (m_readOnly) {
         QMessageBox::information(this, _t("Schreibgeschützt"),
@@ -503,17 +515,58 @@ void EditorDialog::save(bool saveAs)
         m_encodingBox->setCurrentIndex(qMax(0, m_encodingBox->findData(m_encoding)));
         bytes = content.toUtf8();
     }
+    if (!saveAs || target == m_path) {
+        writeFile(target, bytes, std::move(onSaved));
+        return;
+    }
+    // "Speichern unter" auf einen vorhandenen Namen: erst fragen. Frueher wurde
+    // die andere Datei wortlos ersetzt.
+    const QString dir = m_provider->parent(target);
+    const QString name = m_provider->basename(target);
+    m_bridge->run<bool>(
+        [provider, dir, name] {
+            const Qt::CaseSensitivity cs =
+                provider->isRemote ? Qt::CaseSensitive : Qt::CaseInsensitive;
+            for (const core::FileEntry &e : provider->listDir(dir))
+                if (e.name.compare(name, cs) == 0)
+                    return true;
+            return false;
+        },
+        [this, target, bytes, name, onSaved](bool exists) {
+            if (exists
+                && QMessageBox::question(this, _t("Datei existiert"),
+                                         _t("„%1“ existiert bereits. Überschreiben?").arg(name),
+                                         QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+                       != QMessageBox::Yes)
+                return;
+            writeFile(target, bytes, onSaved);
+        },
+        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
+}
+
+void EditorDialog::writeFile(const QString &target, const QByteArray &bytes,
+                             std::function<void()> onSaved)
+{
+    core::FileSystemProvider *provider = m_provider;
+    m_status->setText(_t("Speichere …"));
     m_bridge->run(
         [provider, target, bytes] { provider->writeBytes(target, bytes); },
-        [this, target, bytes] {
+        [this, target, bytes, onSaved] {
             m_raw = bytes;
             m_path = target;
             m_dirty = false;
             updateTitle();
             m_status->setText(_t("Gespeichert."));
             watchFile();   // eigenes Speichern nicht als externe Aenderung melden
+            if (onSaved)
+                onSaved();
         },
-        [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
+        [this](const QString &err) {
+            m_status->setText(_t("Nicht gespeichert."));
+            QMessageBox::warning(this, _t("Speichern fehlgeschlagen"),
+                                 _t("%1\n\nDie Änderungen sind noch im Editor — nichts geht "
+                                    "verloren.").arg(err));
+        }, this);
 }
 
 void EditorDialog::updateMatches()
@@ -671,8 +724,12 @@ void EditorDialog::closeEvent(QCloseEvent *event)
             return;
         }
         if (answer == QMessageBox::Save) {
-            save(false);
-            // Speichern laeuft asynchron — Dialog trotzdem schliessen.
+            // Erst schliessen, wenn das Speichern WIRKLICH geklappt hat — frueher
+            // wurde sofort geschlossen, ein Schreibfehler ging samt Aenderungen
+            // verloren. Schlaegt es fehl, bleibt der Editor offen.
+            event->ignore();
+            save(false, [this] { close(); });
+            return;
         }
     }
     event->accept();

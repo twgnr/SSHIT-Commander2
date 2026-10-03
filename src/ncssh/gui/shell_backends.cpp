@@ -1,6 +1,9 @@
 #include "ncssh/gui/shell_backends.hpp"
 
+#include "ncssh/core/settings.hpp"
+
 #include <QDir>
+#include <QStandardPaths>
 #include <QMetaObject>
 #include <chrono>
 #include <thread>
@@ -12,6 +15,48 @@
 #endif
 
 namespace ncssh::gui {
+
+QString localShellKind()
+{
+    const QString kind =
+        core::getSettingString(QStringLiteral("local_shell"), QStringLiteral("powershell"));
+    return kind == QLatin1String("cmd") ? kind : QStringLiteral("powershell");
+}
+
+QString localShellCommand(const QString &kind)
+{
+    if (kind == QLatin1String("powershell")) {
+        // PowerShell 7 bevorzugen, sonst die in Windows enthaltene 5.1. Beide
+        // bringen PSReadLine mit: Strg+Z/Strg+Y = Rueckgaengig/Wiederholen.
+        for (const QString &exe : {QStringLiteral("pwsh"), QStringLiteral("powershell")}) {
+            const QString path = QStandardPaths::findExecutable(exe);
+            if (!path.isEmpty())
+                return QStringLiteral("\"%1\" -NoLogo").arg(QDir::toNativeSeparators(path));
+        }
+    }
+    QString shell = qEnvironmentVariable("COMSPEC");
+    return shell.isEmpty() ? QStringLiteral("cmd.exe") : shell;
+}
+
+QString cdCommand(const QString &shell, const QString &path)
+{
+    if (shell == QLatin1String("powershell")) {
+        // Einfache Anfuehrungszeichen: keine Variablen-/Befehlsersetzung;
+        // ' wird verdoppelt. -LiteralPath: [ ] im Namen sind keine Wildcards.
+        QString q = path;
+        q.replace(QLatin1Char('\''), QStringLiteral("''"));
+        return QStringLiteral("Set-Location -LiteralPath '%1'").arg(q);
+    }
+    if (shell == QLatin1String("cmd")) {
+        // /d: auch das Laufwerk wechseln. " kann in Windows-Pfaden nicht vorkommen.
+        return QStringLiteral("cd /d \"%1\"").arg(path);
+    }
+    // POSIX: in ' … ' ist alles woertlich; ' selbst als '\'' einbetten.
+    // "--": ein Pfad, der mit "-" beginnt, ist keine Option.
+    QString q = path;
+    q.replace(QLatin1Char('\''), QStringLiteral("'\\''"));
+    return QStringLiteral("cd -- '%1'").arg(q);
+}
 
 // ---------------------------------------------------------------------------
 // LocalShellBackend — Windows ConPTY
@@ -73,9 +118,7 @@ void LocalShellBackend::start(int cols, int rows)
                               m_impl->hpc, sizeof(HPCON), nullptr, nullptr);
     si.lpAttributeList = m_impl->attrList;
 
-    QString shell = qEnvironmentVariable("COMSPEC");
-    if (shell.isEmpty())
-        shell = QStringLiteral("cmd.exe");
+    const QString shell = localShellCommand(localShellKind());
     std::wstring cmdline(reinterpret_cast<const wchar_t *>(shell.utf16()));
     std::vector<wchar_t> mutableCmd(cmdline.begin(), cmdline.end());
     mutableCmd.push_back(L'\0');

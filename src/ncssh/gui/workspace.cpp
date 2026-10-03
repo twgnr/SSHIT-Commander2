@@ -35,6 +35,37 @@ namespace ncssh::gui {
 using core::_t;
 
 // Standardbeschriftung einer Konsole (ohne Verbindung).
+// Vergleichsform eines Pfads: Trenner vereinheitlicht, ".."/"." aufgeloest.
+static QString comparablePath(const QString &path)
+{
+    return QDir::cleanPath(QDir::fromNativeSeparators(path));
+}
+
+// Gleicher Ort auf demselben Dateisystem? Lokal (Windows/NTFS) ohne Gross-/
+// Kleinschreibung — "Datei.txt" und "datei.txt" sind dort dieselbe Datei.
+static bool samePath(core::FileSystemProvider *a, const QString &pa,
+                     core::FileSystemProvider *b, const QString &pb)
+{
+    if (a != b)
+        return false;
+    const Qt::CaseSensitivity cs = a->isRemote ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    return comparablePath(pa).compare(comparablePath(pb), cs) == 0;
+}
+
+// Liegt child unterhalb von parent (gleiches Dateisystem)? Ein Ordner darf
+// nicht in sich selbst kopiert/verschoben werden — das wuerde endlos wachsen.
+static bool isInside(core::FileSystemProvider *a, const QString &parent,
+                     core::FileSystemProvider *b, const QString &child)
+{
+    if (a != b)
+        return false;
+    const Qt::CaseSensitivity cs = a->isRemote ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    QString root = comparablePath(parent);
+    if (!root.endsWith(QLatin1Char('/')))
+        root += QLatin1Char('/');
+    return comparablePath(child).startsWith(root, cs);
+}
+
 static QString defaultConsoleTitle(bool left)
 {
     return left ? _t("Konsole (links)") : _t("Konsole (rechts)");
@@ -213,10 +244,21 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
                 [this, target](const QStringList &paths, FilePanel *source) {
                     core::FileSystemProvider *src =
                         source ? source->provider() : m_localFs.get();
-                    if (!src || !target->provider())
+                    core::FileSystemProvider *dst = target->provider();
+                    if (!src || !dst)
                         return;
+                    // Wie F5: Konflikte erfragen, Quelle == Ziel ueberspringen.
+                    // Vorher wurde hier wortlos ueberschrieben (bzw. eine Datei
+                    // beim Einfuegen in ihren eigenen Ordner auf 0 Bytes geleert).
+                    std::vector<std::pair<QString, QString>> pairs;
                     for (const QString &p : paths)
-                        startTransfer(src, p, target->provider(), target->currentPath());
+                        pairs.emplace_back(p, dst->join(target->currentPath(), src->basename(p)));
+                    withConflictCheck(src, dst, pairs,
+                                      [this, src, dst](const std::vector<std::pair<QString, QString>> &todo) {
+                                          for (const auto &[from, to] : todo)
+                                              startTransfer(src, from, dst, dst->parent(to),
+                                                            dst->basename(to));
+                                      });
                 });
     }
 
@@ -1103,7 +1145,7 @@ void Workspace::confirmAndTransfer(core::FileSystemProvider *src,
         std::vector<std::pair<QString, QString>> pairs;
         for (int i = 0; i < names.size(); ++i)
             pairs.emplace_back(sources.at(i), dst->join(dstDir, names.at(i)));
-        withConflictCheck(dst, dstDir, pairs, start);
+        withConflictCheck(src, dst, pairs, start);
         return;
     }
     // Zielordner ist vorbelegt, kann aber editiert oder durchsucht werden —
@@ -1122,26 +1164,58 @@ void Workspace::confirmAndTransfer(core::FileSystemProvider *src,
                       _t("Nicht mehr fragen — mit F5 direkt in die andere Pane kopieren"));
     if (dlg.exec() != QDialog::Accepted)
         return;
-    withConflictCheck(dst, dstDir, dlg.results(), start);
+    // Konflikte im TATSAECHLICH gewaehlten Zielordner pruefen (aus den
+    // Ergebnissen), nicht im vorbelegten — der Nutzer kann ihn im Dialog aendern.
+    withConflictCheck(src, dst, dlg.results(), start);
 }
 
 // Listet das Zielverzeichnis, fragt fuer vorhandene Namen das Ueberschreiben ab
 // und ruft dann fortfahren() mit den freigegebenen Eintraegen. Ohne diese
 // Pruefung wuerde eine Uebertragung Zieldateien wortlos ersetzen.
 void Workspace::withConflictCheck(
-    core::FileSystemProvider *dst, const QString &targetDir,
+    core::FileSystemProvider *src, core::FileSystemProvider *dst,
     const std::vector<std::pair<QString, QString>> &results,
     const std::function<void(const std::vector<std::pair<QString, QString>> &)> &then)
 {
+    // Erst die Faelle, die nie ausgefuehrt werden duerfen.
+    std::vector<std::pair<QString, QString>> checked;
+    int identical = 0;
+    for (const auto &[from, to] : results) {
+        if (samePath(src, from, dst, to)) {
+            // Datei auf sich selbst kopieren hiesse: Ziel zum Schreiben oeffnen
+            // = Quelle leeren. Einfach ueberspringen.
+            ++identical;
+            continue;
+        }
+        if (isInside(src, from, dst, to)) {
+            QMessageBox::warning(this, _t("Nicht möglich"),
+                                 _t("„%1“ kann nicht in sich selbst kopiert oder verschoben "
+                                    "werden.").arg(src->basename(from)));
+            return;
+        }
+        checked.emplace_back(from, to);
+    }
+    if (identical > 0 && checked.empty()) {
+        QMessageBox::information(this, _t("Nichts zu tun"),
+                                 _t("Quelle und Ziel sind identisch — es wurde nichts "
+                                    "kopiert."));
+        return;
+    }
+    if (identical > 0)
+        emit statusMessage(_t("%1 Objekt(e) übersprungen: Quelle und Ziel identisch.")
+                               .arg(identical));
+    const QString targetDir = dst->parent(checked.front().second);
+
     m_bridge->run<std::vector<core::FileEntry>>(
         [dst, targetDir] { return dst->listDir(targetDir); },
-        [this, dst, targetDir, results, then](const std::vector<core::FileEntry> &entries) {
+        [this, dst, targetDir, checked, then](const std::vector<core::FileEntry> &entries) {
+            // Lokal (NTFS) ohne Gross-/Kleinschreibung vergleichen: "A.txt"
+            // ueberschreibt dort "a.txt".
             QSet<QString> existing;
             for (const core::FileEntry &e : entries)
-                existing.insert(e.name);
+                existing.insert(dst->isRemote ? e.name : e.name.toLower());
             bool cancelled = false;
-            const auto todo = resolveOverwrites(dst->label, targetDir, results, existing,
-                                                cancelled);
+            const auto todo = resolveOverwrites(dst, targetDir, checked, existing, cancelled);
             if (cancelled)
                 return;
             if (todo.empty()) {
@@ -1156,18 +1230,22 @@ void Workspace::withConflictCheck(
 }
 
 std::vector<std::pair<QString, QString>> Workspace::resolveOverwrites(
-    const QString &dstLabel, const QString &targetDir,
+    core::FileSystemProvider *dst, const QString &targetDir,
     const std::vector<std::pair<QString, QString>> &results,
     const QSet<QString> &existing, bool &cancelled)
 {
+    const QString dstLabel = dst->label;
     std::vector<std::pair<QString, QString>> todo;
     bool overwriteAll = false;
     bool skipAll = false;
     cancelled = false;
 
     for (const auto &[from, to] : results) {
-        const QString name = to.mid(to.lastIndexOf(QLatin1Char('/')) + 1);
-        if (!existing.contains(name)) {
+        // Name ueber den Provider: lokale Pfade haben "\\" als Trenner — die
+        // fruehere Suche nach "/" lieferte dort den ganzen Pfad, die Abfrage
+        // kam nie und es wurde wortlos ueberschrieben.
+        const QString name = dst->basename(to);
+        if (!existing.contains(dst->isRemote ? name : name.toLower())) {
             todo.emplace_back(from, to);
             continue;
         }
@@ -1222,14 +1300,17 @@ void Workspace::startTransfer(core::FileSystemProvider *src, const QString &srcP
     const QString name = overrideName.isEmpty() ? src->basename(srcPath) : overrideName;
     const QString dstPath = dst->join(dstDir, name);
     // Ueber die Transfer-Queue: Fortschritt/Abbruch/Wiederholen im Dialog.
-    const int jobId = m_transfers->enqueue(name, src, srcPath, dst, dstPath);
+    // Verschieben: der TransferManager prueft das Ziel (Groesse bzw. ganzer
+    // Ordnerbaum) und loescht die Quelle nur, wenn alles angekommen ist — auch
+    // bei Wiederholen aus dem Uebertragungsdialog.
+    const int jobId = m_transfers->enqueue(name, src, srcPath, dst, dstPath, moveSource);
     emit statusMessage(QStringLiteral("Übertrage %1 …").arg(name));
     // Ziel-Pane nach Abschluss aktualisieren. Die Verbindung wird beim ersten
     // Endzustand wieder getrennt — sonst sammeln sich ueber die Laufzeit
     // beliebig viele Handler an, die bei JEDEM Job-Update mitlaufen.
     auto conn = std::make_shared<QMetaObject::Connection>();
     *conn = connect(m_transfers, &TransferManager::jobUpdated, this,
-            [this, jobId, src, srcPath, dst, moveSource, conn](int id) {
+            [this, jobId, src, dst, moveSource, conn](int id) {
                 if (id != jobId)
                     return;
                 const auto &jobs = m_transfers->jobs();
@@ -1244,16 +1325,11 @@ void Workspace::startTransfer(core::FileSystemProvider *src, const QString &srcP
                     disconnect(*conn);
                 if (it->status == QLatin1String("done")) {
                     emit statusMessage(QStringLiteral("Übertragen: %1").arg(it->name));
-                    // Beim Verschieben die Quelle erst nach erfolgreicher
-                    // Uebertragung entfernen — nie vorher.
+                    // Beim Verschieben hat der TransferManager die Quelle schon
+                    // (nach Pruefung) entfernt — Quell-Pane neu einlesen.
                     if (moveSource) {
-                        m_bridge->run(
-                            [src, srcPath] { src->remove(srcPath, true); },
-                            [this, src] {
-                                if (src == m_leftPanel->provider()) m_leftPanel->refresh();
-                                if (src == m_rightPanel->provider()) m_rightPanel->refresh();
-                            },
-                            [this](const QString &err) { emit statusMessage(err); }, this);
+                        if (src == m_leftPanel->provider()) m_leftPanel->refresh();
+                        if (src == m_rightPanel->provider()) m_rightPanel->refresh();
                     }
                     if (dst == m_leftPanel->provider())
                         m_leftPanel->refresh();
@@ -1290,7 +1366,7 @@ void Workspace::confirmAndMove(core::FileSystemProvider *src,
     // Wie beim Kopieren erst die Namenskonflikte klaeren. Ohne diese Pruefung
     // wuerde das Verschieben Zieldateien wortlos ersetzen — und anschliessend
     // auch noch die Quelle loeschen.
-    withConflictCheck(dst, dstDir, dlg.results(),
+    withConflictCheck(src, dst, dlg.results(),
                       [this, src, dst](const std::vector<std::pair<QString, QString>> &todo) {
                           for (const auto &[from, to] : todo)
                               startTransfer(src, from, dst, dst->parent(to), dst->basename(to),

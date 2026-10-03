@@ -4,6 +4,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QStorageInfo>
 #include <algorithm>
 #include <filesystem>
@@ -97,13 +98,60 @@ void LocalFileSystem::mkdir(const QString &path)
         throwErr(QStringLiteral("Verzeichnis konnte nicht angelegt werden: %1").arg(path));
 }
 
+// Verweis statt echtem Ordner? NTFS-Junctions (mklink /J, npm/pnpm-Links)
+// zaehlen in Qt 6 NICHT als isSymLink() — sie muessen extra erkannt werden.
+static bool isLinkEntry(const QFileInfo &fi)
+{
+    return fi.isSymLink() || fi.isJunction();
+}
+
+// Entfernt nur den Verweis selbst, nie das Ziel. Ordner-Verweise (Junction,
+// Ordner-Symlink) entfernt rmdir, Datei-Symlinks QFile::remove.
+static bool removeLinkEntry(const QString &path)
+{
+    return QDir().rmdir(path) || QFile::remove(path);
+}
+
+static bool removeFileEntry(const QString &path)
+{
+    if (QFile::remove(path))
+        return true;
+    // Schreibgeschuetzte Dateien (Windows-Attribut) wie removeRecursively().
+    QFile::setPermissions(path, QFile::permissions(path) | QFileDevice::WriteUser);
+    return QFile::remove(path);
+}
+
+// Wie QDir::removeRecursively, aber ohne Verweisen zu folgen: dieses folgt
+// Junctions und leerte deren ZIEL (z. B. das verlinkte Quellverzeichnis).
+static bool removeTree(const QString &path)
+{
+    bool ok = true;
+    QDirIterator it(path, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+    while (it.hasNext()) {
+        it.next();
+        const QFileInfo fi = it.fileInfo();
+        const QString p = fi.absoluteFilePath();
+        if (isLinkEntry(fi))
+            ok = removeLinkEntry(p) && ok;
+        else if (fi.isDir())
+            ok = removeTree(p) && ok;
+        else
+            ok = removeFileEntry(p) && ok;
+    }
+    return QDir().rmdir(path) && ok;
+}
+
 void LocalFileSystem::remove(const QString &path, bool recursive)
 {
     QFileInfo fi(path);
-    if (fi.isDir() && !fi.isSymLink()) {
+    if (isLinkEntry(fi)) {
+        if (!removeLinkEntry(path))
+            throwErr(QStringLiteral("Loeschen fehlgeschlagen: %1").arg(path));
+        return;
+    }
+    if (fi.isDir()) {
         if (recursive) {
-            QDir d(path);
-            if (!d.removeRecursively())
+            if (!removeTree(path))
                 throwErr(QStringLiteral("Loeschen fehlgeschlagen: %1").arg(path));
         } else {
             if (!QDir().rmdir(path))
@@ -127,11 +175,33 @@ void LocalFileSystem::writeText(const QString &path, const QString &content)
 
 void LocalFileSystem::writeBytes(const QString &path, const QByteArray &data)
 {
+    // Ueber eine Temp-Datei schreiben, die erst am Ende die alte ersetzt: bei
+    // voller Platte oder weggefallenem Netzlaufwerk bleibt die alte Datei
+    // unversehrt. Frueher wurde sie zuerst geleert, ein Fehler beim Schliessen
+    // blieb unbemerkt und der Editor meldete "Gespeichert".
+    // Verweise direkt beschreiben (ihr Ziel), sonst ersetzte die Temp-Datei
+    // den Verweis durch eine normale Datei.
+    if (!isLinkEntry(QFileInfo(path))) {
+        QSaveFile f(path);
+        f.setDirectWriteFallback(true);   // Ordner ohne Recht fuer Temp-Dateien
+        if (!f.open(QIODevice::WriteOnly))
+            throwErr(QStringLiteral("Kann Datei nicht schreiben: %1 (%2)").arg(path, f.errorString()));
+        if (f.write(data) != data.size()) {
+            f.cancelWriting();
+            throwErr(QStringLiteral("Schreiben unvollstaendig: %1 (%2)").arg(path, f.errorString()));
+        }
+        if (!f.commit())
+            throwErr(QStringLiteral("Speichern fehlgeschlagen: %1 (%2)").arg(path, f.errorString()));
+        return;
+    }
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly))
         throwErr(QStringLiteral("Kann Datei nicht schreiben: %1").arg(path));
-    if (f.write(data) != data.size())
-        throwErr(QStringLiteral("Schreiben unvollstaendig: %1").arg(path));
+    if (f.write(data) != data.size() || !f.flush())
+        throwErr(QStringLiteral("Schreiben unvollstaendig: %1 (%2)").arg(path, f.errorString()));
+    f.close();
+    if (f.error() != QFileDevice::NoError)
+        throwErr(QStringLiteral("Speichern fehlgeschlagen: %1 (%2)").arg(path, f.errorString()));
 }
 
 QByteArray LocalFileSystem::readBytes(const QString &path, qint64 maxBytes)

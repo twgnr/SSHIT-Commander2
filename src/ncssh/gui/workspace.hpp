@@ -137,15 +137,18 @@ private:
     void confirmAndMove(core::FileSystemProvider *src,
                         const std::vector<QString> &srcPaths,
                         core::FileSystemProvider *dst, const QString &dstDir);
-    // Prueft Namenskonflikte im Zielordner und ruft then() mit den
-    // freigegebenen (quelle, ziel)-Paaren.
+    // Prueft die (quelle, ziel)-Paare und ruft then() mit den freigegebenen:
+    // Quelle == Ziel wird uebersprungen, ein Ordner in sich selbst abgelehnt,
+    // vorhandene Namen im Zielordner einzeln abgefragt. ALLE Wege, die Dateien
+    // in eine Pane bringen (F5, Verschieben, Drag & Drop, Einfuegen), laufen
+    // hierueber — sonst wird wortlos ueberschrieben.
     void withConflictCheck(
-        core::FileSystemProvider *dst, const QString &targetDir,
+        core::FileSystemProvider *src, core::FileSystemProvider *dst,
         const std::vector<std::pair<QString, QString>> &results,
         const std::function<void(const std::vector<std::pair<QString, QString>> &)> &then);
     // Rueckfrage je Konflikt: Ja / Ja, alle / Nein / Nein, alle / Abbrechen.
     std::vector<std::pair<QString, QString>> resolveOverwrites(
-        const QString &dstLabel, const QString &targetDir,
+        core::FileSystemProvider *dst, const QString &targetDir,
         const std::vector<std::pair<QString, QString>> &results,
         const QSet<QString> &existing, bool &cancelled);
     // Strg+V: Inhalt der internen Zwischenablage in target einfuegen.

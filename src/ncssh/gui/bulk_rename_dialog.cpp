@@ -407,6 +407,23 @@ void BulkRenameDialog::runRenames(const std::vector<RenamePair> &steps, int coun
     button->setEnabled(false);
     m_bridge->run(
         [provider, dir, steps] {
+            // Vorab gegen den ECHTEN Ordnerinhalt pruefen: frueher zaehlte nur
+            // die Auswahl, ein nicht markiertes "b.txt" wurde beim Umbenennen
+            // "a.txt" -> "b.txt" wortlos ersetzt. Lokal (NTFS) ohne Gross-/
+            // Kleinschreibung. Namen, die selbst wegbenannt werden, sind frei.
+            const bool fold = !provider->isRemote;
+            const auto key = [fold](const QString &n) { return fold ? n.toLower() : n; };
+            QSet<QString> present, movingAway;
+            for (const core::FileEntry &e : provider->listDir(dir))
+                present.insert(key(e.name));
+            for (const auto &[from, to] : steps)
+                movingAway.insert(key(from));
+            for (const auto &[from, to] : steps) {
+                if (present.contains(key(to)) && !movingAway.contains(key(to)))
+                    throw std::runtime_error(
+                        _t("„%1“ existiert bereits im Ordner (nicht ausgewählt) — es wurde "
+                           "nichts umbenannt.").arg(to).toStdString());
+            }
             for (const auto &[from, to] : steps)
                 provider->rename(provider->join(dir, from), provider->join(dir, to));
         },
