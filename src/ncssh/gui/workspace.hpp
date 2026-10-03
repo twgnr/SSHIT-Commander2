@@ -97,6 +97,9 @@ public:
     // Panes/Provider und wird deshalb geschlossen, sobald der Tab stirbt.
     void bindDialog(QWidget *dialog);
 
+    // Server-Info der Verbindung zeigen (Info-Chip der verbundenen Pane).
+    void openServerInfo();
+
     // Zustand des Tabs fuer Tab-Favoriten / Sitzungswiederherstellung.
     QJsonObject toJson() const;
     void restoreFrom(const QJsonObject &state);
@@ -206,6 +209,7 @@ private:
     // Einschaltung darf das sudo-Dateisystem nicht mehr einhaengen.
     quint64 m_sudoSeq = 0;
     QList<QPointer<QWidget>> m_boundDialogs;   // siehe bindDialog()
+    QPointer<QWidget> m_serverInfo;            // offener Server-Info-Dialog
 
     FilePanel *m_leftPanel = nullptr;
     FilePanel *m_rightPanel = nullptr;

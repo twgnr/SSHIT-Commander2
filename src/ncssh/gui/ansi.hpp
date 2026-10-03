@@ -26,6 +26,11 @@ public:
     // Verarbeitet einen Ausgabe-Chunk (darf mitten in einer Sequenz enden).
     void feed(const QString &text);
 
+    // Theme gewechselt: Standardfarben neu lesen und den vorhandenen Text
+    // umfaerben (Standardtext -> neue Textfarbe, Farben lesbar fuer den neuen
+    // Hintergrund).
+    void retheme();
+
     // Entfernt ANSI-/VT-Steuersequenzen — fuer Mitschnitt und Textkopien.
     static QString stripAnsi(const QString &text);
 

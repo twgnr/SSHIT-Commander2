@@ -86,7 +86,7 @@ namespace ncssh::gui {
 
 using core::_t;
 
-// "1.0.1" bzw. "1.1.0 (Beta.1)" — die Stufe erscheint nur, wenn CMake eine setzt.
+// "1.0.2" bzw. "1.1.0 (Beta.1)" — die Stufe erscheint nur, wenn CMake eine setzt.
 static QString versionLabel()
 {
     const QString stage = QString::fromLatin1(SSHIT_VERSION_STAGE);
@@ -291,9 +291,16 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
     restoreSession();
     if (m_tabs->count() == 0)
         addTab();
-    // Der Makro-Manager wird BEWUSST nicht mehr automatisch beim Start geoeffnet
-    // — er erscheint nur noch auf ausdrueckliche Aktion des Nutzers (Toolbar/Menue
-    // "Makro-Manager"). Der zuletzt gewaehlte Andock-Rand bleibt gespeichert.
+    // Waren beim letzten Beenden die Makro-Tasten zu sehen (Ausfuehren-Modus,
+    // schwebend oder angedockt), kommen sie zurueck — erst nach dem Aufbau,
+    // damit das Andocken ein fertiges Hauptfenster vorfindet. Ein offener
+    // Bearbeiten-Dialog kehrt bewusst NICHT zurueck (rememberVisibility).
+    if (MacroManagerDialog::shouldRestore()) {
+        QTimer::singleShot(0, this, [this] {
+            ensureMacroDialog();
+            m_macroDialog->present();
+        });
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -305,6 +312,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
         return;
     }
     saveSession();
+    if (m_macroDialog)
+        m_macroDialog->rememberVisibility();
     QMainWindow::closeEvent(event);
 }
 

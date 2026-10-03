@@ -15,6 +15,7 @@
 #include <QFile>
 #include <QFontMetrics>
 #include <QPainter>
+#include <QTextBlock>
 #include <QTextCursor>
 #include <QTimer>
 #include <QHBoxLayout>
@@ -78,9 +79,43 @@ void TerminalWidget::applyThemeColors()
     const auto [bg, fg] = terminalColors();
     m_termBg = QColor(bg);
     m_termFg = QColor(fg);
+    // Rahmen passend zur Helligkeit (der dunkle Rahmen wirkte im hellen Theme
+    // wie ein Fremdkoerper).
+    const QString border = m_termBg.lightness() > 128 ? QStringLiteral("#c9ced8")
+                                                      : QStringLiteral("#2e3340");
     setStyleSheet(QStringLiteral("QPlainTextEdit { background: %1; color: %2; "
-                                 "border: 1px solid #2e3340; border-radius: 8px; padding: 4px; }")
-                      .arg(bg, fg));
+                                 "border: 1px solid %3; border-radius: 8px; padding: 4px; }")
+                      .arg(bg, fg, border));
+}
+
+bool TerminalWidget::event(QEvent *event)
+{
+    if (event->type() == themeChangedEventType()) {
+        applyThemeColors();
+        if (m_renderer)
+            m_renderer->retheme();
+        viewport()->update();
+        return true;
+    }
+    return QPlainTextEdit::event(event);
+}
+
+QString TerminalWidget::currentInputLine() const
+{
+    if (m_altScreen)
+        return {};
+    // Zeile des Text-Cursors (= letzte Zeile der Ausgabe). Der Prompt endet
+    // am ersten "$ ", "# ", "> " bzw. "% " — was danach steht, ist getippt.
+    const QString line = document()->lastBlock().text();
+    int end = -1;
+    for (const char *marker : {"$ ", "# ", "> ", "% "}) {
+        const int i = line.indexOf(QLatin1String(marker));
+        if (i >= 0 && (end < 0 || i < end))
+            end = i + 2;
+    }
+    if (end < 0)
+        return {};
+    return line.mid(end);
 }
 
 void TerminalWidget::restartCursorBlink()
@@ -327,6 +362,8 @@ void TerminalWidget::paintEmulator()
     const auto effColors = [this](const core::TermCell &cell, QColor &fg, QColor &bg) {
         fg = cell.fg.isValid() ? cell.fg : m_termFg;
         bg = cell.bg.isValid() ? cell.bg : m_termBg;
+        if (cell.fg.isValid() && !cell.bg.isValid())
+            fg = readableOn(fg, m_termBg);   // z. B. Weiss auf hellem Theme
         if (cell.attrs & core::AttrInverse)
             std::swap(fg, bg);
     };

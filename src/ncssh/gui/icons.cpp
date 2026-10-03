@@ -98,6 +98,21 @@ void drawHistory(QPainter &p, qreal s, const QColor &c)
     p.drawLine(QPointF(s * 0.50, s * 0.50), QPointF(s * 0.66, s * 0.58));
 }
 
+void drawParams(QPainter &p, qreal s, const QColor &c)
+{
+    // Drei Schieberegler (Optionen eines Befehls einstellen).
+    p.setPen(strokePen(c, s * 0.08));
+    const qreal knobs[] = {0.36, 0.64, 0.46};
+    for (int i = 0; i < 3; ++i) {
+        const qreal y = s * (0.26 + i * 0.24);
+        p.setBrush(Qt::NoBrush);
+        p.drawLine(QPointF(s * 0.16, y), QPointF(s * 0.84, y));
+        p.setBrush(c);
+        p.drawEllipse(QPointF(s * knobs[i], y), s * 0.07, s * 0.07);
+    }
+    p.setBrush(Qt::NoBrush);
+}
+
 void drawTunnels(QPainter &p, qreal s, const QColor &c)
 {
     // Roehre mit durchlaufendem Pfeil.
@@ -365,6 +380,7 @@ const QHash<QString, DrawFn> &registry()
         {QStringLiteral("connect"), drawConnect},
         {QStringLiteral("palette"), drawPalette},
         {QStringLiteral("history"), drawHistory},
+        {QStringLiteral("params"), drawParams},
         {QStringLiteral("tunnels"), drawTunnels},
         {QStringLiteral("view"), drawView},
         {QStringLiteral("rename"), drawRename},

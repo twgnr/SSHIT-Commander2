@@ -41,6 +41,9 @@ public:
     void pasteClipboard();
     // Eigene Meldung der Anwendung anzeigen (nicht an die Shell gesendet).
     void printLocal(const QString &text, bool error = false);
+    // Die gerade getippte, noch nicht ausgefuehrte Befehlszeile (ohne Prompt)
+    // — geschaetzt aus der Cursorzeile. Leer in Vollbild-Programmen (vim, top).
+    QString currentInputLine() const;
 
     int columns() const;
     int rows() const;
@@ -63,6 +66,7 @@ signals:
     void restartRequested();
 
 protected:
+    bool event(QEvent *event) override;   // Theme-Wechsel (themeChangedEventType)
     void keyPressEvent(QKeyEvent *event) override;
     // Tab/Shift+Tab gehoeren der Shell (Vervollstaendigung), nicht der
     // Fokus-Kette: ein schreibgeschuetztes QPlainTextEdit gaebe sie sonst ab,

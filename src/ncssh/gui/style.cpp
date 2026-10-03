@@ -8,6 +8,8 @@
 #include <QPalette>
 #include <QRegularExpression>
 #include <QVariantMap>
+#include <QWidget>
+#include <cmath>
 
 namespace ncssh::gui {
 
@@ -91,6 +93,38 @@ static ThemeColors g_currentTerm = makeTheme({{"bg", "#12141a"}, {"fg", "#d3d7cf
 std::pair<QString, QString> terminalColors()
 {
     return {g_currentTerm.value(QStringLiteral("bg")), g_currentTerm.value(QStringLiteral("fg"))};
+}
+
+static double relativeLuminance(const QColor &c)
+{
+    const auto lin = [](double v) {
+        return v <= 0.03928 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * lin(c.redF()) + 0.7152 * lin(c.greenF()) + 0.0722 * lin(c.blueF());
+}
+
+QColor readableOn(const QColor &fg, const QColor &bg)
+{
+    if (!fg.isValid() || !bg.isValid())
+        return fg;
+    const double lb = relativeLuminance(bg);
+    if (lb < 0.5)
+        return fg;   // dunkles Theme: Farben wie gewohnt
+    QColor out = fg;
+    // WCAG-Kontrast; 3:1 genuegt fuer die kraeftige Terminal-Schrift.
+    for (int i = 0; i < 12; ++i) {
+        const double ratio = (lb + 0.05) / (relativeLuminance(out) + 0.05);
+        if (ratio >= 3.0)
+            break;
+        out = out.darker(120);
+    }
+    return out;
+}
+
+QEvent::Type themeChangedEventType()
+{
+    static const auto type = static_cast<QEvent::Type>(QEvent::registerEventType());
+    return type;
 }
 
 QHash<QString, ThemeColors> customThemes()
@@ -192,12 +226,14 @@ QToolTip { background: %surface2%; color: %text%; border: 1px solid %border%; pa
 
 #Pane { background: %surface%; border: 1px solid %border%; border-radius: 10px; }
 #Pane[active="true"] { border: 1px solid %accent%; }
+#Pane[active="true"][sudo="true"] { border: 1px solid #f0883e; }
 #PaneHeader { background: %surface2%; color: %text%; font-weight: 600; padding: 6px 10px; border-radius: 6px; }
 
 #ConsolePanel { background: %surface%; border: 1px solid %border%; border-radius: 10px; }
 #ConsolePanel[active="true"] { border: 1px solid %accent%; }
 #ConsolePanel[venv="true"] { border: 1px solid #3fb950; }
 #FloatingConsole[venv="true"] { border: 2px solid #3fb950; }
+#ConsolePanel[active="true"][sudo="true"] { border: 1px solid #f0883e; }
 #VenvBadge { color: #3fb950; font-weight: 600; padding: 1px 6px; border: 1px solid #3fb950; border-radius: 6px; }
 #FloatingConsole { border: 2px solid transparent; }
 #FloatingConsole[active="true"] { border: 2px solid %accent%; }
@@ -311,6 +347,12 @@ void applyTheme(QApplication *app, const QString &name)
     pal.setColor(QPalette::Disabled, QPalette::Text, dis);
     app->setPalette(pal);
     app->setStyleSheet(buildStylesheet(c));
+    // Bestehende Terminals/Symbole nachziehen (sonst galt ein Theme-Wechsel
+    // erst fuer neu geoeffnete Terminals).
+    for (QWidget *widget : QApplication::allWidgets()) {
+        QEvent changed(themeChangedEventType());
+        QCoreApplication::sendEvent(widget, &changed);
+    }
 }
 
 } // namespace ncssh::gui

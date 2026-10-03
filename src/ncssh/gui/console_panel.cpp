@@ -4,8 +4,13 @@
 #include "ncssh/core/i18n.hpp"
 
 #include "ncssh/core/ai.hpp"
+#include "ncssh/core/command_params.hpp"
 #include "ncssh/core/filesystem.hpp"
 #include "ncssh/gui/ai_chat_panel.hpp"
+#include "ncssh/gui/icons.hpp"
+#include "ncssh/gui/line_completer.hpp"
+#include "ncssh/gui/param_dialog.hpp"
+#include "ncssh/gui/style.hpp"
 #include "ncssh/gui/shell_backends.hpp"
 #include "ncssh/gui/terminal_widget.hpp"
 
@@ -20,8 +25,13 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QStackedWidget>
+#include <QAction>
+#include <QPointer>
 #include <QStyle>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QTextDocument>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace ncssh::gui {
@@ -36,6 +46,7 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     // (#ConsolePanel[active="true"]) nicht.
     setAttribute(Qt::WA_StyledBackground, true);
     setProperty("active", false);
+    setProperty("sudo", false);
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(6);
@@ -75,15 +86,20 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
             &ConsolePanel::connectCancelRequested);
     // Befehlspalette und Verlauf direkt an der Konsole (wie in der
     // Python-Version): gewaehlter Befehl landet hier — auch im Terminal.
-    auto *paletteButton = new QPushButton(_t("Befehle"), this);
+    // Als Symbole (Platz im Kopf); die Beschriftung steht im Tooltip.
+    auto *paletteButton = new QPushButton(this);
+    m_paletteButton = paletteButton;
     paletteButton->setObjectName(QStringLiteral("Chip"));
     paletteButton->setToolTip(_t("Befehlspalette — Befehl auswählen und hier einfügen"));
+    paletteButton->setAccessibleName(_t("Befehle"));
     connect(paletteButton, &QPushButton::clicked, this, [this] {
         emit activated();   // diese Seite wird Ziel
         emit paletteRequested();
     });
-    auto *historyButton = new QPushButton(_t("Verlauf"), this);
+    auto *historyButton = new QPushButton(this);
+    m_historyButton = historyButton;
     historyButton->setObjectName(QStringLiteral("Chip"));
+    historyButton->setAccessibleName(_t("Verlauf"));
     historyButton->setToolTip(_t("Befehlsverlauf & Favoriten — Befehl hier einfügen"));
     connect(historyButton, &QPushButton::clicked, this, [this] {
         emit activated();
@@ -91,9 +107,28 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     });
     headerRow->addWidget(m_header, 1);
     headerRow->addWidget(m_connectCancelButton);
+    // Parameter des getippten Befehls — nur sichtbar, wenn er bekannt ist.
+    m_paramButton = new QPushButton(this);
+    m_paramButton->setObjectName(QStringLiteral("Chip"));
+    m_paramButton->setAccessibleName(_t("Parameter"));
+    m_paramButton->setVisible(false);
+    connect(m_paramButton, &QPushButton::clicked, this, &ConsolePanel::openParamDialog);
+    m_paramTimer = new QTimer(this);
+    m_paramTimer->setSingleShot(true);
+    m_paramTimer->setInterval(250);
+    connect(m_paramTimer, &QTimer::timeout, this, &ConsolePanel::updateParamButton);
+    refreshIcons();
+    headerRow->addWidget(m_paramButton);
     headerRow->addWidget(paletteButton);
     headerRow->addWidget(historyButton);
+    // Weiteres Terminal als Reiter — nur im Terminal-Modus sichtbar.
+    m_addTerminalButton = new QPushButton(QStringLiteral("+"), this);
+    m_addTerminalButton->setObjectName(QStringLiteral("Chip"));
+    m_addTerminalButton->setToolTip(_t("Weiteres Terminal öffnen"));
+    m_addTerminalButton->setVisible(false);
+    connect(m_addTerminalButton, &QPushButton::clicked, this, &ConsolePanel::addTerminal);
     headerRow->addWidget(aiButton);
+    headerRow->addWidget(m_addTerminalButton);
     headerRow->addWidget(m_modeButton);
     headerRow->addWidget(m_dockButton);
     layout->addLayout(headerRow);
@@ -128,7 +163,9 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     m_input->setPlaceholderText(
         _t("Befehl eingeben und Enter…   (↑/↓ = Historie, Strg+F = suchen, cd, clear)"));
     m_input->installEventFilter(this);
+    m_completer = new LineCompleter(bridge, m_input, /*handleTab=*/false);
     connect(m_input, &QLineEdit::returnPressed, this, &ConsolePanel::submit);
+    connect(m_input, &QLineEdit::textChanged, m_paramTimer, qOverload<>(&QTimer::start));
     // Zustand des laufenden Befehls sichtbar machen und abbrechen koennen.
     m_status = new QLabel(m_commandPage);
     m_status->setObjectName(QStringLiteral("Muted"));
@@ -144,15 +181,33 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     m_commandLayout->addLayout(inputRow);
     m_stack->addWidget(m_commandPage);
 
-    // Seite 2: interaktives Terminal (echtes PTY)
-    m_terminal = new TerminalWidget(bridge, m_stack);
-    m_stack->addWidget(m_terminal);
-    // Beendete Shell: Enter im Terminal startet eine neue (lokal bzw. ueber
-    // die aktuelle Session) — switchToTerminal startet nur, wenn keine laeuft.
-    connect(m_terminal, &TerminalWidget::restartRequested, this, [this] {
-        if (m_stack->currentWidget() == m_terminal)
-            switchToTerminal();
+    // Seite 2: interaktive Terminals (echtes PTY) als Reiter. Die Reiterleiste
+    // erscheint erst ab dem zweiten Terminal.
+    m_terminalPage = new QWidget(m_stack);
+    auto *termLayout = new QVBoxLayout(m_terminalPage);
+    termLayout->setContentsMargins(0, 0, 0, 0);
+    m_termTabs = new QTabWidget(m_terminalPage);
+    m_termTabs->setDocumentMode(true);
+    m_termTabs->setTabsClosable(true);
+    m_termTabs->setTabBarAutoHide(true);
+    m_termTabs->setMovable(true);
+    termLayout->addWidget(m_termTabs);
+    m_terminal = createTerminal();
+    m_termTabs->addTab(m_terminal, _t("Terminal %1").arg(++m_terminalSeq));
+    connect(m_termTabs, &QTabWidget::tabCloseRequested, this, &ConsolePanel::closeTerminal);
+    connect(m_termTabs, &QTabWidget::tabBarDoubleClicked, this, &ConsolePanel::renameTerminal);
+    connect(m_termTabs, &QTabWidget::currentChanged, this, [this](int index) {
+        auto *terminal = qobject_cast<TerminalWidget *>(m_termTabs->widget(index));
+        if (!terminal)
+            return;
+        m_terminal = terminal;
+        m_paramTimer->start();
+        if (terminalMode()) {
+            startTerminal(terminal);
+            terminal->setFocus();
+        }
     });
+    m_stack->addWidget(m_terminalPage);
 
     m_historyStore.load();
     m_history = m_historyStore.history();
@@ -165,10 +220,17 @@ void ConsolePanel::setRunner(core::CommandRunner *runner, const QString &cwd)
     setCwd(cwd);
 }
 
+void ConsolePanel::setCompletionProvider(core::FileSystemProvider *provider)
+{
+    m_completionProvider = provider;
+    m_completer->setProvider(provider);
+}
+
 void ConsolePanel::setCwd(const QString &cwd)
 {
     const bool changed = (m_cwd != cwd);
     m_cwd = cwd;
+    m_completer->setCwd(cwd);
     // Langen Pfad vorne kuerzen (Ende bleibt lesbar), voller Pfad im Tooltip.
     // Ungekuerzt wurde die Textbreite zur Mindestbreite der Konsole — und damit
     // der ganzen Spalte: ein Ordner wie ~/.cache/electron/<sha256> zog die
@@ -200,14 +262,35 @@ void ConsolePanel::setActive(bool active)
     style()->polish(this);
 }
 
+void ConsolePanel::setSudo(bool sudo)
+{
+    if (property("sudo").toBool() == sudo)
+        return;
+    setProperty("sudo", sudo);
+    style()->unpolish(this);
+    style()->polish(this);
+}
+
 void ConsolePanel::setSession(const net::SSHSessionPtr &session)
 {
     m_session = session;
-    // Laeuft bereits ein Terminal, mit der neuen Session neu starten.
-    if (m_terminal->isRunning()) {
-        m_terminal->stop();
+    m_helpCache.clear();   // Hilfe gilt je Server
+    if (m_paramDialog)
+        m_paramDialog->close();
+    // Neues System: zusaetzliche Terminals gehoeren zur alten Verbindung und
+    // werden geschlossen. Lief eines, startet das erste mit der neuen Session.
+    bool wasRunning = false;
+    for (TerminalWidget *terminal : terminals())
+        wasRunning = wasRunning || terminal->isRunning();
+    while (m_termTabs->count() > 1)
+        closeTerminal(m_termTabs->count() - 1);
+    m_terminalSeq = 1;
+    // Vom Nutzer vergebene Namen (tabData = true) bleiben stehen.
+    if (!m_termTabs->tabBar()->tabData(0).toBool())
+        m_termTabs->setTabText(0, _t("Terminal %1").arg(m_terminalSeq));
+    m_terminal->stop();
+    if (wasRunning)
         switchToTerminal();
-    }
 }
 
 void ConsolePanel::setHeaderTitle(const QString &title)
@@ -219,24 +302,252 @@ void ConsolePanel::setHeaderTitle(const QString &title)
 void ConsolePanel::shutdownShell()
 {
     m_session.reset();
-    m_terminal->stop();
+    for (TerminalWidget *terminal : terminals())
+        terminal->stop();
+}
+
+bool ConsolePanel::terminalMode() const
+{
+    return m_stack->currentWidget() == m_terminalPage;
+}
+
+QList<TerminalWidget *> ConsolePanel::terminals() const
+{
+    QList<TerminalWidget *> list;
+    for (int i = 0; i < m_termTabs->count(); ++i)
+        if (auto *terminal = qobject_cast<TerminalWidget *>(m_termTabs->widget(i)))
+            list << terminal;
+    return list;
+}
+
+TerminalWidget *ConsolePanel::createTerminal()
+{
+    auto *terminal = new TerminalWidget(m_bridge, m_termTabs);
+    connect(terminal, &QPlainTextEdit::textChanged, m_paramTimer, qOverload<>(&QTimer::start));
+    // Beendete Shell: Enter im Terminal startet eine neue (lokal bzw. ueber
+    // die aktuelle Session) — startTerminal startet nur, wenn keine laeuft.
+    connect(terminal, &TerminalWidget::restartRequested, this, [this, terminal] {
+        if (terminalMode() && m_terminal == terminal) {
+            startTerminal(terminal);
+            terminal->setFocus();
+        }
+    });
+    return terminal;
+}
+
+void ConsolePanel::startTerminal(TerminalWidget *terminal)
+{
+    if (terminal->isRunning())
+        return;
+    if (m_session)
+        terminal->startRemote(m_session);
+    else
+        terminal->startLocal();
+}
+
+void ConsolePanel::addTerminal()
+{
+    // Eigene Shell (remote: eigener Kanal auf derselben SSH-Session), die im
+    // aktuellen Verzeichnis der Pane beginnt.
+    TerminalWidget *terminal = createTerminal();
+    const int index = m_termTabs->addTab(terminal, _t("Terminal %1").arg(++m_terminalSeq));
+    if (!terminalMode())
+        m_modeButton->setChecked(true);   // -> switchToTerminal
+    m_termTabs->setCurrentIndex(index);   // -> currentChanged startet die Shell
+    startTerminal(terminal);
+    if (terminal->isRunning() && !m_cwd.isEmpty())
+        terminal->sendText(cdCommand(terminal->shellKind(), m_cwd) + QStringLiteral("\r"));
+    terminal->setFocus();
+}
+
+void ConsolePanel::closeTerminal(int index)
+{
+    // Das letzte Terminal bleibt (die Reiterleiste ist dann ohnehin verborgen).
+    if (m_termTabs->count() <= 1)
+        return;
+    auto *terminal = qobject_cast<TerminalWidget *>(m_termTabs->widget(index));
+    if (!terminal)
+        return;
+    terminal->stop();
+    m_termTabs->removeTab(index);   // currentChanged fuehrt m_terminal nach
+    terminal->deleteLater();
+}
+
+void ConsolePanel::renameTerminal(int index)
+{
+    if (index < 0 || index >= m_termTabs->count())
+        return;
+    // Eingabefeld direkt ueber dem Reiter: Enter/Fokusverlust uebernimmt,
+    // Esc verwirft. Ueber den Seitenzeiger, falls Reiter inzwischen wandern.
+    QTabBar *bar = m_termTabs->tabBar();
+    auto *editor = new QLineEdit(bar);
+    editor->setObjectName(QStringLiteral("TerminalTabEditor"));
+    editor->setText(bar->tabText(index));
+    editor->selectAll();
+    editor->setGeometry(bar->tabRect(index));
+    QPointer<QWidget> page = m_termTabs->widget(index);
+    auto finish = [this, editor, page](bool accept) {
+        if (editor->property("done").toBool())
+            return;
+        editor->setProperty("done", true);
+        const int i = page ? m_termTabs->indexOf(page) : -1;
+        const QString name = editor->text().trimmed();
+        if (accept && i >= 0 && !name.isEmpty()) {
+            m_termTabs->setTabText(i, name);
+            m_termTabs->tabBar()->setTabData(i, true);
+        }
+        editor->deleteLater();
+        if (page)
+            page->setFocus();
+    };
+    connect(editor, &QLineEdit::editingFinished, this, [finish] { finish(true); });
+    auto *cancel = new QAction(editor);
+    cancel->setShortcut(QKeySequence(Qt::Key_Escape));
+    cancel->setShortcutContext(Qt::WidgetShortcut);
+    editor->addAction(cancel);
+    connect(cancel, &QAction::triggered, this, [finish] { finish(false); });
+    editor->show();
+    editor->setFocus();
+}
+
+bool ConsolePanel::event(QEvent *event)
+{
+    if (event->type() == themeChangedEventType())
+        refreshIcons();
+    return QWidget::event(event);
+}
+
+void ConsolePanel::refreshIcons()
+{
+    m_paletteButton->setIcon(themedIcon(QStringLiteral("palette"), 16));
+    m_historyButton->setIcon(themedIcon(QStringLiteral("history"), 16));
+    m_paramButton->setIcon(themedIcon(QStringLiteral("params"), 16));
+}
+
+QString ConsolePanel::osType() const
+{
+    if (m_session)
+        return m_session->osType == QLatin1String("windows") ? QStringLiteral("windows")
+                                                             : QStringLiteral("posix");
+#ifdef Q_OS_WIN
+    return QStringLiteral("windows");
+#else
+    return QStringLiteral("posix");
+#endif
+}
+
+QString ConsolePanel::currentCommandLine() const
+{
+    if (terminalMode())
+        return m_terminal->isRunning() ? m_terminal->currentInputLine() : QString();
+    return m_input->text();
+}
+
+void ConsolePanel::updateParamButton()
+{
+    const QString name = core::commandName(currentCommandLine(), osType());
+    const bool known = core::isKnownCommand(name, osType());
+    m_paramButton->setVisible(known);
+    if (known)
+        m_paramButton->setToolTip(_t("Parameter für „%1“ anzeigen").arg(name));
+}
+
+void ConsolePanel::appendToCommand(const QString &text)
+{
+    if (text.isEmpty())
+        return;
+    // Terminal: an die Eingabe der Shell tippen (sie steht am Zeilenende).
+    if (terminalMode() && m_terminal->isRunning()) {
+        const QString line = m_terminal->currentInputLine();
+        const bool space = !line.isEmpty() && !line.endsWith(QLatin1Char(' '));
+        m_terminal->sendText((space ? QStringLiteral(" ") : QString()) + text);
+        return;
+    }
+    QString line = m_input->text();
+    if (!line.isEmpty() && !line.endsWith(QLatin1Char(' ')))
+        line += QLatin1Char(' ');
+    m_input->setText(line + text);
+    m_input->setCursorPosition(m_input->text().size());
+}
+
+void ConsolePanel::openParamDialog()
+{
+    const QString line = currentCommandLine();
+    const QString os = osType();
+    if (!core::isKnownCommand(core::commandName(line, os), os))
+        return;
+    if (m_paramDialog)
+        m_paramDialog->close();
+    auto *dlg = new ParamDialog(
+        m_bridge, line, os, m_completionProvider, m_cwd,
+        [this](const QString &text) { appendToCommand(text); },
+        [this] { return currentCommandLine(); }, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    m_paramDialog = dlg;
+    // Nach dem Schliessen zurueck an die Eingabe (Terminal-Cursor bzw.
+    // Befehlszeile): ein Enter fuehrt den zusammengestellten Befehl dann aus.
+    // Verzoegert, weil das Fenstersystem den Fokus erst nach dem Ausblenden
+    // des Dialogs wieder vergibt.
+    connect(dlg, &QDialog::finished, this, [this] {
+        QTimer::singleShot(0, this, [this] {
+            window()->activateWindow();
+            if (terminalMode())
+                m_terminal->setFocus();
+            else
+                m_input->setFocus();
+        });
+    });
+    dlg->show();
+
+    // Weitere Optionen aus der Hilfe des Befehls (nur Unix: Server oder lokal).
+    const QString helpCmd = os == QLatin1String("posix") ? core::helpCommandFor(line) : QString();
+    if (helpCmd.isEmpty() || !m_runner) {
+        dlg->setHelpStatus(os == QLatin1String("posix")
+                               ? QString()
+                               : _t("Optionen aus dem Befehlskatalog."));
+        return;
+    }
+    if (m_helpCache.contains(helpCmd)) {
+        dlg->addHelpOptions(core::parseHelpOptions(m_helpCache.value(helpCmd)));
+        return;
+    }
+    dlg->setHelpStatus(_t("Lade Hilfe vom Server …"));
+    QPointer<ParamDialog> target = dlg;
+    auto lines = std::make_shared<QStringList>();
+    core::CommandRunner *runner = m_runner;
+    const QString cwd = m_cwd;
+    m_bridge->stream(
+        [runner, helpCmd, cwd](const AsyncBridge::EmitLine &emitLine, const CancelTokenPtr &cancel) {
+            runner->stream(helpCmd, cwd, [&emitLine](const QString &l) { emitLine(l); }, cancel);
+        },
+        [lines](const QString &l) { lines->append(l); },
+        [this, target, lines, helpCmd] {
+            const QString text = lines->join(QLatin1Char('\n'));
+            m_helpCache.insert(helpCmd, text);
+            if (target)
+                target->addHelpOptions(core::parseHelpOptions(text));
+        },
+        [target](const QString &err) {
+            if (target)
+                target->setHelpStatus(_t("Hilfe nicht verfügbar: %1").arg(err));
+        },
+        this);
 }
 
 void ConsolePanel::switchToTerminal()
 {
-    m_stack->setCurrentWidget(m_terminal);
-    if (!m_terminal->isRunning()) {
-        if (m_session)
-            m_terminal->startRemote(m_session);
-        else
-            m_terminal->startLocal();
-    }
+    m_stack->setCurrentWidget(m_terminalPage);
+    m_addTerminalButton->setVisible(true);
+    m_paramTimer->start();
+    startTerminal(m_terminal);
     m_terminal->setFocus();
 }
 
 void ConsolePanel::switchToCommands()
 {
     m_stack->setCurrentWidget(m_commandPage);
+    m_addTerminalButton->setVisible(false);
+    m_paramTimer->start();
     m_input->setFocus();
 }
 
@@ -250,7 +561,7 @@ void ConsolePanel::explainWithAi()
     // Die sichtbare Seite zaehlt: im Terminal-Modus steht die Ausgabe im
     // Terminal-Widget, nicht im Befehlsfenster (das dann leer ist und zur
     // Meldung "Es gibt noch keine Ausgabe" trotz vollem Bildschirm fuehrte).
-    const QString output = (m_stack && m_stack->currentWidget() == m_terminal)
+    const QString output = terminalMode()
                                ? m_terminal->toPlainText()
                                : m_output->toPlainText();
     if (output.trimmed().isEmpty()) {
@@ -269,7 +580,7 @@ void ConsolePanel::runCommand(const QString &command, bool execute)
 {
     // Terminal-Modus: in die laufende Shell tippen. Vorher landete der Befehl
     // in der (unsichtbaren) Eingabezeile des Befehlsmodus.
-    if (m_stack->currentWidget() == m_terminal && m_terminal->isRunning()) {
+    if (terminalMode() && m_terminal->isRunning()) {
         if (command.trimmed().isEmpty())
             return;
         m_terminal->sendText(execute ? command + QStringLiteral("\r") : command);
@@ -324,8 +635,10 @@ void ConsolePanel::runCommand(const QString &command, bool execute)
     // durfte parallel starten).
     const quint64 seq = ++m_runSeq;
     m_running = m_bridge->stream(
-        [runner, command, cwd](const AsyncBridge::EmitLine &emit, const CancelTokenPtr &cancel) {
-            runner->stream(command, cwd, [&emit](const QString &line) { emit(line); }, cancel);
+        [runner, command, cwd](const AsyncBridge::EmitLine &emitLine, const CancelTokenPtr &cancel) {
+            // NICHT "emit" nennen: das ist Qts (leeres) Makro — aus emit(line)
+            // wurde "(line)", und die Ausgabe ging jahrelang verloren.
+            runner->stream(command, cwd, [&emitLine](const QString &line) { emitLine(line); }, cancel);
         },
         [this, seq](const QString &line) {
             if (seq == m_runSeq)   // Nachzuegler eines abgebrochenen Befehls verwerfen
@@ -395,7 +708,7 @@ void ConsolePanel::submit()
 void ConsolePanel::printInfo(const QString &text, bool error)
 {
     appendOutput(error ? QStringLiteral("✖ ") + text : QStringLiteral("» ") + text);
-    if (m_stack->currentWidget() == m_terminal)
+    if (terminalMode())
         m_terminal->printLocal(text, error);
 }
 
@@ -408,103 +721,6 @@ void ConsolePanel::appendOutput(const QString &text)
 {
     m_output->appendPlainText(text);
     m_output->verticalScrollBar()->setValue(m_output->verticalScrollBar()->maximum());
-}
-
-void ConsolePanel::complete()
-{
-    if (!m_completionProvider)
-        return;
-    const int pos = m_input->cursorPosition();
-    const QString text = m_input->text();
-    const QString before = text.left(pos);
-    const QString after = text.mid(pos);
-    // Token-Anfang: in offenen Anfuehrungszeichen ab dem Quote (Leerzeichen
-    // gehoeren dann zum Pfad), sonst ab dem letzten Leerzeichen.
-    const bool inQuotes = (before.count(QLatin1Char('"')) % 2) == 1;
-    const int start = inQuotes ? before.lastIndexOf(QLatin1Char('"')) + 1
-                               : before.lastIndexOf(QLatin1Char(' ')) + 1;
-    const QString token = before.mid(start);
-    const int cut = qMax(token.lastIndexOf(QLatin1Char('/')),
-                         token.lastIndexOf(QLatin1Char('\\'))) + 1;
-    const QString dirPart = token.left(cut);
-    const QString prefix = token.mid(cut);
-    const QString sep = m_completionProvider->isRemote ? QStringLiteral("/")
-                                                       : QString(QDir::separator());
-    const QString cwd = m_cwd.isEmpty() ? QStringLiteral(".") : m_cwd;
-    QString base;
-    if (dirPart.isEmpty())
-        base = cwd;
-    else if (dirPart.startsWith(QLatin1Char('/')) || QDir::isAbsolutePath(dirPart))
-        base = dirPart;
-    else
-        base = m_completionProvider->join(cwd, dirPart);
-
-    core::FileSystemProvider *provider = m_completionProvider;
-    m_bridge->run<std::vector<core::FileEntry>>(
-        [provider, base] { return provider->listDir(base); },
-        [this, text, pos, before, after, start, dirPart, prefix, inQuotes, sep](
-            const std::vector<core::FileEntry> &entries) {
-            // Inzwischen weitergetippt/abgeschickt? Dann nichts ueberschreiben.
-            if (m_input->text() != text || m_input->cursorPosition() != pos)
-                return;
-            std::vector<const core::FileEntry *> names;
-            for (const auto &e : entries) {
-                if (e.type == core::EntryType::Parent)
-                    continue;
-                if (e.name.startsWith(prefix))
-                    names.push_back(&e);
-            }
-            if (names.empty() && !prefix.isEmpty()) {  // Gross/Kleinschreibung egal
-                const QString low = prefix.toLower();
-                for (const auto &e : entries) {
-                    if (e.type == core::EntryType::Parent)
-                        continue;
-                    if (e.name.toLower().startsWith(low))
-                        names.push_back(&e);
-                }
-            }
-            if (names.empty())
-                return;
-
-            auto apply = [&](const QString &completed, bool closeToken) {
-                const bool quote = inQuotes || (dirPart + completed).contains(QLatin1Char(' '));
-                const QString lead = (quote && !inQuotes) ? QStringLiteral("\"") : QString();
-                const QString tail = closeToken ? (quote ? QStringLiteral("\" ")
-                                                         : QStringLiteral(" "))
-                                                : QString();
-                const QString newBefore = before.left(start) + lead + dirPart + completed + tail;
-                m_input->setText(newBefore + after);
-                m_input->setCursorPosition(newBefore.size());
-            };
-
-            if (names.size() == 1) {
-                const core::FileEntry *e = names.front();
-                if (e->type == core::EntryType::Dir)
-                    apply(e->name + sep, false);
-                else
-                    apply(e->name, true);
-                return;
-            }
-            // Gemeinsamen Anfang aller Kandidaten bestimmen.
-            QString common = names.front()->name;
-            for (const core::FileEntry *e : names) {
-                int i = 0;
-                while (i < common.size() && i < e->name.size() && common[i] == e->name[i])
-                    ++i;
-                common.truncate(i);
-            }
-            if (common.size() <= prefix.size()) {
-                // Nicht weiter eindeutig -> Kandidaten in der Ausgabe listen.
-                QStringList shown;
-                for (const core::FileEntry *e : names)
-                    shown << e->name + (e->type == core::EntryType::Dir ? QStringLiteral("/")
-                                                                        : QString());
-                appendOutput(shown.join(QStringLiteral("  ")));
-                return;
-            }
-            apply(common, false);
-        },
-        [](const QString &) {}, this);
 }
 
 bool ConsolePanel::eventFilter(QObject *obj, QEvent *event)
@@ -554,7 +770,7 @@ bool ConsolePanel::eventFilter(QObject *obj, QEvent *event)
         // Tab vervollstaendigt den Pfad (wie in einer Shell), statt den Fokus zu
         // wechseln. Shift+Tab bleibt der normale Rueckwaerts-Fokuswechsel.
         if (ke->key() == Qt::Key_Tab && !(ke->modifiers() & Qt::ShiftModifier)) {
-            complete();
+            m_completer->complete();
             return true;
         }
     }

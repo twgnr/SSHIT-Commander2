@@ -1,6 +1,8 @@
 // Umschaltbare Themes (Fusion + QSS + Palette), inkl. benutzerdefinierter Themes.
 #pragma once
 
+#include <QColor>
+#include <QEvent>
 #include <QHash>
 #include <QString>
 #include <QStringList>
@@ -33,6 +35,15 @@ const QHash<QString, ThemeColors> &builtinThemes();
 // Aktuelle Terminal-Farben (vom Theme gesetzt) — vom TerminalWidget gelesen.
 // WICHTIG: liefert (bg, fg) — in dieser Reihenfolge!
 std::pair<QString, QString> terminalColors();
+
+// Terminal-Textfarbe lesbar machen: auf HELLEM Hintergrund werden zu blasse
+// Farben (ANSI-Weiss, Hellgelb …) abgedunkelt, bis der Kontrast reicht.
+// Auf dunklem Hintergrund bleibt die Farbe unveraendert.
+QColor readableOn(const QColor &fg, const QColor &bg);
+
+// Ereignis, das applyTheme() an alle Widgets schickt — wer eigene Farben
+// oder Symbole aus dem Theme ableitet, zieht sie darauf nach.
+QEvent::Type themeChangedEventType();
 
 // Laedt benutzerdefinierte Themes aus den Einstellungen.
 QHash<QString, ThemeColors> customThemes();

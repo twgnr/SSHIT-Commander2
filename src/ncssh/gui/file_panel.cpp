@@ -115,6 +115,7 @@ void FilePanel::buildUi(const QString &title)
     // Attribut — sonst bleibt der (aktive) #Pane[active="true"]-Rahmen unsichtbar.
     setAttribute(Qt::WA_StyledBackground, true);
     setProperty("active", false);
+    setProperty("sudo", false);
     // Startzustand der versteckten Dateien aus der Einstellung (hide_hidden).
     m_showHidden = !core::getSettingBool(QStringLiteral("hide_hidden"), false);
     auto *layout = new QVBoxLayout(this);
@@ -132,6 +133,7 @@ void FilePanel::buildUi(const QString &title)
     m_sudoChip->setToolTip(_t("Diese Pane mit sudo-Rechten (root) anzeigen"));
     connect(m_sudoChip, &QPushButton::toggled, this, [this](bool on) {
         m_sudoActive = on;
+        updateSudoFrame();
         emit sudoToggled(on);
     });
     // Trennen-Chip: nur an einer verbundenen Seite sichtbar.
@@ -141,7 +143,17 @@ void FilePanel::buildUi(const QString &title)
     m_disconnectChip->setToolTip(_t("Verbindung dieser Seite trennen"));
     connect(m_disconnectChip, &QPushButton::clicked, this,
             [this] { emit disconnectRequested(); });
+    // Server-Info: Eckdaten, Benutzer und Konfigurationsdateien des Servers.
+    m_serverInfoChip = new QPushButton(_t("ⓘ Info"), this);
+    m_serverInfoChip->setObjectName(QStringLiteral("Chip"));
+    m_serverInfoChip->setVisible(false);
+    m_serverInfoChip->setToolTip(_t("Server-Info: System, Benutzer, Konfigurationsdateien"));
+    connect(m_serverInfoChip, &QPushButton::clicked, this, [this] {
+        emit activated();
+        emit serverInfoRequested();
+    });
     headerRow->addWidget(m_header, 1);
+    headerRow->addWidget(m_serverInfoChip);
     headerRow->addWidget(m_disconnectChip);
     headerRow->addWidget(m_sudoChip);
     layout->addLayout(headerRow);
@@ -2057,6 +2069,8 @@ void FilePanel::setConnected(bool connected)
 {
     if (m_disconnectChip)
         m_disconnectChip->setVisible(connected);
+    if (m_serverInfoChip)
+        m_serverInfoChip->setVisible(connected);
 }
 
 void FilePanel::setSudoActive(bool active)
@@ -2065,6 +2079,19 @@ void FilePanel::setSudoActive(bool active)
     QSignalBlocker blocker(m_sudoChip);
     m_sudoChip->setChecked(active);
     m_sudoActive = active;
+    updateSudoFrame();
+}
+
+void FilePanel::updateSudoFrame()
+{
+    // Aktive Pane im sudo-Modus orange umrahmen (#Pane[sudo="true"]) — als
+    // Warnung, dass Aenderungen hier mit root-Rechten passieren.
+    if (property("sudo").toBool() == m_sudoActive)
+        return;
+    setProperty("sudo", m_sudoActive);
+    style()->unpolish(this);
+    style()->polish(this);
+    emit sudoFrameChanged(m_sudoActive);   // Konsole derselben Seite mitfaerben
 }
 
 void FilePanel::sortBy(int column)

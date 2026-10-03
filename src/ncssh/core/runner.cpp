@@ -3,6 +3,12 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
+#include <QStringDecoder>
+#include <string>
+
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 
 namespace ncssh::core {
 
@@ -62,6 +68,26 @@ static void killTree(qint64 pid)
 #endif
 }
 
+// Ausgabe lokaler Befehle dekodieren: UTF-8, wenn es gueltiges UTF-8 ist
+// (PowerShell, git, Python …), sonst unter Windows die OEM-Codepage der
+// Konsole — cmd-Befehle wie dir schreiben darin ("Datentraeger" kam sonst als
+// "Datentr?ger" an).
+static QString decodeLocalOutput(const QByteArray &raw)
+{
+#ifdef Q_OS_WIN
+    QStringDecoder utf8(QStringDecoder::Utf8, QStringDecoder::Flag::Stateless);
+    const QString text = utf8.decode(raw);
+    if (!utf8.hasError())
+        return text;
+    const int n = MultiByteToWideChar(CP_OEMCP, 0, raw.constData(), int(raw.size()), nullptr, 0);
+    std::wstring wide(size_t(n), L'\0');
+    MultiByteToWideChar(CP_OEMCP, 0, raw.constData(), int(raw.size()), wide.data(), n);
+    return QString::fromWCharArray(wide.data(), n);
+#else
+    return QString::fromUtf8(raw);
+#endif
+}
+
 void LocalCommandRunner::stream(const QString &command, const QString &cwd,
                                 const LineCallback &onLine, const CancelTokenPtr &cancel)
 {
@@ -86,7 +112,7 @@ void LocalCommandRunner::stream(const QString &command, const QString &cwd,
             pending.remove(0, idx + 1);
             while (raw.endsWith('\r'))
                 raw.chop(1);
-            onLine(QString::fromUtf8(raw));
+            onLine(decodeLocalOutput(raw));
         }
     };
 
@@ -108,7 +134,7 @@ void LocalCommandRunner::stream(const QString &command, const QString &cwd,
     pending += proc.readAll();
     flushLines();
     if (!pending.isEmpty())
-        onLine(QString::fromUtf8(pending));
+        onLine(decodeLocalOutput(pending));
 
     lastExitStatus = killed ? -1 : proc.exitCode();
 }

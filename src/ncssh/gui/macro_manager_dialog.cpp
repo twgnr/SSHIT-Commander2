@@ -1197,6 +1197,23 @@ void MacroManagerDialog::openManager()
     activateWindow();
 }
 
+void MacroManagerDialog::rememberVisibility()
+{
+    const bool docked = m_dockSide != QLatin1String("float");
+    const bool visible = docked ? (m_dock && m_dock->isVisible()) : isVisible();
+    const bool open = m_runMode && visible;
+    if (m_config.open != open) {
+        m_config.open = open;
+        saveConfig();
+    }
+}
+
+bool MacroManagerDialog::shouldRestore()
+{
+    const mc::MacroConfig config = mc::load();
+    return config.open && config.mode == QLatin1String("run");
+}
+
 void MacroManagerDialog::closeEvent(QCloseEvent *event)
 {
     // Nur ein echtes, vom Nutzer ausgeloestes Schliessen (Fenster-X) merkt sich

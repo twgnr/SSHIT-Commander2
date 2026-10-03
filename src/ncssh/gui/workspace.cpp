@@ -6,9 +6,11 @@
 #include "ncssh/gui/confirm_dialog.hpp"
 #include "ncssh/gui/console_panel.hpp"
 #include "ncssh/gui/dir_chooser.hpp"
+#include "ncssh/gui/editor_dialog.hpp"
 #include "ncssh/gui/file_panel.hpp"
 #include "ncssh/gui/host_key_dialog.hpp"
 #include "ncssh/gui/preview_panel.hpp"
+#include "ncssh/gui/server_info_dialog.hpp"
 #include "ncssh/gui/transfer_manager.hpp"
 #include "ncssh/net/transfer.hpp"
 
@@ -210,10 +212,12 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     // sudo-/Trennen-Chip beider Panes: wirkt auf die Pane mit der Verbindung.
     for (FilePanel *p : {m_leftPanel, m_rightPanel}) {
         connect(p, &FilePanel::sudoToggled, this, &Workspace::setSudoMode);
+        connect(p, &FilePanel::sudoFrameChanged, this, [this] { highlightActive(); });
         connect(p, &FilePanel::disconnectRequested, this, [this] {
             if (m_session)
                 disconnectSession();
         });
+        connect(p, &FilePanel::serverInfoRequested, this, &Workspace::openServerInfo);
     }
 
     // Vorschau-Panel: zeigt die markierte Datei der jeweiligen Pane.
@@ -415,6 +419,48 @@ QSet<const core::FileSystemProvider *> Workspace::ownedProviders() const
         add(r.sudoFs.get());
     }
     return owned;
+}
+
+void Workspace::openServerInfo()
+{
+    if (!m_session)
+        return;
+    // Ein Dialog je Tab und Verbindung — erneut klicken holt ihn nach vorn.
+    auto *open = qobject_cast<ServerInfoDialog *>(m_serverInfo.data());
+    if (open && open->property("session").value<quintptr>()
+                    == reinterpret_cast<quintptr>(m_session.get())) {
+        open->show();
+        open->raise();
+        open->activateWindow();
+        return;
+    }
+    if (open)
+        open->close();
+    // Datei oeffnen: zum Zeitpunkt des Klicks entscheiden, ob sudo aktiv ist
+    // (dann ueber das sudo-Dateisystem, sonst per SFTP). Editor und Dialog
+    // haengen am Tab und schliessen mit ihm.
+    auto openFile = [this](const QString &path) {
+        core::FileSystemProvider *provider =
+            (m_sudoFs && m_connectedPanel && m_connectedPanel->sudoActive())
+                ? static_cast<core::FileSystemProvider *>(m_sudoFs.get())
+                : m_remoteFs.get();
+        if (!provider) {
+            emit statusMessage(_t("Keine Verbindung — Datei kann nicht geöffnet werden."));
+            return;
+        }
+        auto *editor = new EditorDialog(m_bridge, provider, path, this);
+        editor->setAttribute(Qt::WA_DeleteOnClose);
+        connect(editor, &QDialog::finished, this, [this] {
+            if (m_connectedPanel)
+                m_connectedPanel->refresh();
+        });
+        editor->show();
+    };
+    auto *dlg = new ServerInfoDialog(m_bridge, m_session, openFile, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setProperty("session", QVariant::fromValue(reinterpret_cast<quintptr>(m_session.get())));
+    m_serverInfo = dlg;
+    dlg->show();
 }
 
 void Workspace::bindDialog(QWidget *dialog)
@@ -762,6 +808,9 @@ void Workspace::highlightActive()
     }
     m_leftConsole->setActive(!m_rightActive);
     m_rightConsole->setActive(m_rightActive);
+    // sudo-Seite: Konsole wie ihre Pane orange markieren.
+    m_leftConsole->setSudo(m_leftPanel->sudoActive());
+    m_rightConsole->setSudo(m_rightPanel->sudoActive());
 }
 
 void Workspace::showNetworkHosts(const std::vector<core::HostResult> &hosts,

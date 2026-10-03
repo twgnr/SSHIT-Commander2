@@ -12,6 +12,10 @@
 
 namespace ncssh::gui {
 
+// Format-Eigenschaft: die von der Ausgabe gewuenschte Textfarbe vor der
+// Lesbarkeits-Anpassung (retheme rechnet daraus fuer den neuen Hintergrund).
+constexpr int kOriginalFg = QTextFormat::UserProperty + 1;
+
 static const char *kBase16[] = {
     "#2e3436", "#cc0000", "#4e9a06", "#c4a000", "#3465a4", "#75507b", "#06989a", "#d3d7cf",
     "#555753", "#ef2929", "#8ae234", "#fce94f", "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeec",
@@ -54,6 +58,44 @@ QString AnsiRenderer::stripAnsi(const QString &text)
     return out;
 }
 
+void AnsiRenderer::retheme()
+{
+    const QColor oldFg(m_defFg);
+    const auto [bg, fg] = terminalColors();  // WICHTIG: liefert (bg, fg)!
+    m_defFg = fg;
+    m_defBg = bg;
+    const QColor newFg(fg), newBg(bg);
+    QTextDocument *doc = m_editor->document();
+    QTextCursor cur(doc);
+    cur.beginEditBlock();
+    for (QTextBlock block = doc->begin(); block.isValid(); block = block.next()) {
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment frag = it.fragment();
+            if (!frag.isValid())
+                continue;
+            const QTextCharFormat old = frag.charFormat();
+            QColor target;
+            if (old.hasProperty(kOriginalFg)) {
+                const QColor original = old.property(kOriginalFg).value<QColor>();
+                target = old.background().style() == Qt::NoBrush ? readableOn(original, newBg)
+                                                                 : original;
+            } else if (old.foreground().color() == oldFg) {
+                target = newFg;   // Standardtext
+            } else {
+                continue;         // invertiert o. ae. — unveraendert lassen
+            }
+            if (target == old.foreground().color())
+                continue;
+            QTextCharFormat fmt;
+            fmt.setForeground(target);
+            cur.setPosition(frag.position());
+            cur.setPosition(frag.position() + frag.length(), QTextCursor::KeepAnchor);
+            cur.mergeCharFormat(fmt);
+        }
+    }
+    cur.endEditBlock();
+}
+
 void AnsiRenderer::reset()
 {
     const auto [bg, fg] = terminalColors();  // WICHTIG: liefert (bg, fg)!
@@ -80,6 +122,12 @@ QTextCharFormat AnsiRenderer::format() const
         const QColor newFg = bg.value_or(QColor(m_defBg));
         bg = fg;
         fg = newFg;
+    }
+    // Explizite Farbe merken (fuer retheme) und auf hellem Grund lesbar machen.
+    if (m_fg && !m_reverse) {
+        fmt.setProperty(kOriginalFg, *m_fg);
+        if (!bg)
+            fg = readableOn(fg, QColor(m_defBg));
     }
     fmt.setForeground(fg);
     if (bg)

@@ -87,9 +87,9 @@ TEST(i18n, available_languages)
 
 TEST(i18n, command_catalog_translates)
 {
-    // Der Befehlskatalog wird einmalig
-    // beim ersten Zugriff uebersetzt. Deshalb hier vor dem ersten catalog()
-    // auf Englisch schalten; kein anderer Test fasst den Katalog an.
+    // Der Befehlskatalog wird je Sprache einmal uebersetzt — nach dem
+    // Umschalten auf Englisch kommt der englische, auch wenn andere Tests
+    // den Katalog vorher schon (deutsch) benutzt haben.
     LanguageGuard guard;
     setLanguage(QStringLiteral("en"));
     const auto &cat = catalog();

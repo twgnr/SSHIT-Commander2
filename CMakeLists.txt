@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(sshit_commander2 VERSION 1.0.1 LANGUAGES C CXX)
+project(sshit_commander2 VERSION 1.0.2 LANGUAGES C CXX)
 
 # ---------------------------------------------------------------------------
 # SSHIT-Commander — Dual-Pane-Dateimanager mit SSH/SFTP und Terminal.

@@ -60,7 +60,7 @@ $exe = Join-Path $build "sshit-commander.exe"
 if (-not (Test-Path $exe)) { throw "sshit-commander.exe nicht gefunden - Build fehlgeschlagen?" }
 
 # Version und Entwicklungsstufe aus der CMakeLists lesen - eine Quelle fuer
-# Programm und Paketname. Ergebnis z. B.: SSHIT-Commander-1.0.1-win64
+# Programm und Paketname. Ergebnis z. B.: SSHIT-Commander-1.0.2-win64
 # (mit Stufe: SSHIT-Commander-1.1.0-beta.1-win64)
 $cmakeFile = Join-Path $root "CMakeLists.txt"
 $version = (Select-String -Path $cmakeFile `

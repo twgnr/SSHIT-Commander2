@@ -83,6 +83,13 @@ public:
     // Oberflaeche nach vorne (loest eine angedockte Leiste dafuer ab).
     void openManager();
 
+    // Beim Beenden der App: "geoeffnet" nur merken, wenn die Tasten gerade zu
+    // sehen sind (Ausfuehren-Modus, schwebend oder angedockt). Ein offener
+    // Bearbeiten-Dialog kehrt beim Start nicht zurueck.
+    void rememberVisibility();
+    // Startwert fuer MainWindow: Tastenleiste beim Start wieder zeigen?
+    static bool shouldRestore();
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 

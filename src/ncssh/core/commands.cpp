@@ -4,6 +4,7 @@
 #include "ncssh/core/i18n.hpp"
 
 #include <QRegularExpression>
+#include <mutex>
 
 namespace ncssh::core {
 
@@ -1605,9 +1606,17 @@ std::vector<CS> buildCatalog()
 
 const std::vector<CommandSpec> &catalog()
 {
-    // Uebersetzung wird beim ersten Zugriff eingefroren — entspricht dem
-    static const std::vector<CommandSpec> cat = buildCatalog();
-    return cat;
+    // Je Sprache einmal uebersetzt und danach behalten: ausgegebene Referenzen
+    // bleiben gueltig, und ein Sprachwechsel liefert den passenden Katalog
+    // (vorher fror der erste Zugriff die Sprache fuer immer ein).
+    static std::mutex mutex;
+    static QHash<QString, const std::vector<CommandSpec> *> byLanguage;
+    const std::lock_guard<std::mutex> lock(mutex);
+    const QString language = currentLanguage();
+    auto it = byLanguage.find(language);
+    if (it == byLanguage.end())
+        it = byLanguage.insert(language, new std::vector<CommandSpec>(buildCatalog()));
+    return *it.value();
 }
 
 std::vector<CommandSpec> commandsFor(const QString &osType)

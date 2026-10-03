@@ -122,6 +122,7 @@ signals:
     void transferRequested(const QString &srcPath);  // F5 aus dieser Pane
     void statusMessage(const QString &msg);
     void sudoToggled(bool on);                    // sudo-Chip umgeschaltet
+    void sudoFrameChanged(bool on);               // sudo-Markierung an/aus (auch programmatisch)
     // Auswahl geaendert (fuer das Vorschau-Panel); leer = nichts markiert.
     void selectionChanged(const QString &path);
     // Cursor-Balken steht auf einer anderen Zeile (auch nach dem Neuladen).
@@ -141,6 +142,7 @@ signals:
     void dirAlarmRequested(const QString &path);
     // Trennen-Chip im Pane-Header geklickt.
     void disconnectRequested();
+    void serverInfoRequested();                   // Info-Chip der verbundenen Seite
     // Tab-Taste: zur anderen Pane wechseln (Norton-Commander-Bedienung).
     void switchPaneRequested();
     // --- Netzwerk-Modus (net://) ---
@@ -156,6 +158,7 @@ protected:
     void dropEvent(QDropEvent *event) override;
 
 private:
+    void updateSudoFrame();   // sudo-Property fuer den orangen Rahmen nachfuehren
     void buildUi(const QString &title);
     void loadDir(const QString &path, bool record = true);
     void populate(const std::vector<core::FileEntry> &entries);
@@ -293,6 +296,7 @@ private:
     QPushButton *m_starButton = nullptr;
     QPushButton *m_sudoChip = nullptr;
     QPushButton *m_disconnectChip = nullptr;
+    QPushButton *m_serverInfoChip = nullptr;
     QLineEdit *m_filterEdit = nullptr;
 };
 
