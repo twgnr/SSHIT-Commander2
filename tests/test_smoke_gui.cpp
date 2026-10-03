@@ -276,3 +276,37 @@ TEST(smoke_gui, terminal_renders_search_and_logs)
     CHECK(!terminal.isLogging());
     CHECK(QFile::exists(logPath));
 }
+
+// Die Statuszeile unter der Liste nennt den markierten Namen. Ungekuerzt wurde
+// ihre Textbreite zur Mindestbreite der Pane — ein langer Dateiname zog beim
+// Verzeichniswechsel die ganze Spalte breiter (und wieder zurueck).
+TEST(smoke_gui, file_panel_min_width_independent_of_selected_name)
+{
+    QTemporaryDir tmp;
+    CHECK(tmp.isValid());
+    const QString longName = QStringLiteral(
+        "ein-wirklich-sehr-langer-dateiname-der-die-statuszeile-sprengen-wuerde-"
+        "backup-2026-10-03-vollstaendig-komprimiert-und-signiert.tar.gz");
+    QFile f(tmp.path() + QLatin1Char('/') + longName);
+    CHECK(f.open(QIODevice::WriteOnly));
+    f.write("x");
+    f.close();
+
+    gui::AsyncBridge bridge;
+    core::LocalFileSystem fs;
+    gui::FilePanel panel(&bridge, QStringLiteral("Test"));
+    panel.setProvider(&fs, tmp.path());
+    CHECK(pumpUntil([&] { return panel.currentPath() == native(tmp.path()); }));
+    auto *table = panel.findChild<QTableWidget *>();
+    CHECK(table != nullptr);
+    if (!table)
+        return;
+
+    table->clearSelection();
+    const int before = panel.minimumSizeHint().width();
+    for (int r = 0; r < table->rowCount(); ++r)
+        if (table->item(r, 0)->data(Qt::UserRole).toString() == longName)
+            table->selectRow(r);
+    CHECK(!panel.selectedPaths().empty());
+    CHECK_EQ(panel.minimumSizeHint().width(), before);
+}

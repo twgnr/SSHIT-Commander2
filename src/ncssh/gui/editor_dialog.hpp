@@ -63,6 +63,11 @@ private:
     void updateCursorInfo();   // Zeile/Spalte/Bytes/EOL rechts
     void watchFile();          // lokale Datei auf externe Aenderung ueberwachen
     void onFileChangedExternally();
+    void showText(const QString &text);   // dekodierten Inhalt in den Editor setzen
+    void onEncodingChosen();              // Zeichensatz im Auswahlfeld geaendert
+    void onSyntaxChosen();                // Syntax im Auswahlfeld geaendert
+    void applyAutoSyntax();               // Sprache aus Name + Inhalt ermitteln
+    QString syntaxKey() const;            // Schluessel fuer die gemerkte Auswahl
 
     AsyncBridge *m_bridge;
     core::FileSystemProvider *m_provider;
@@ -79,6 +84,10 @@ private:
     QLabel *m_status = nullptr;
     QLabel *m_cursorInfo = nullptr;
     QComboBox *m_eolBox = nullptr;
+    QComboBox *m_encodingBox = nullptr;   // Zeichensatz (Lesen + Speichern)
+    QComboBox *m_syntaxBox = nullptr;     // Automatisch / Keine / Sprache
+    QByteArray m_raw;                     // Datei-Bytes, wie gelesen
+    QString m_encoding = QStringLiteral("utf-8");
     QAction *m_wrapAction = nullptr;
     QFileSystemWatcher *m_watcher = nullptr;
 };

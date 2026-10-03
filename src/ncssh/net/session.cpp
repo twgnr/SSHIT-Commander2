@@ -4,12 +4,13 @@
 
 namespace ncssh::net {
 
-SSHSessionPtr SessionManager::open(const core::ServerProfile &profile)
+SSHSessionPtr SessionManager::open(const core::ServerProfile &profile,
+                                   const ConnectControl &control)
 {
     clearMismatch();
     SSHSessionPtr session;
     try {
-        session = connectSession(profile, &hostkeys);
+        session = connectSession(profile, &hostkeys, control);
     } catch (const HostKeyChangedError &err) {
         // Fingerprints festhalten, damit die Oberflaeche sie zeigen kann; der
         // Fehler wird unveraendert weitergereicht.

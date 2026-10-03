@@ -58,7 +58,14 @@ public:
     // Aktiv-Markierung (blauer Rahmen ueber #ConsolePanel[active="true"]).
     void setActive(bool active);
 
+    // Befehl einfuegen (execute=false) bzw. ausfuehren. Im Terminal-Modus geht
+    // er direkt ins laufende Terminal, sonst in die Eingabezeile.
     void runCommand(const QString &command, bool execute = true);
+    // Statuszeile der Anwendung (z. B. Verbindungsfortschritt) in die Konsole
+    // schreiben — sichtbar im Befehls- wie im Terminal-Modus.
+    void printInfo(const QString &text, bool error = false);
+    // "Abbrechen"-Chip in der Kopfzeile, solange ein Verbindungsaufbau laeuft.
+    void setConnectCancelVisible(bool visible);
     // Terminalausgabe von der KI erklaeren lassen (auch ueber das Tools-Menue).
     void explainWithAi();
 
@@ -69,6 +76,10 @@ signals:
     // "⤢ Abdocken" / "⤵ Andocken" — der Workspace fuehrt den Wechsel aus.
     void undockRequested();
     void dockRequested();
+    void connectCancelRequested();
+    // Knoepfe im Konsolenkopf: Befehlspalette / Verlauf fuer DIESE Konsole.
+    void paletteRequested();
+    void historyRequested();
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -93,6 +104,7 @@ private:
 
     QLabel *m_header = nullptr;
     QPushButton *m_dockButton = nullptr;
+    QPushButton *m_connectCancelButton = nullptr;
     bool m_docked = true;
     QStackedWidget *m_stack = nullptr;
     QWidget *m_commandPage = nullptr;

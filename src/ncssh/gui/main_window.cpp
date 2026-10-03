@@ -63,6 +63,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -463,9 +464,10 @@ void MainWindow::buildMenus()
             if (Workspace *ws = currentWorkspace())
                 ws->syncPanes();
         }));
-    // Strg+F9: Verzeichnis-Status der aktiven Pane / Lesezeichen (Auswahlzyklus).
+    // Strg+F9: Status des Cursor-Eintrags der anderen Pane in der aktiven Pane
+    // (ein/aus) — ohne Zwischenauswahl.
     reg(QStringLiteral("pane_status"),
-        panes->addAction(_t("Status anzeigen"), this, &MainWindow::paneStatusCycle));
+        panes->addAction(_t("Status anzeigen"), this, &MainWindow::togglePaneStatus));
     panes->addSeparator();
     // Kein Ctrl+Shift+B: das gehoert dem SFTP-Batch (core/shortcuts.cpp).
     // Zwei Aktionen desselben Fensters mit gleichem Kuerzel sind "ambiguous"
@@ -773,6 +775,8 @@ Workspace *MainWindow::addTab()
     });
     // Verzeichnis-Vergleich aus dem Pane-Kontextmenue.
     connect(ws, &Workspace::dirDiffRequested, this, &MainWindow::openDirDiff);
+    connect(ws, &Workspace::paletteRequested, this, &MainWindow::openCommandPalette);
+    connect(ws, &Workspace::historyRequested, this, &MainWindow::openHistory);
     // "Alarm Trigger fuer Verzeichnis setzen …" aus dem Pane-Kontextmenue —
     // das Signal endete bisher im Nichts, der Menuepunkt tat nichts.
     connect(ws, &Workspace::dirAlarmRequested, this,
@@ -790,6 +794,7 @@ Workspace *MainWindow::addTab()
     // Netzwerk-Modus: erneut scannen bzw. zu einem gefundenen Host verbinden.
     connect(ws, &Workspace::rescanRequested, this, &MainWindow::openNetscan);
     connect(ws, &Workspace::connectHostRequested, this, [this, ws](const QString &host) {
+        FilePanel *target = ws->activePanel();   // vor Dialogen festhalten
         // Vorhandenes Profil bevorzugen, sonst eines aus der Adresse bauen.
         core::ProfileStore store;
         store.load();
@@ -811,8 +816,8 @@ Workspace *MainWindow::addTab()
             return;
         // In DEN Tab verbinden, aus dem der Wunsch kam — waehrend der
         // Passwortabfrage kann ein anderer Tab nach vorn geholt worden sein.
-        statusBar()->showMessage(_t("Verbinde zu %1 …").arg(profile.display()), 8000);
-        ws->connectTo(profile);
+        ws->focusPanel(target);
+        ws->connectTo(profile, target);
     });
     m_tabs->setCurrentIndex(index);
     QTimer::singleShot(0, this, &MainWindow::moveTabPlus);  // nach dem Layout platzieren
@@ -952,17 +957,22 @@ Workspace *MainWindow::currentWorkspace() const
 
 void MainWindow::openServerManager()
 {
+    // Tab und Zielpane festhalten, BEVOR Dialoge den Fokus verschieben: beim
+    // Schliessen eines modalen Dialogs bekommt das zuletzt fokussierte Widget
+    // den Fokus zurueck — und dessen FocusIn setzte die aktive Pane um (meist
+    // auf links), sodass die Verbindung in der falschen Pane landete.
+    Workspace *ws = currentWorkspace();
+    if (!ws)
+        return;
+    FilePanel *target = ws->activePanel();
     ServerManagerDialog dlg(m_bridge, this);
     if (dlg.exec() != QDialog::Accepted || !dlg.chosen())
         return;
     core::ServerProfile profile = *dlg.chosen();
     if (!prepareCredentials(profile))
         return;
-    Workspace *ws = currentWorkspace();
-    if (!ws)
-        return;
-    statusBar()->showMessage(_t("Verbinde zu %1 …").arg(profile.display()), 8000);
-    ws->connectTo(profile);
+    ws->focusPanel(target);   // Markierung wieder auf die gewaehlte Pane
+    ws->connectTo(profile, target);
 }
 
 bool MainWindow::prepareCredentials(core::ServerProfile &profile)
@@ -1270,7 +1280,7 @@ void MainWindow::populatePluginsMenu()
     });
 }
 
-// --- Strg+F9: Status-/Lesezeichen-Zyklus -----------------------------------
+// --- Strg+F9: Status-Anzeige -----------------------------------------------
 
 namespace {
 
@@ -1343,7 +1353,47 @@ QString statusHtml(const QString &title, const QString &path,
                           "<p style='color:gray'>%5</p>")
         .arg(title.toHtmlEscaped(), core::_t("Verzeichnis-Status"), scope,
              rows.join(QString()),
-             core::_t("Strg+F9 oder Navigieren schließt die Anzeige."));
+             core::_t("Folgt dem Cursor der anderen Pane · Strg+F9 oder Navigieren "
+                      "schließt die Anzeige."));
+}
+
+// Status einer einzelnen Datei — alles steht schon im Listing, kein Zugriff noetig.
+QString fileStatusHtml(const QString &path, const core::FileEntry &e)
+{
+    const QString fmt = core::getSettingString(QStringLiteral("date_format"),
+                                               QStringLiteral("DD.MM.YYYY HH24:MI"));
+    QStringList rows;
+    const auto row = [&](const QString &k, const QString &v) {
+        rows << QStringLiteral("<tr><td style='padding:2px 12px 2px 0;color:gray'>%1</td>"
+                               "<td style='padding:2px 0'>%2</td></tr>")
+                    .arg(k, v);
+    };
+    const auto when = [&](const QDateTime &dt) {
+        return dt.isValid() ? core::formatDt(dt, fmt) : QStringLiteral("—");
+    };
+    row(core::_t("Pfad"), path.toHtmlEscaped());
+    row(core::_t("Größe"), QStringLiteral("%1 (%2 Bytes)")
+                               .arg(humanBytes(e.size), QLocale().toString(e.size)));
+    const int dot = e.name.lastIndexOf(QLatin1Char('.'));
+    row(core::_t("Typ"), e.type == core::EntryType::Symlink ? core::_t("Symbolischer Link")
+                         : dot > 0 ? e.name.mid(dot).toLower().toHtmlEscaped()
+                                   : core::_t("(ohne)"));
+    if (!e.linkTarget.isEmpty())
+        row(core::_t("Link-Ziel"), e.linkTarget.toHtmlEscaped());
+    row(core::_t("Geändert"), when(e.modified));
+    row(core::_t("Erstellt"), when(e.created));
+    row(core::_t("Letzter Zugriff"), when(e.accessed));
+    if (e.permissions)
+        row(core::_t("Rechte"), QStringLiteral("%1 (%2)").arg(e.permString(), e.permOctal()));
+    if (!e.owner.isEmpty())
+        row(core::_t("Besitzer"), (e.group.isEmpty() ? e.owner : e.owner + QLatin1Char(':') + e.group)
+                                      .toHtmlEscaped());
+    row(core::_t("Versteckt"), e.hidden ? core::_t("ja") : core::_t("nein"));
+    return QStringLiteral("<h2>%1</h2><p style='color:gray'>%2</p><table>%3</table>"
+                          "<p style='color:gray'>%4</p>")
+        .arg(e.name.toHtmlEscaped(), core::_t("Datei-Status"), rows.join(QString()),
+             core::_t("Folgt dem Cursor der anderen Pane · Strg+F9 oder Navigieren "
+                      "schließt die Anzeige."));
 }
 
 // Flache Statistik aus einer Verzeichnisliste (nur direkte Ebene, fuer Remote).
@@ -1390,153 +1440,104 @@ core::DirStats shallowStats(const std::vector<core::FileEntry> &entries)
 
 } // namespace
 
-FilePanel *MainWindow::otherPanel() const
+void MainWindow::togglePaneStatus()
 {
-    Workspace *ws = currentWorkspace();
-    if (!ws)
-        return nullptr;
-    FilePanel *active = ws->activePanel();
-    return (active == ws->leftPanel()) ? ws->rightPanel() : ws->leftPanel();
-}
-
-void MainWindow::paneStatusCycle()
-{
-    if (!m_cycleTimer) {
-        m_cycleTimer = new QTimer(this);
-        m_cycleTimer->setSingleShot(true);
-        connect(m_cycleTimer, &QTimer::timeout, this, &MainWindow::cycleCommit);
+    // Zweiter Aufruf schaltet aus.
+    if (m_statusViewer && m_statusViewer->statusShown()) {
+        m_statusViewer->hideStatus();   // -> statusClosed -> stopPaneStatus
+        stopPaneStatus();
+        return;
     }
-    if (m_cyclePopup && m_cyclePopup->isVisible())
-        cycleAdvance();
-    else
-        cycleStart();
-    m_cycleTimer->start(2000);
-}
-
-void MainWindow::cycleStart()
-{
     Workspace *ws = currentWorkspace();
-    FilePanel *active = ws ? ws->activePanel() : nullptr;
-    if (!active)
+    FilePanel *viewer = ws ? ws->activePanel() : nullptr;
+    if (!viewer)
         return;
-    m_cycleLabels.clear();
-    m_cycleKinds.clear();
-    m_cycleValues.clear();
-    m_cycleLabels << _t("Status anzeigen");
-    m_cycleKinds << QStringLiteral("status");
-    m_cycleValues << QString();
-    for (const QString &p : active->bookmarkList()) {
-        m_cycleLabels << p;
-        m_cycleKinds << QStringLiteral("bookmark");
-        m_cycleValues << p;
+    FilePanel *source = (viewer == ws->leftPanel()) ? ws->rightPanel() : ws->leftPanel();
+    stopPaneStatus();
+    m_statusViewer = viewer;
+    m_statusSource = source;
+    if (!m_statusTimer) {
+        m_statusTimer = new QTimer(this);
+        m_statusTimer->setSingleShot(true);
+        m_statusTimer->setInterval(150);
+        connect(m_statusTimer, &QTimer::timeout, this, &MainWindow::updatePaneStatus);
     }
-    m_cycleIndex = 0;
-    cycleShow();
+    // Cursor-Wechsel bzw. Verzeichniswechsel der Quelle -> neu berechnen.
+    const auto later = [this] { m_statusTimer->start(); };
+    m_statusConns << connect(source, &FilePanel::cursorMoved, this, later)
+                  << connect(source, &FilePanel::pathChanged, this, later)
+                  // Anzeige verlassen (Navigieren in der Status-Pane usw.) -> Ende.
+                  << connect(viewer, &FilePanel::statusClosed, this, &MainWindow::stopPaneStatus);
+    updatePaneStatus();
 }
 
-void MainWindow::cycleShow()
+void MainWindow::stopPaneStatus()
 {
-    if (!m_cyclePopup) {
-        m_cyclePopup = new QFrame(this);
-        m_cyclePopup->setObjectName(QStringLiteral("CyclePopup"));
-        m_cyclePopup->setFrameShape(QFrame::StyledPanel);
-        m_cyclePopup->setStyleSheet(QStringLiteral(
-            "#CyclePopup{background:palette(window);border:1px solid palette(mid);}"));
-        auto *lay = new QVBoxLayout(m_cyclePopup);
-        lay->setContentsMargins(6, 6, 6, 6);
-        m_cycleList = new QListWidget(m_cyclePopup);
-        m_cycleList->setFocusPolicy(Qt::NoFocus);
-        connect(m_cycleList, &QListWidget::itemClicked, this,
-                [this](QListWidgetItem *) { cycleCommit(); });
-        lay->addWidget(m_cycleList);
-    }
-    m_cycleList->clear();
-    for (int i = 0; i < m_cycleLabels.size(); ++i)
-        m_cycleList->addItem((m_cycleKinds.at(i) == QLatin1String("bookmark")
-                                  ? QStringLiteral("★ ")
-                                  : QString())
-                             + m_cycleLabels.at(i));
-    m_cycleList->setCurrentRow(m_cycleIndex);
-    m_cyclePopup->adjustSize();
-    const int w = qMax(260, m_cyclePopup->sizeHint().width());
-    const int h = qMin(320, 40 + 22 * m_cycleLabels.size());
-    m_cyclePopup->resize(w, h);
-    Workspace *ws = currentWorkspace();
-    QWidget *ref = (ws && ws->activePanel()) ? static_cast<QWidget *>(ws->activePanel())
-                                             : static_cast<QWidget *>(this);
-    const QPoint center = ref->mapTo(this, ref->rect().center());
-    m_cyclePopup->move(qMax(0, center.x() - w / 2), qMax(0, center.y() - h / 2));
-    m_cyclePopup->show();
-    m_cyclePopup->raise();
+    for (const QMetaObject::Connection &c : std::as_const(m_statusConns))
+        disconnect(c);
+    m_statusConns.clear();
+    if (m_statusTimer)
+        m_statusTimer->stop();
+    ++m_statusSeq;   // laufende Berechnungen verwerfen
+    m_statusViewer = nullptr;
+    m_statusSource = nullptr;
 }
 
-void MainWindow::cycleAdvance()
+void MainWindow::updatePaneStatus()
 {
-    if (m_cycleLabels.isEmpty())
+    FilePanel *viewer = m_statusViewer;
+    FilePanel *source = m_statusSource;
+    if (!viewer || !source)
         return;
-    m_cycleIndex = (m_cycleIndex + 1) % m_cycleLabels.size();
-    m_cycleList->setCurrentRow(m_cycleIndex);
-}
-
-void MainWindow::cycleCommit()
-{
-    if (m_cycleTimer)
-        m_cycleTimer->stop();
-    if (m_cyclePopup)
-        m_cyclePopup->hide();
-    if (m_cycleIndex < 0 || m_cycleIndex >= m_cycleLabels.size())
-        return;
-    const QString kind = m_cycleKinds.at(m_cycleIndex);
-    if (kind == QLatin1String("status")) {
-        showPaneStatus();
-    } else if (kind == QLatin1String("bookmark")) {
-        if (Workspace *ws = currentWorkspace())
-            if (FilePanel *active = ws->activePanel())
-                active->navigateTo(m_cycleValues.at(m_cycleIndex));
-    }
-}
-
-void MainWindow::showPaneStatus()
-{
-    Workspace *ws = currentWorkspace();
-    if (!ws)
-        return;
-    FilePanel *active = ws->activePanel();
-    FilePanel *other = otherPanel();
-    if (!active || !other)
-        return;
-    core::FileSystemProvider *prov = active->provider();
+    core::FileSystemProvider *prov = source->provider();
     if (!prov)
         return;
-    const core::FileEntry *sel = active->selectedEntry();
-    QString target, title;
-    if (sel && sel->type == core::EntryType::Dir) {
-        target = prov->join(active->currentPath(), sel->name);
-        title = sel->name;
-    } else {
-        target = active->currentPath();
-        title = prov->basename(target);
-        if (title.isEmpty())
-            title = target;
+    const quint64 seq = ++m_statusSeq;
+    const QPointer<FilePanel> guard(viewer);
+    const auto show = [this, guard, seq](const QString &html) {
+        if (guard && seq == m_statusSeq)
+            guard->showStatus(html);
+    };
+
+    // Ziel: Eintrag unter dem Cursor-Balken; ".." = uebergeordneter Ordner,
+    // kein Cursor = aktueller Ordner der Quelle.
+    const core::FileEntry *entry = source->cursorEntry();
+    const QString here = source->currentPath();
+    if (entry && entry->type != core::EntryType::Parent && !entry->isDir()) {
+        show(fileStatusHtml(prov->join(here, entry->name), *entry));
+        return;
     }
-    other->showStatus(statusLoadingHtml(title));
+    QString target, title;
+    if (entry && entry->type == core::EntryType::Parent) {
+        target = prov->parent(here);
+        title = QStringLiteral("..");
+    } else if (entry) {
+        target = prov->join(here, entry->name);
+        title = entry->name;
+    } else {
+        target = here;
+        title = prov->basename(here);
+        if (title.isEmpty())
+            title = here;
+    }
+    show(statusLoadingHtml(title));
 
     if (prov->isRemote) {
         // Remote/Netzwerk: nur die direkte Ebene auswerten.
         m_bridge->run<std::vector<core::FileEntry>>(
             [prov, target] { return prov->listDir(target); },
-            [other, title, target](const std::vector<core::FileEntry> &entries) {
-                other->showStatus(statusHtml(title, target, shallowStats(entries), false));
+            [show, title, target](const std::vector<core::FileEntry> &entries) {
+                show(statusHtml(title, target, shallowStats(entries), false));
             },
-            [other, title](const QString &m) { other->showStatus(statusErrorHtml(title, m)); }, this);
+            [show, title](const QString &m) { show(statusErrorHtml(title, m)); }, this);
         return;
     }
     m_bridge->run<core::DirStats>(
         [target] { return core::dirStats(target); },
-        [other, title, target](const core::DirStats &d) {
-            other->showStatus(statusHtml(title, target, d, true));
+        [show, title, target](const core::DirStats &d) {
+            show(statusHtml(title, target, d, true));
         },
-        [other, title](const QString &m) { other->showStatus(statusErrorHtml(title, m)); }, this);
+        [show, title](const QString &m) { show(statusErrorHtml(title, m)); }, this);
 }
 
 void MainWindow::openThemeEditor()

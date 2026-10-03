@@ -21,6 +21,9 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QAbstractButton>
+#include <QApplication>
+#include <QElapsedTimer>
+#include <QPointer>
 #include <QPushButton>
 #include <QSplitter>
 #include <QStyle>
@@ -198,6 +201,8 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
                 [this, console] { undockConsole(console); });
         connect(console, &ConsolePanel::dockRequested, this,
                 [this, console] { dockConsole(console); });
+        connect(console, &ConsolePanel::paletteRequested, this, &Workspace::paletteRequested);
+        connect(console, &ConsolePanel::historyRequested, this, &Workspace::historyRequested);
     }
 
     // Drag & Drop: Quelle ist die jeweils andere Pane (bzw. der Explorer).
@@ -218,11 +223,13 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     // Transfer: F5 aus einer Pane -> in das Verzeichnis der anderen Pane.
     connect(m_leftPanel, &FilePanel::transferRequested, this, [this](const QString &) {
         confirmAndTransfer(m_leftPanel->provider(), m_leftPanel->selectedPaths(),
-                           m_rightPanel->provider(), m_rightPanel->currentPath());
+                           m_rightPanel->provider(), m_rightPanel->currentPath(),
+                           /*viaShortcut=*/true);
     });
     connect(m_rightPanel, &FilePanel::transferRequested, this, [this](const QString &) {
         confirmAndTransfer(m_rightPanel->provider(), m_rightPanel->selectedPaths(),
-                           m_leftPanel->provider(), m_leftPanel->currentPath());
+                           m_leftPanel->provider(), m_leftPanel->currentPath(),
+                           /*viaShortcut=*/true);
     });
 
     // Verschieben in die andere Pane (Kontextmenue).
@@ -569,6 +576,12 @@ FilePanel *Workspace::activePanel() const
     return m_rightActive ? m_rightPanel : m_leftPanel;
 }
 
+void Workspace::focusPanel(FilePanel *panel)
+{
+    if (panel == m_leftPanel || panel == m_rightPanel)
+        panel->focusView();   // emittiert activated -> m_rightActive + Markierung
+}
+
 void Workspace::saveConsoleSplits()
 {
     QJsonArray cols;
@@ -881,11 +894,88 @@ void Workspace::connectTo(const core::ServerProfile &profile, FilePanel *target,
     ConsolePanel *console = (panel == m_rightPanel) ? m_rightConsole : m_leftConsole;
     m_connecting = true;
 
+    // Fortschritt OHNE Fenster: jeder Schritt erscheint in der Konsole der
+    // Zielpane, die Anwendung bleibt bedienbar. Nach kConnectLimitSec wird
+    // abgebrochen — die Netzschicht haelt dieselbe Frist ein; der Timer hier
+    // ist nur die Rueckfallebene, falls ein Aufruf (DNS, Agent) sie ignoriert.
+    constexpr int kConnectLimitSec = 30;
+    struct Attempt {
+        QElapsedTimer clock;
+        QString lastStep;
+        bool abandoned = false;
+        std::shared_ptr<std::atomic_bool> cancelled = std::make_shared<std::atomic_bool>(false);
+        QMetaObject::Connection cancelConn;
+    };
+    auto attempt = std::make_shared<Attempt>();
+    attempt->clock.start();
+    QPointer<ConsolePanel> consoleGuard(console);
+    // Versuch beenden (Erfolg, Fehler, Frist oder Abbruch): Abbrechen-Chip weg,
+    // Worker anhalten, spaetere Ergebnisse verwerfen.
+    const auto finish = [attempt, consoleGuard] {
+        attempt->abandoned = true;
+        attempt->cancelled->store(true);
+        QObject::disconnect(attempt->cancelConn);
+        if (consoleGuard)
+            consoleGuard->setConnectCancelVisible(false);
+    };
+    const auto report = [this, attempt, consoleGuard](const QString &text, bool error) {
+        const QString line = QStringLiteral("[%1 s] %2")
+                                 .arg(attempt->clock.elapsed() / 1000.0, 4, 'f', 1)
+                                 .arg(text);
+        if (consoleGuard)
+            consoleGuard->printInfo(line, error);
+        emit statusMessage(text);
+    };
+    report(_t("Verbinde zu %1 …").arg(profile.display()), false);
+
+    QPointer<Workspace> self(this);
+    net::ConnectControl control;
+    control.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kConnectLimitSec);
+    control.cancelled = attempt->cancelled;
+    control.progress = [self, attempt, report](const QString &text) {
+        // Worker-Thread -> GUI-Thread; der Tab kann inzwischen geschlossen sein.
+        QMetaObject::invokeMethod(qApp, [self, attempt, report, text] {
+            if (!self || attempt->abandoned)
+                return;
+            attempt->lastStep = text;
+            report(text, false);
+        }, Qt::QueuedConnection);
+    };
+    if (console) {
+        console->setConnectCancelVisible(true);
+        attempt->cancelConn = connect(console, &ConsolePanel::connectCancelRequested, this,
+                                      [this, attempt, report, finish] {
+                                          if (attempt->abandoned)
+                                              return;
+                                          finish();
+                                          m_connecting = false;
+                                          report(_t("Verbindungsaufbau abgebrochen."), true);
+                                      });
+    }
+    QTimer::singleShot((kConnectLimitSec + 2) * 1000, this, [this, attempt, report, finish] {
+        if (attempt->abandoned || !m_connecting)
+            return;
+        finish();
+        m_connecting = false;
+        report(_t("Abgebrochen: keine Antwort nach %1 s (bei: %2)")
+                   .arg(kConnectLimitSec)
+                   .arg(attempt->lastStep),
+               true);
+    });
+
     net::SessionManager *sessions = m_sessions;
     m_bridge->run<net::SSHSessionPtr>(
-        [sessions, profile] { return sessions->open(profile); },
-        [this, profile, panel, console](const net::SSHSessionPtr &session) {
+        [sessions, profile, control] { return sessions->open(profile, control); },
+        [this, profile, panel, console, attempt, report, finish](const net::SSHSessionPtr &session) {
+            if (attempt->abandoned) {
+                // Zu spaet: die doch noch aufgebaute Sitzung nicht verwenden,
+                // sondern sauber schliessen.
+                m_sessions->close(session);
+                return;
+            }
+            finish();
             m_connecting = false;
+            report(_t("Verbunden."), false);
             // Erst NACH erfolgreichem Aufbau die alte Verbindung abbauen:
             // schlaegt der Aufbau fehl, bleibt die bestehende Sitzung nutzbar.
             // disconnectSession() haengt zudem die alte Pane vom Provider ab,
@@ -956,7 +1046,12 @@ void Workspace::connectTo(const core::ServerProfile &profile, FilePanel *target,
                         _t("Tunnel nicht geöffnet: %1").arg(tunnelErrors.join(QStringLiteral("; "))));
             }
         },
-        [this, profile, panel, quiet](const QString &err) {
+        [this, profile, panel, quiet, attempt, report, finish](const QString &err) {
+            if (attempt->abandoned) {
+                m_sessions->clearMismatch();
+                return;
+            }
+            finish();
             m_connecting = false;
             // Geaenderter Host-Key: der Versuch wurde vor der Authentifizierung
             // abgebrochen. Erst nach ausdruecklicher Zustimmung erneut versuchen.
@@ -975,21 +1070,20 @@ void Workspace::connectTo(const core::ServerProfile &profile, FilePanel *target,
                 }
                 return;
             }
+            // Kein modaler Dialog: der Grund steht in der Konsole der Zielpane.
+            report(_t("Verbindung fehlgeschlagen: %1").arg(err), true);
             if (quiet) {
-                // Sitzungswiederherstellung: kein modaler Dialog beim Start.
-                // Die Pane bleibt lokal nutzbar (C:\ bzw. Standard-Startpfad).
-                emit statusMessage(_t("Automatisches Verbinden fehlgeschlagen: %1").arg(err));
+                // Sitzungswiederherstellung: die Pane bleibt lokal nutzbar
+                // (C:\ bzw. Standard-Startpfad).
                 panel->navigateTo(safeLocalPath(QString()));
-                return;
             }
-            QMessageBox::critical(this, _t("Verbindung fehlgeschlagen"), err);
-            emit statusMessage(_t("Verbindung fehlgeschlagen"));
         }, this);
 }
 
 void Workspace::confirmAndTransfer(core::FileSystemProvider *src,
                                    const std::vector<QString> &srcPaths,
-                                   core::FileSystemProvider *dst, const QString &dstDir)
+                                   core::FileSystemProvider *dst, const QString &dstDir,
+                                   bool viaShortcut)
 {
     if (!src || !dst || srcPaths.empty())
         return;
@@ -997,6 +1091,20 @@ void Workspace::confirmAndTransfer(core::FileSystemProvider *src,
     for (const QString &p : srcPaths) {
         names << src->basename(p);
         sources << p;
+    }
+    const auto start = [this, src, dst](const std::vector<std::pair<QString, QString>> &todo) {
+        for (const auto &[from, to] : todo)
+            startTransfer(src, from, dst, dst->parent(to), dst->basename(to));
+    };
+    // F5 ohne Rueckfrage (Einstellung): direkt in den Ordner der anderen Pane.
+    // Die Ueberschreib-Abfrage bei Namenskonflikten bleibt — sie schuetzt Daten.
+    // Drag & Drop fragt weiter, dort entscheidet die Maus ueber das Ziel.
+    if (viaShortcut && !core::getSettingBool(QStringLiteral("confirm_copy"), true)) {
+        std::vector<std::pair<QString, QString>> pairs;
+        for (int i = 0; i < names.size(); ++i)
+            pairs.emplace_back(sources.at(i), dst->join(dstDir, names.at(i)));
+        withConflictCheck(dst, dstDir, pairs, start);
+        return;
     }
     // Zielordner ist vorbelegt, kann aber editiert oder durchsucht werden —
     // der Browser laeuft ueber den Provider, funktioniert also auch remote.
@@ -1009,13 +1117,12 @@ void Workspace::confirmAndTransfer(core::FileSystemProvider *src,
             return chooser.exec() == QDialog::Accepted ? chooser.chosen() : QString();
         },
         {}, this);
+    if (viaShortcut)
+        dlg.offerSkip(QStringLiteral("confirm_copy"),
+                      _t("Nicht mehr fragen — mit F5 direkt in die andere Pane kopieren"));
     if (dlg.exec() != QDialog::Accepted)
         return;
-    withConflictCheck(dst, dstDir, dlg.results(),
-                      [this, src, dst](const std::vector<std::pair<QString, QString>> &todo) {
-                          for (const auto &[from, to] : todo)
-                              startTransfer(src, from, dst, dst->parent(to), dst->basename(to));
-                      });
+    withConflictCheck(dst, dstDir, dlg.results(), start);
 }
 
 // Listet das Zielverzeichnis, fragt fuer vorhandene Namen das Ueberschreiben ab

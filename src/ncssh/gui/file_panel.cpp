@@ -273,6 +273,11 @@ void FilePanel::buildUi(const QString &title)
         emit selectionChanged(entry && !entry->isDir() ? selectedPath() : QString());
         updateSelectionStatus();
     });
+    connect(m_table, &QTableWidget::currentCellChanged, this,
+            [this](int row, int, int previousRow, int) {
+                if (row != previousRow)
+                    emit cursorMoved();
+            });
     // Klickbare Spalten-Sortierung
     m_table->horizontalHeader()->setSectionsClickable(true);
     connect(m_table->horizontalHeader(), &QHeaderView::sectionClicked, this,
@@ -322,7 +327,7 @@ void FilePanel::buildUi(const QString &title)
     m_viewStack = new QStackedWidget(this);
     m_viewStack->addWidget(m_table);   // 0 = Detail
     m_viewStack->addWidget(m_grid);    // 1 = Kachel
-    // 2 = Status-Seite (Verzeichnis-Statistik statt Dateiliste, via Strg+F9).
+    // 2 = Status-Seite (Status des Cursor-Eintrags der anderen Pane, Strg+F9).
     m_statusView = new QTextBrowser(this);
     m_statusView->setOpenLinks(false);
     m_viewStack->addWidget(m_statusView);
@@ -351,6 +356,12 @@ void FilePanel::buildUi(const QString &title)
 
     m_status = new QLabel(this);
     m_status->setObjectName(QStringLiteral("Muted"));
+    // Die Statuszeile darf die Pane nie verbreitern: ohne das wurde ihre
+    // Textbreite (z. B. ein langer markierter Dateiname) zur Mindestbreite der
+    // Pane, und der Splitter zog die Spalte bei jedem Verzeichniswechsel mit.
+    // Ignored -> Mindestbreite 0; der Text wird passend gekuerzt (elideStatus).
+    m_status->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_status->installEventFilter(this);   // bei Groessenaenderung neu kuerzen
     layout->addWidget(m_status);
 }
 
@@ -600,7 +611,9 @@ void FilePanel::mousePressEvent(QMouseEvent *event)
 {
     // Klick irgendwo in der Pane (Kopfzeile, Leerflaechen) macht sie zur
     // aktiven Seite — darauf verlaesst sich u. a. "Verbinden" im Workspace.
-    emit activated();
+    // Den Fokus mitnehmen: blieb er in der anderen Pane, gab Qt ihn nach jedem
+    // modalen Dialog dorthin zurueck und deren FocusIn kippte die Markierung.
+    focusView();   // emittiert activated
     QWidget::mousePressEvent(event);
 }
 
@@ -656,6 +669,7 @@ void FilePanel::hideStatus()
         return;
     m_statusShown = false;
     m_viewStack->setCurrentIndex(m_gridMode ? 1 : 0);
+    emit statusClosed();
 }
 
 void FilePanel::setViewMode(bool grid)
@@ -663,6 +677,7 @@ void FilePanel::setViewMode(bool grid)
     m_gridMode = grid;
     if (m_statusShown) {   // Statusseite verlassen, wenn die Ansicht wechselt
         m_statusShown = false;
+        emit statusClosed();
     }
     m_viewStack->setCurrentIndex(grid ? 1 : 0);
     core::setSetting(QStringLiteral("pane_grid"), grid);
@@ -812,6 +827,10 @@ void FilePanel::endPathEdit()
 void FilePanel::setProvider(core::FileSystemProvider *provider, const QString &startPath)
 {
     m_provider = provider;
+    // Anderes System -> Vor/Zurueck beginnt neu. Die alten Pfade gehoeren zum
+    // vorigen Dateisystem und fuehrten sonst ins Leere (bzw. ins Falsche).
+    m_history.clear();
+    m_histPos = -1;
     // Der alte Pfad gehoert zum alten Provider; ein leerer m_path markiert
     // zugleich "erstes Laden" (loadDir weicht bei Fehlern still aufs Home aus).
     m_path.clear();
@@ -885,11 +904,20 @@ void FilePanel::loadDir(const QString &rawPath, bool record)
     const quint64 seq = ++m_loadSeq;
     if (provider->isRemote)
         emit statusMessage(_t("Öffne %1 …").arg(path));
-    m_bridge->run<std::vector<FileEntry>>(
-        [provider, path] { return provider->listDir(path); },
-        [this, path, record, seq](const std::vector<FileEntry> &entries) {
+    using Listing = std::pair<QString, std::vector<FileEntry>>;
+    m_bridge->run<Listing>(
+        [provider, path] {
+            // Relative Remote-Pfade (Profil-Startpfad ".") absolut machen —
+            // sonst stand "." in der Pfadleiste und ".." fehlte, man kam nicht
+            // eine Ebene hoeher.
+            const QString target = provider->resolve(path);
+            return Listing(target, provider->listDir(target));
+        },
+        [this, record, seq](const Listing &listing) {
             if (seq != m_loadSeq)
                 return;
+            const QString &path = listing.first;
+            const std::vector<FileEntry> &entries = listing.second;
             if (record && path != m_path) {
                 // Verlauf: alles nach der aktuellen Position verwerfen
                 if (m_histPos >= 0 && m_histPos + 1 < m_history.size())
@@ -1108,6 +1136,14 @@ std::vector<QString> FilePanel::selectedPaths() const
 }
 
 // Der aktuell markierte Eintrag (nullptr, wenn nichts oder ".." markiert ist).
+const FileEntry *FilePanel::cursorEntry() const
+{
+    const int row = m_table->currentRow();
+    if (row < 0 || row >= int(m_rows.size()))
+        return nullptr;
+    return &m_rows[size_t(row)];
+}
+
 const FileEntry *FilePanel::selectedEntry() const
 {
     const int row = m_table->currentRow();
@@ -1516,7 +1552,11 @@ void FilePanel::opDelete()
     options.showTarget = false;
     options.confirmText = _t("Löschen");
     options.sourceHeader = _t("Wird gelöscht");
-    if (!PathConfirmDialog::confirm(
+    options.skipSettingKey = QStringLiteral("confirm_delete");
+    options.skipLabel = _t("Nicht mehr fragen — mit F8 direkt löschen");
+    // Rueckfrage abschaltbar (Einstellungen -> Allgemein).
+    if (core::getSettingBool(QStringLiteral("confirm_delete"), true)
+        && !PathConfirmDialog::confirm(
             _t("Löschen"),
             _t("%1 Objekt(e) unwiderruflich löschen?").arg(paths.size()),
             pairs, options, this))
@@ -2065,16 +2105,29 @@ void FilePanel::updateSelectionStatus()
         size += e.size;
     }
     if (count == 0) {
-        m_status->setText(m_baseStatus);
+        setStatusText(m_baseStatus);
     } else if (count == 1) {
         const FileEntry *entry = selectedEntry();
-        m_status->setText(entry ? _t("%1 · ausgewählt: %2 (%3)")
-                                      .arg(m_baseStatus, entry->name, humanSize(entry->size))
-                                : m_baseStatus);
+        setStatusText(entry ? _t("%1 · ausgewählt: %2 (%3)")
+                                  .arg(m_baseStatus, entry->name, humanSize(entry->size))
+                            : m_baseStatus);
     } else {
-        m_status->setText(_t("%1 markiert · %2").arg(count).arg(humanSize(size))
-                          + QStringLiteral("  ·  ") + m_baseStatus);
+        setStatusText(_t("%1 markiert · %2").arg(count).arg(humanSize(size))
+                      + QStringLiteral("  ·  ") + m_baseStatus);
     }
+}
+
+void FilePanel::setStatusText(const QString &text)
+{
+    m_statusFull = text;
+    m_status->setToolTip(text);
+    elideStatus();
+}
+
+void FilePanel::elideStatus()
+{
+    m_status->setText(m_status->fontMetrics().elidedText(m_statusFull, Qt::ElideRight,
+                                                         qMax(0, m_status->width())));
 }
 
 void FilePanel::openBookmarks()
@@ -2148,6 +2201,11 @@ void FilePanel::dropEvent(QDropEvent *event)
 
 bool FilePanel::eventFilter(QObject *obj, QEvent *event)
 {
+    if (obj == m_status) {
+        if (event->type() == QEvent::Resize)
+            elideStatus();
+        return QWidget::eventFilter(obj, event);
+    }
     if (event->type() == QEvent::FocusIn || event->type() == QEvent::MouseButtonPress) {
         emit activated();
     }

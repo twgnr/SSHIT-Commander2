@@ -5,6 +5,7 @@
 #include "ncssh/gui/bridge.hpp"
 #include "ncssh/net/session.hpp"
 
+#include <QPointer>
 #include <QHash>
 #include <QMainWindow>
 #include <memory>
@@ -76,15 +77,12 @@ private:
     void buildStatusBar();
     // "+"-Knopf direkt rechts neben den letzten Tab setzen.
     void moveTabPlus();
-    // Strg+F9: Auswahl-Zyklus (Verzeichnis-Status / Lesezeichen) ueber der
-    // aktiven Pane. Wiederholtes Druecken schaltet weiter, nach 2 s ausgefuehrt.
-    void paneStatusCycle();
-    void cycleStart();
-    void cycleShow();
-    void cycleAdvance();
-    void cycleCommit();
-    void showPaneStatus();       // Verzeichnis-Status in der Nachbar-Pane zeigen
-    FilePanel *otherPanel() const;   // die nicht-aktive Pane des aktuellen Tabs
+    // Panes -> Status anzeigen (Strg+F9): schaltet die Status-Anzeige ein/aus.
+    // Die aktive Pane zeigt den Status des Eintrags unter dem Cursor-Balken der
+    // anderen Pane und rechnet neu, sobald der Balken dort wandert.
+    void togglePaneStatus();
+    void stopPaneStatus();
+    void updatePaneStatus();
     // Konfigurierte Tastenkuerzel auf die registrierten Menue-Aktionen legen.
     void applyShortcuts();
     void openKeyTools();   // SSH-Schluessel erzeugen/konvertieren
@@ -131,13 +129,11 @@ private:
     QToolButton *m_tabPlus = nullptr;  // "+" direkt neben dem letzten Tab
     QMenu *m_pluginsMenu = nullptr;    // dynamisch (aboutToShow) befuellt
     // Strg+F9-Auswahlzyklus (Status / Lesezeichen).
-    QFrame *m_cyclePopup = nullptr;
-    QListWidget *m_cycleList = nullptr;
-    QTimer *m_cycleTimer = nullptr;
-    QStringList m_cycleLabels;   // Anzeigetext je Eintrag
-    QStringList m_cycleKinds;    // "status" | "bookmark"
-    QStringList m_cycleValues;   // Zielpfad bei Lesezeichen
-    int m_cycleIndex = 0;
+    QPointer<FilePanel> m_statusViewer;   // zeigt den Status
+    QPointer<FilePanel> m_statusSource;   // deren Cursor-Balken bestimmt ihn
+    QList<QMetaObject::Connection> m_statusConns;
+    QTimer *m_statusTimer = nullptr;      // buendelt schnelle Cursor-Wechsel
+    quint64 m_statusSeq = 0;              // veraltete Berechnungen verwerfen
     MacroManagerDialog *m_macroDialog = nullptr;  // einmalig; present()/andockbar
 };
 

@@ -1,6 +1,7 @@
 #include "ncssh/gui/editor_dialog.hpp"
 
 #include "ncssh/core/ai.hpp"
+#include "ncssh/core/encodings.hpp"
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/ai_chat_panel.hpp"
@@ -17,6 +18,7 @@
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -172,6 +174,26 @@ EditorDialog::EditorDialog(AsyncBridge *bridge, core::FileSystemProvider *provid
     connect(m_eolBox, &QComboBox::currentIndexChanged, this,
             &EditorDialog::updateCursorInfo);
     toolbar->addWidget(m_eolBox);
+    // Zeichensatz: wird beim Laden erkannt (BOM/UTF-8, sonst Windows-1252) und
+    // beim Speichern beibehalten. Umstellen liest die Datei neu ein.
+    m_encodingBox = new QComboBox(toolbar);
+    for (const auto &[label, codec] : core::encodingsList())
+        m_encodingBox->addItem(label, codec);
+    m_encodingBox->setToolTip(
+        _t("Zeichensatz der Datei — erkannt beim Öffnen, so wird auch gespeichert"));
+    connect(m_encodingBox, &QComboBox::activated, this, [this](int) { onEncodingChosen(); });
+    toolbar->addWidget(m_encodingBox);
+    // Syntax: automatisch erkannt oder manuell; die Wahl gilt kuenftig fuer
+    // alle Dateien mit derselben Endung.
+    m_syntaxBox = new QComboBox(toolbar);
+    m_syntaxBox->addItem(_t("Syntax: automatisch"), QStringLiteral("auto"));
+    m_syntaxBox->addItem(_t("Syntax: keine"), QStringLiteral("none"));
+    for (const auto &[id, name] : SyntaxHighlighter::languages())
+        m_syntaxBox->addItem(_t("Syntax: %1").arg(name), id);
+    m_syntaxBox->setToolTip(_t("Syntax-Hervorhebung — manuelle Wahl gilt für alle Dateien "
+                               "mit dieser Endung"));
+    connect(m_syntaxBox, &QComboBox::activated, this, [this](int) { onSyntaxChosen(); });
+    toolbar->addWidget(m_syntaxBox);
     layout->addWidget(toolbar);
 
     m_editor = new CodeEditor(this);
@@ -247,10 +269,8 @@ EditorDialog::EditorDialog(AsyncBridge *bridge, core::FileSystemProvider *provid
     connect(new QShortcut(QKeySequence(QStringLiteral("Ctrl+G")), this), &QShortcut::activated,
             this, [this] { gotoLine(); });
 
-    // Syntax-Highlighting nach Dateiendung
-    const QString language = SyntaxHighlighter::languageForFile(provider->basename(path));
-    if (!language.isEmpty())
-        m_highlighter = new SyntaxHighlighter(m_editor->document(), language);
+    // Syntax-Highlighting: Sprache steht erst nach dem Laden fest (Inhalt).
+    m_highlighter = new SyntaxHighlighter(m_editor->document(), QString());
 
     // Externe Aenderungen erkennen (nur lokal). Kurze Verzoegerung, damit ein
     // Editor, der die Datei erst leert und dann schreibt, nicht doppelt meldet.
@@ -324,37 +344,121 @@ void EditorDialog::load()
     core::FileSystemProvider *provider = m_provider;
     const QString path = m_path;
     m_status->setText(_t("Lade …"));
-    m_bridge->run<QString>(
-        [provider, path] { return provider->readText(path, kLargeFileLimit + 1); },
-        [this](const QString &text) {
-            // Grossdatei-Schutz: nur lesend oeffnen.
-            if (text.size() > kLargeFileLimit) {
-                m_readOnly = true;
-                m_editor->setReadOnly(true);
-                m_status->setText(
-                    _t("⚠ Datei zu groß — schreibgeschützt geöffnet (nur der Anfang wird "
-                       "gezeigt)."));
-            } else {
-                m_status->setText(_t("%1 Zeichen  ·  %2 Zeilen")
-                                      .arg(text.size())
-                                      .arg(text.count(QLatin1Char('\n')) + 1));
+    m_bridge->run<QByteArray>(
+        [provider, path] { return provider->readBytes(path, kLargeFileLimit + 1); },
+        [this](const QByteArray &bytes) {
+            m_raw = bytes;
+            // Zeichensatz erkennen: BOM bzw. gueltiges UTF-8, sonst Windows-1252.
+            // Vorher wurde alles als UTF-8 gelesen — Latin-1/ANSI-Dateien zeigten
+            // dann "f\uFFFDr" statt "für".
+            m_encoding = core::detectEncoding(bytes);
+            m_encodingBox->setCurrentIndex(qMax(0, m_encodingBox->findData(m_encoding)));
+            QString text;
+            try {
+                text = core::decodeBytes(bytes, m_encoding, QStringLiteral("replace"));
+            } catch (const std::exception &) {
+                text = QString::fromUtf8(bytes);
             }
-            // Vorhandene CRLF erkennen und die Auswahl entsprechend setzen;
-            // intern wird auf LF normalisiert.
-            if (text.contains(QStringLiteral("\r\n")))
-                m_eolBox->setCurrentIndex(m_eolBox->findData(QStringLiteral("crlf")));
-            QString normalized = text;
-            normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-            m_editor->setPlainText(normalized);
-            m_dirty = false;
-            updateTitle();
-            updateCursorInfo();
+            showText(text);
+            applyAutoSyntax();
             watchFile();
         },
         [this](const QString &err) {
             m_status->setText(err);
             QMessageBox::warning(this, _t("Fehler"), err);
         }, this);
+}
+
+void EditorDialog::showText(const QString &text)
+{
+    // Grossdatei-Schutz: nur lesend oeffnen.
+    if (m_raw.size() > kLargeFileLimit) {
+        m_readOnly = true;
+        m_editor->setReadOnly(true);
+        m_status->setText(
+            _t("⚠ Datei zu groß — schreibgeschützt geöffnet (nur der Anfang wird "
+               "gezeigt)."));
+    } else {
+        m_status->setText(_t("%1 Zeichen  ·  %2 Zeilen")
+                              .arg(text.size())
+                              .arg(text.count(QLatin1Char('\n')) + 1));
+    }
+    // Vorhandene CRLF erkennen und die Auswahl entsprechend setzen;
+    // intern wird auf LF normalisiert.
+    if (text.contains(QStringLiteral("\r\n")))
+        m_eolBox->setCurrentIndex(m_eolBox->findData(QStringLiteral("crlf")));
+    QString normalized = text;
+    normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    m_editor->setPlainText(normalized);
+    m_dirty = false;
+    updateTitle();
+    updateCursorInfo();
+}
+
+void EditorDialog::onEncodingChosen()
+{
+    const QString codec = m_encodingBox->currentData().toString();
+    if (codec == m_encoding)
+        return;
+    if (m_dirty) {
+        // Ungespeicherte Aenderungen: nicht neu einlesen, nur kuenftig so speichern.
+        m_encoding = codec;
+        m_status->setText(_t("Wird beim Speichern als %1 geschrieben.")
+                              .arg(m_encodingBox->currentText()));
+        updateCursorInfo();
+        return;
+    }
+    // Unveraendert: dieselben Bytes mit dem gewaehlten Zeichensatz neu deuten.
+    try {
+        const QString text = core::decodeBytes(m_raw, codec, QStringLiteral("replace"));
+        m_encoding = codec;
+        showText(text);
+    } catch (const std::exception &exc) {
+        m_encodingBox->setCurrentIndex(qMax(0, m_encodingBox->findData(m_encoding)));
+        QMessageBox::warning(this, _t("Zeichensatz"), QString::fromUtf8(exc.what()));
+    }
+}
+
+QString EditorDialog::syntaxKey() const
+{
+    // Endung (".conf"); ohne Endung der Dateiname ("Dockerfile").
+    const QString name = m_provider->basename(m_path).toLower();
+    const int dot = name.lastIndexOf(QLatin1Char('.'));
+    return dot > 0 ? name.mid(dot) : name;
+}
+
+void EditorDialog::applyAutoSyntax()
+{
+    const QString name = m_provider->basename(m_path);
+    const QString detected =
+        SyntaxHighlighter::detectLanguage(name, m_editor->document()->toPlainText());
+    // Gemerkte manuelle Wahl fuer diese Endung hat Vorrang.
+    const QJsonObject overrides =
+        QJsonObject::fromVariantMap(core::getSetting(QStringLiteral("editor_syntax")).toMap());
+    const QString chosen = overrides.value(syntaxKey()).toString();
+    m_syntaxBox->setItemText(0, detected.isEmpty()
+                                    ? _t("Syntax: automatisch (keine)")
+                                    : _t("Syntax: automatisch (%1)")
+                                          .arg(SyntaxHighlighter::displayName(detected)));
+    if (chosen.isEmpty()) {
+        m_syntaxBox->setCurrentIndex(0);
+        m_highlighter->setLanguage(detected);
+    } else {
+        m_syntaxBox->setCurrentIndex(qMax(0, m_syntaxBox->findData(chosen)));
+        m_highlighter->setLanguage(chosen == QLatin1String("none") ? QString() : chosen);
+    }
+}
+
+void EditorDialog::onSyntaxChosen()
+{
+    const QString choice = m_syntaxBox->currentData().toString();
+    QJsonObject overrides = QJsonObject::fromVariantMap(core::getSetting(QStringLiteral("editor_syntax")).toMap());
+    if (choice == QLatin1String("auto"))
+        overrides.remove(syntaxKey());
+    else
+        overrides.insert(syntaxKey(), choice);
+    core::setSetting(QStringLiteral("editor_syntax"), overrides);
+    applyAutoSyntax();
 }
 
 void EditorDialog::save(bool saveAs)
@@ -382,9 +486,27 @@ void EditorDialog::save(bool saveAs)
     QString content = m_editor->toPlainText();
     if (m_eolBox->currentData().toString() == QLatin1String("crlf"))
         content.replace(QLatin1Char('\n'), QStringLiteral("\r\n"));
+    // Im Zeichensatz der Datei speichern — eine ANSI-Datei bleibt ANSI.
+    QByteArray bytes;
+    try {
+        bytes = core::encodeText(content, m_encoding);
+    } catch (const std::exception &) {
+        // Zeichen, die der Zeichensatz nicht kennt (z.B. Emoji in Windows-1252).
+        const auto answer = QMessageBox::question(
+            this, _t("Zeichensatz"),
+            _t("Der Text enthält Zeichen, die in %1 nicht darstellbar sind.\n\n"
+               "Stattdessen als UTF-8 speichern?")
+                .arg(m_encodingBox->currentText()));
+        if (answer != QMessageBox::Yes)
+            return;
+        m_encoding = QStringLiteral("utf-8");
+        m_encodingBox->setCurrentIndex(qMax(0, m_encodingBox->findData(m_encoding)));
+        bytes = content.toUtf8();
+    }
     m_bridge->run(
-        [provider, target, content] { provider->writeText(target, content); },
-        [this, target] {
+        [provider, target, bytes] { provider->writeBytes(target, bytes); },
+        [this, target, bytes] {
+            m_raw = bytes;
             m_path = target;
             m_dirty = false;
             updateTitle();

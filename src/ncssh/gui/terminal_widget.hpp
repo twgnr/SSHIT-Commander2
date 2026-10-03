@@ -35,6 +35,8 @@ public:
 
     // Sendet Text an die Shell (z.B. ein 'cd' beim Verzeichniswechsel).
     void sendText(const QString &text);
+    // Eigene Meldung der Anwendung anzeigen (nicht an die Shell gesendet).
+    void printLocal(const QString &text, bool error = false);
 
     int columns() const;
     int rows() const;
@@ -56,6 +58,10 @@ signals:
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
+    // Tab/Shift+Tab gehoeren der Shell (Vervollstaendigung), nicht der
+    // Fokus-Kette: ein schreibgeschuetztes QPlainTextEdit gaebe sie sonst ab,
+    // und keyPressEvent saehe die Taste nie.
+    bool focusNextPrevChild(bool) override { return false; }
     void resizeEvent(QResizeEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;

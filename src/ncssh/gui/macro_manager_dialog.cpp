@@ -150,6 +150,59 @@ void KeyTile::paintEvent(QPaintEvent *event)
 }
 
 // ---------------------------------------------------------------------------
+// ClipHost
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Traegt das Tastenraster, ohne dessen Mindestgroesse nach aussen zu melden.
+// Ist Platz da, fuellt das Raster ihn (die Tasten ruecken auseinander). Wird es
+// enger, schrumpfen erst die Abstaende; danach bleibt das Raster in seiner
+// Mindestgroesse oben links stehen und die unteren/rechten Tasten verschwinden
+// am Rand — statt das Hauptfenster am Verkleinern zu hindern.
+class ClipHost : public QWidget {
+public:
+    ClipHost(QWidget *inner, QWidget *parent) : QWidget(parent), m_inner(inner)
+    {
+        inner->setParent(this);
+        inner->installEventFilter(this);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    }
+
+    QSize sizeHint() const override { return m_inner->sizeHint(); }
+    QSize minimumSizeHint() const override { return {0, 0}; }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QWidget::resizeEvent(event);
+        place();
+    }
+
+    bool eventFilter(QObject *obj, QEvent *event) override
+    {
+        // Raster neu aufgebaut (andere Groesse/Anzahl): Hinweis nach aussen
+        // weitergeben und neu platzieren.
+        if (obj == m_inner && event->type() == QEvent::LayoutRequest) {
+            updateGeometry();
+            place();
+        }
+        return QWidget::eventFilter(obj, event);
+    }
+
+private:
+    void place()
+    {
+        const QSize min = m_inner->minimumSizeHint();
+        m_inner->setGeometry(0, 0, qMax(width(), min.width()), qMax(height(), min.height()));
+    }
+
+    QWidget *m_inner;
+};
+
+} // namespace
+
+// ---------------------------------------------------------------------------
 // MacroManagerDialog
 // ---------------------------------------------------------------------------
 
@@ -315,7 +368,9 @@ void MacroManagerDialog::buildUi()
     m_gridHost = new QWidget(this);
     m_grid = new QGridLayout(m_gridHost);
     m_grid->setSpacing(6);
-    right->addWidget(m_gridHost, 1);
+    // Ueber ClipHost: zu wenig Platz schneidet Tasten ab, statt das Fenster
+    // (bzw. das Andock-Feld) auf die volle Rastergroesse festzunageln.
+    right->addWidget(new ClipHost(m_gridHost, this), 1);
 
     m_status = new QLabel(this);
     m_status->setObjectName(QStringLiteral("Muted"));

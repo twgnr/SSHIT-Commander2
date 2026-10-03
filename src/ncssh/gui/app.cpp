@@ -7,6 +7,7 @@
 #include "ncssh/gui/bridge.hpp"
 #include "ncssh/gui/main_window.hpp"
 #include "ncssh/gui/style.hpp"
+#include "ncssh/gui/view_state.hpp"
 
 #include <QApplication>
 #include <QDir>
@@ -46,6 +47,9 @@ int appMain(int argc, char *argv[])
     const QString iconPath = ncssh::core::assetPath(QStringLiteral("sshit.png"));
     if (!iconPath.isEmpty())
         app.setWindowIcon(QIcon(QPixmap(iconPath)));
+
+    // Fenstergroessen und Spaltenansichten aller Dialoge merken/wiederherstellen.
+    ViewStateKeeper::install();
 
     AsyncBridge bridge;
     bridge.start();

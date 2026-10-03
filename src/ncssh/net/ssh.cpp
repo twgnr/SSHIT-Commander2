@@ -1,5 +1,6 @@
 #include "ncssh/net/ssh.hpp"
 
+#include "ncssh/core/i18n.hpp"
 #include "ncssh/core/lsparse.hpp"
 #include "ncssh/core/ppk.hpp"
 #include "ncssh/core/settings.hpp"
@@ -157,8 +158,74 @@ static int waitSocket(int socket, LIBSSH2_SESSION *session, int timeoutMs = 1000
     return waitSocketDir(socket, libssh2_session_block_directions(session), timeoutMs);
 }
 
-// TCP-Verbindung zu host:port aufbauen.
-static int tcpConnect(const QString &host, int port)
+static int lastSockError()
+{
+#ifdef Q_OS_WIN
+    return WSAGetLastError();
+#else
+    return errno;
+#endif
+}
+
+// Verbindet sock mit addr, wartet aber hoechstens timeoutMs. Ein blockierendes
+// connect() haengt unter Windows bei nicht erreichbaren Hosts ~21 s je Adresse
+// (bei IPv6+IPv4 entsprechend mehrfach) — der Nutzer saehe so lange nichts.
+// Liefert 0 bei Erfolg, sonst den Socket-Fehlercode.
+static int connectWithTimeout(int sock, const sockaddr *addr, int addrlen, int timeoutMs,
+                              const std::atomic_bool *cancel)
+{
+    setNonBlockingSock(sock, true);
+    if (::connect(sock, addr, addrlen) == 0) {
+        setNonBlockingSock(sock, false);
+        return 0;
+    }
+    int err = lastSockError();
+#ifdef Q_OS_WIN
+    if (err != WSAEWOULDBLOCK && err != WSAEINPROGRESS)
+        return err;
+#else
+    if (err != EINPROGRESS)
+        return err;
+#endif
+    // In kurzen Scheiben warten, damit ein Abbruch sofort greift.
+    int rc = 0;
+    for (int waited = 0; waited < timeoutMs; waited += 200) {
+        if (cancel && cancel->load())
+            return -1;
+        const int sliceMs = std::min(200, timeoutMs - waited);
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = sliceMs * 1000;
+        fd_set fdw, fde;
+        FD_ZERO(&fdw);
+        FD_ZERO(&fde);
+        FD_SET(static_cast<SOCKET>(sock), &fdw);
+        FD_SET(static_cast<SOCKET>(sock), &fde);   // Windows meldet Fehlschlag hier
+        rc = select(sock + 1, nullptr, &fdw, &fde, &tv);
+        if (rc != 0)
+            break;
+    }
+    if (rc == 0) {
+#ifdef Q_OS_WIN
+        return WSAETIMEDOUT;
+#else
+        return ETIMEDOUT;
+#endif
+    }
+    if (rc < 0)
+        return lastSockError();
+    int soErr = 0;
+    socklen_t len = sizeof(soErr);
+    ::getsockopt(sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char *>(&soErr), &len);
+    if (soErr != 0)
+        return soErr;
+    setNonBlockingSock(sock, false);
+    return 0;
+}
+
+// TCP-Verbindung zu host:port aufbauen (je Adresse hoechstens timeoutSec).
+static int tcpConnect(const QString &host, int port, int timeoutSec,
+                      const std::atomic_bool *cancel = nullptr)
 {
     struct addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
@@ -169,24 +236,76 @@ static int tcpConnect(const QString &host, int port)
     if (getaddrinfo(hostB.constData(), portB.constData(), &hints, &res) != 0 || !res)
         fail(QStringLiteral("Host nicht auflösbar: %1").arg(host));
     int sock = -1;
+    int lastErr = 0;
     for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
         sock = static_cast<int>(::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol));
         if (sock < 0)
             continue;
-        if (::connect(sock, ai->ai_addr, static_cast<int>(ai->ai_addrlen)) == 0)
+        lastErr = connectWithTimeout(sock, ai->ai_addr, static_cast<int>(ai->ai_addrlen),
+                                     timeoutSec * 1000, cancel);
+        if (lastErr == 0)
             break;
         closeSocket(sock);
         sock = -1;
+        if (lastErr == -1)
+            break;   // abgebrochen
     }
     freeaddrinfo(res);
-    if (sock < 0)
-        fail(QStringLiteral("Verbindung fehlgeschlagen: %1:%2").arg(host).arg(port));
+    if (lastErr == -1)
+        fail(QStringLiteral("Abgebrochen."));
+    if (sock < 0) {
+        // Grund mitliefern (abgelehnt, Zeitueberschreitung, nicht erreichbar …),
+        // sonst bleibt unklar, ob Host, Port oder Firewall das Problem ist.
+        QString reason;
+#ifdef Q_OS_WIN
+        if (lastErr == WSAETIMEDOUT)
+#else
+        if (lastErr == ETIMEDOUT)
+#endif
+            reason = QStringLiteral("Zeitüberschreitung nach %1 s — Host nicht erreichbar "
+                                    "oder Port gefiltert").arg(timeoutSec);
+        else if (lastErr != 0)
+            reason = qt_error_string(lastErr).trimmed();
+        fail(reason.isEmpty()
+                 ? QStringLiteral("Verbindung fehlgeschlagen: %1:%2").arg(host).arg(port)
+                 : QStringLiteral("Verbindung fehlgeschlagen: %1:%2\n%3")
+                       .arg(host).arg(port).arg(reason));
+    }
     // Nagle aus: SSH/SFTP ist ein Request/Response-Protokoll mit vielen kleinen
     // Paketen — mit Nagle warten gebuendelte Requests (z. B. das SFTP-Read-
     // Ahead) auf das ACK des Vorgaengers. OpenSSH setzt das Flag ebenfalls.
     int one = 1;
     ::setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char *>(&one), sizeof(one));
     return sock;
+}
+
+// Schluesseltyp fuer Fehlermeldungen: aus dem PPK-Kopf bzw. dem OpenSSH-Blob.
+static QString keyTypeHint(const QByteArray &keyData)
+{
+    if (keyData.startsWith("PuTTY-User-Key-File")) {
+        const int colon = keyData.indexOf(':');
+        const int eol = keyData.indexOf('\n');
+        return QString::fromLatin1(keyData.mid(colon + 1, eol - colon - 1).trimmed())
+               + QStringLiteral(", PuTTY-Format");
+    }
+    if (keyData.contains("-----BEGIN OPENSSH PRIVATE KEY-----")) {
+        QByteArray b64;
+        for (const QByteArray &line : keyData.split('\n'))
+            if (!line.startsWith("-----"))
+                b64 += line.trimmed();
+        const QByteArray head = QByteArray::fromBase64(b64).left(200);
+        for (const char *t : {"ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384",
+                              "ecdsa-sha2-nistp521", "ssh-rsa", "ssh-dss"})
+            if (head.contains(t))
+                return QString::fromLatin1(t) + QStringLiteral(", OpenSSH-Format");
+        return QStringLiteral("OpenSSH-Format");
+    }
+    if (keyData.contains("-----BEGIN EC PRIVATE KEY-----"))
+        return QStringLiteral("ECDSA, PEM");
+    if (keyData.contains("-----BEGIN PRIVATE KEY-----")
+        || keyData.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----"))
+        return QStringLiteral("PKCS#8");
+    return QStringLiteral("unbekanntes Format");
 }
 
 static QString lastSshError(LIBSSH2_SESSION *session)
@@ -687,12 +806,14 @@ static void pumpProxyJump(SSHSessionPtr jump, LIBSSH2_CHANNEL *chan, int sockB,
 // Sprung-Session sowie der Pump-Thread werden in target hinterlegt und beim
 // Schliessen von target wieder abgebaut. Nur EIN Hop wird unterstuetzt.
 int openViaProxyJump(const SSHSessionPtr &target, const ServerProfile &profile,
-                     HostKeyStore *hostkeys)
+                     HostKeyStore *hostkeys, const ConnectControl &control)
 {
     const ServerProfile jump = parseJumpSpec(profile.proxyJump, profile);
+    if (control.progress)
+        control.progress(core::_t("Sprung-Host %1 …").arg(jump.display()));
     SSHSessionPtr jsess;
     try {
-        jsess = connectSession(jump, hostkeys);
+        jsess = connectSession(jump, hostkeys, control);
     } catch (const std::exception &e) {
         fail(QStringLiteral("Sprung-Host (%1) nicht erreichbar: %2")
                  .arg(jump.display(), QString::fromUtf8(e.what())));
@@ -703,6 +824,9 @@ int openViaProxyJump(const SSHSessionPtr &target, const ServerProfile &profile,
         std::lock_guard<std::recursive_mutex> lk(jsess->mutex());
         const QByteArray th = profile.host.toUtf8();
         // Sprung-Session ist blockierend -> wartet, bis der Kanal offen ist.
+        if (control.progress)
+            control.progress(core::_t("Öffne Kanal über Sprung-Host zu %1:%2 …")
+                                 .arg(profile.host).arg(profile.port));
         chan = libssh2_channel_direct_tcpip_ex(jsess->raw(), th.constData(), profile.port,
                                                "127.0.0.1", 22);
     }
@@ -729,26 +853,64 @@ int openViaProxyJump(const SSHSessionPtr &target, const ServerProfile &profile,
 
 SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkeys)
 {
+    return connectSession(profile, hostkeys, ConnectControl{});
+}
+
+SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkeys,
+                             const ConnectControl &control)
+{
     ensureInit();
     auto session = std::shared_ptr<SSHSession>(new SSHSession());
     session->profile = profile;
 
+    const int stepTimeoutMs = (profile.connectTimeout > 0 ? profile.connectTimeout : 20) * 1000;
+    const bool hasDeadline = control.deadline != std::chrono::steady_clock::time_point{};
+    LIBSSH2_SESSION *sess = nullptr;
+    // Jeder Schritt meldet sich und bekommt hoechstens die Restzeit bis zur
+    // Gesamtfrist. Ist sie verstrichen, wird mit Angabe des Schritts abgebrochen.
+    QString currentStep;
+    const auto step = [&](const QString &text) -> int {
+        if (control.cancelled && control.cancelled->load())
+            fail(QStringLiteral("Abgebrochen."));
+        currentStep = text;
+        if (control.progress)
+            control.progress(text);
+        int timeoutMs = stepTimeoutMs;
+        if (hasDeadline) {
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  control.deadline - std::chrono::steady_clock::now())
+                                  .count();
+            if (left <= 0)
+                fail(QStringLiteral("Zeitüberschreitung beim Verbindungsaufbau (bei: %1)")
+                         .arg(text));
+            timeoutMs = static_cast<int>(std::min<long long>(timeoutMs, left));
+        }
+        if (sess)
+            libssh2_session_set_timeout(sess, timeoutMs);
+        return timeoutMs;
+    };
+    // libssh2 meldet ein Timeout nur als "Timed out ..." — den Schritt dazu nennen.
+    const auto stepFailed = [&](const QString &message) {
+        fail(QStringLiteral("%1\n(bei: %2)").arg(message, currentStep));
+    };
+
     // Transport: direkt ODER ueber einen Sprung-Host (ProxyJump). Im Jump-Fall
     // laeuft der SSH-Handshake ueber einen lokalen Socket, dessen Gegenseite ein
     // Pump-Thread mit dem direct-tcpip-Kanal des Bastion-Hosts verbindet.
-    if (!profile.proxyJump.trimmed().isEmpty())
-        session->m_socket = openViaProxyJump(session, profile, hostkeys);
-    else
-        session->m_socket = tcpConnect(profile.host, profile.port);
-    LIBSSH2_SESSION *sess = libssh2_session_init();
+    if (!profile.proxyJump.trimmed().isEmpty()) {
+        session->m_socket = openViaProxyJump(session, profile, hostkeys, control);
+    } else {
+        const int ms = step(core::_t("Verbinde TCP zu %1:%2 …").arg(profile.host).arg(profile.port));
+        session->m_socket = tcpConnect(profile.host, profile.port, std::max(1, ms / 1000),
+                                       control.cancelled.get());
+    }
+    sess = libssh2_session_init();
     if (!sess) {
         closeSocket(session->m_socket);
         fail("libssh2-Session konnte nicht erstellt werden.");
     }
     session->m_session = sess;
     libssh2_session_set_blocking(sess, 1);
-    libssh2_session_set_timeout(sess, (profile.connectTimeout > 0 ? profile.connectTimeout : 20)
-                                          * 1000);
 
     // Verbindungs-Feinsteuerung (alles VOR dem Handshake wirksam):
     if (profile.compression)
@@ -762,6 +924,7 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
         libssh2_session_method_pref(sess, LIBSSH2_METHOD_KEX,
                                     profile.kexAlgorithms.toUtf8().constData());
 
+    step(core::_t("SSH-Handshake (Schlüsseltausch) …"));
     if (const int rc = libssh2_session_handshake(sess, session->m_socket); rc != 0) {
         QString message = QStringLiteral("SSH-Handshake fehlgeschlagen: %1").arg(lastSshError(sess));
         // Bei einem Fehler in der Algorithmus-Einigung liegt es meist an den vom
@@ -773,7 +936,7 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
                 "beherrscht (z. B. ausschließlich ed25519-Host-Key oder "
                 "curve25519). Prüfe, ob der Server zusätzlich ecdsa/rsa als "
                 "Host-Key bzw. ecdh/diffie-hellman als Schlüsseltausch erlaubt.");
-        throw HostKeyError(message);
+        throw HostKeyError(QStringLiteral("%1\n(bei: %2)").arg(message, currentStep));
     }
 
     // Keepalive ERST NACH dem Handshake konfigurieren. Wird es vorher gesetzt,
@@ -783,6 +946,7 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
         libssh2_keepalive_config(sess, 1, profile.keepaliveSeconds);
 
     // --- Host-Key-Pruefung VOR jeder Authentifizierung ---
+    step(core::_t("Prüfe Host-Key …"));
     QString algo;
     const QString fp = hostFingerprint(sess, algo);
     QString status = QStringLiteral("ignored");
@@ -829,12 +993,37 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
     // --- Authentifizierung ---
     const QByteArray user = profile.username.toUtf8();
     bool authed = false;
+    const QString authMethod = profile.authMethod == QLatin1String("key")
+                                   ? core::_t("Schlüssel")
+                               : profile.authMethod == QLatin1String("password")
+                                   ? core::_t("Passwort")
+                                   : core::_t("SSH-Agent");
+    step(core::_t("Anmeldung als %1 (%2) …").arg(profile.username, authMethod));
     if (profile.authMethod == QLatin1String("key") && !profile.keyPath.isEmpty()) {
         const QString kp = resolveKeyPath(profile.keyPath);
         QFile kf(kp);
         if (!kf.open(QIODevice::ReadOnly))
             fail(QStringLiteral("Schlüsseldatei nicht lesbar: %1").arg(kp));
         QByteArray keyData = kf.readAll();
+        // WinCNG liest Schluessel aus dem Speicher NUR als PEM "BEGIN RSA/DSA
+        // PRIVATE KEY". Bei allem anderen (ed25519, ECDSA, OpenSSH-Format, auch
+        // konvertierte PPK) laeuft libssh2 1.11.1 in eine Endlosschleife
+        // (pem.c: readline_memory meldet kein Dateiende) — kein Timeout greift,
+        // der Worker haengt fuer immer. Darum vorher klar abbrechen.
+        if (libssh2_crypto_engine() == libssh2_wincng
+            && !keyData.contains("-----BEGIN RSA PRIVATE KEY-----")
+            && !keyData.contains("-----BEGIN DSA PRIVATE KEY-----")) {
+            const QString type = keyTypeHint(keyData);
+            secureZero(keyData);
+            stepFailed(QStringLiteral(
+                           "Schlüssel %1 (%2) wird von diesem Build nicht unterstützt.\n"
+                           "Das Krypto-Backend WinCNG liest nur RSA/DSA-Schlüssel im "
+                           "PEM-Format („BEGIN RSA PRIVATE KEY“) — ed25519/ECDSA sowie "
+                           "Schlüssel im OpenSSH- oder PuTTY-Format gehen damit nicht.\n"
+                           "Abhilfe: mit OpenSSL-Backend bauen (-DUSE_OPENSSL_BACKEND=ON) "
+                           "oder einen RSA-Schlüssel im PEM-Format verwenden.")
+                           .arg(QFileInfo(kp).fileName(), type));
+        }
         if (core::isPpk(keyData)) {
             keyData = core::ppkToOpenssh(keyData, profile.passphrase);  // PPK -> OpenSSH
         }
@@ -848,7 +1037,7 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
         secureZero(keyData);
         secureZero(pass);
         if (!authed)
-            fail(QStringLiteral("Schlüssel-Authentifizierung fehlgeschlagen: %1")
+            stepFailed(QStringLiteral("Schlüssel-Authentifizierung fehlgeschlagen: %1")
                      .arg(lastSshError(sess)));
     } else if (profile.authMethod == QLatin1String("password")) {
         QByteArray pw = profile.password.toUtf8();
@@ -866,7 +1055,7 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
         }
         secureZero(pw);
         if (!authed)
-            fail(QStringLiteral("Passwort-Authentifizierung fehlgeschlagen: %1")
+            stepFailed(QStringLiteral("Passwort-Authentifizierung fehlgeschlagen: %1")
                      .arg(lastSshError(sess)));
     } else {  // agent
         LIBSSH2_AGENT *agent = libssh2_agent_init(sess);
@@ -889,7 +1078,10 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
             fail("SSH-Agent-Authentifizierung fehlgeschlagen (läuft ein Agent mit passendem Key?).");
     }
 
+    step(core::_t("Ermittle Server-Betriebssystem …"));
     session->osType = detectOs(*session);
+    // Ab hier gelten wieder die normalen Einzel-Timeouts, nicht die Restfrist.
+    libssh2_session_set_timeout(sess, stepTimeoutMs);
     return session;
 }
 
@@ -1190,6 +1382,20 @@ QString SFTPFileSystem::parent(const QString &path) const { return posixParent(p
 QString SFTPFileSystem::basename(const QString &path) const
 {
     return QDir::cleanPath(path).section(QLatin1Char('/'), -1);
+}
+
+QString SFTPFileSystem::resolve(const QString &path)
+{
+    if (path.startsWith(QLatin1Char('/')))
+        return path;
+    // realpath loest relativ zum Login-Verzeichnis auf ("." -> "/root").
+    std::lock_guard<std::recursive_mutex> lock(m_session->mutex());
+    char target[1024];
+    const int n = libssh2_sftp_realpath(m_session->sftp(), path.toUtf8().constData(), target,
+                                        sizeof(target));
+    if (n <= 0)
+        fail(QStringLiteral("Pfad nicht gefunden: %1").arg(path));
+    return QString::fromUtf8(target, n);
 }
 
 QString SFTPFileSystem::home()

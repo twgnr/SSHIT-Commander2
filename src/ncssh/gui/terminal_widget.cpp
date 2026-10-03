@@ -231,6 +231,15 @@ AltScan scanAltTransition(const QString &s, int start)
 }
 }  // namespace
 
+void TerminalWidget::printLocal(const QString &text, bool error)
+{
+    // Eigene Zeile, farbig abgesetzt (Cyan = Info, Rot = Fehler).
+    QString body = text;
+    body.replace(QLatin1Char('\n'), QStringLiteral("\r\n"));
+    feedOutput(QStringLiteral("\r\n\x1b[%1m%2\x1b[0m\r\n")
+                   .arg(error ? QStringLiteral("31") : QStringLiteral("36"), body));
+}
+
 void TerminalWidget::feedOutput(const QString &dataIn)
 {
     QString data = m_feedCarry + dataIn;
@@ -404,6 +413,17 @@ void TerminalWidget::keyPressEvent(QKeyEvent *event)
             showSearchBar();
             return;
         }
+    }
+    // Strg+C mit Markierung = kopieren (wie Windows Terminal); erst ohne
+    // Markierung geht es als Abbruch (0x03) an die Shell. Danach Markierung
+    // aufheben, damit das naechste Strg+C wieder abbricht.
+    if ((mods & Qt::ControlModifier) && !(mods & Qt::ShiftModifier)
+        && event->key() == Qt::Key_C && textCursor().hasSelection()) {
+        copy();
+        QTextCursor cursor = textCursor();
+        cursor.clearSelection();
+        setTextCursor(cursor);
+        return;
     }
     // Alternative Kopieren/Einfuegen wie in vielen Terminals: Strg+Einfg /
     // Shift+Einfg. Muss vor der Insert-Escape-Sequenz unten stehen.

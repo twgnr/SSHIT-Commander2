@@ -13,6 +13,7 @@ class QLineEdit;
 class QTableWidget;
 class QPushButton;
 class QLabel;
+class QVBoxLayout;
 
 namespace ncssh::gui {
 
@@ -32,6 +33,10 @@ public:
         QString confirmText;         // leer -> "Ausfuehren"
         QString sourceHeader;        // leer -> "Quelle"
         QString targetHeader;        // leer -> "Ziel"
+        // Gesetzt: Haken "Nicht mehr fragen" anbieten; bei Bestaetigung mit
+        // Haken wird diese Einstellung auf false gesetzt (Aktion kuenftig direkt).
+        QString skipSettingKey;
+        QString skipLabel;
     };
 
     PathConfirmDialog(const QString &title, const QString &intro,
@@ -64,6 +69,9 @@ public:
     std::vector<PathPair> results() const;
     QString targetDir() const;
 
+    // Haken "Nicht mehr fragen" anbieten (siehe PathConfirmDialog::Options).
+    void offerSkip(const QString &settingKey, const QString &label);
+
 private:
     void refresh();
 
@@ -76,6 +84,7 @@ private:
     QLineEdit *m_nameEdit = nullptr;   // nur bei genau einem Objekt
     QLineEdit *m_dirEdit = nullptr;
     QTableWidget *m_table = nullptr;
+    QVBoxLayout *m_layout = nullptr;
 };
 
 // Umbenennen und/oder Verschieben eines Eintrags. Namens- und Zielordner-Feld

@@ -24,7 +24,7 @@ struct HostKeyMismatch {
 
 class SessionManager {
 public:
-    SSHSessionPtr open(const core::ServerProfile &profile);
+    SSHSessionPtr open(const core::ServerProfile &profile, const ConnectControl &control = {});
     void close(const SSHSessionPtr &session);
     void closeAll();
 

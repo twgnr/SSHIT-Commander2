@@ -76,6 +76,8 @@ public:
     void sendToActiveConsole(const QString &command, bool execute);
     // Aktive Pane (fuer Werkzeuge wie Massen-Umbenennen).
     FilePanel *activePanel() const;
+    // Fokus + blaue Markierung auf panel setzen (nur eigene Panes).
+    void focusPanel(FilePanel *panel);
     FilePanel *leftPanel() const { return m_leftPanel; }
     FilePanel *rightPanel() const { return m_rightPanel; }
 
@@ -107,6 +109,9 @@ signals:
     // Netzwerk-Modus: Scanner erneut oeffnen bzw. zu einem Host verbinden.
     void rescanRequested();
     void connectHostRequested(const QString &host);
+    // Konsolenkopf: Befehlspalette / Verlauf fuer die (jetzt aktive) Seite.
+    void paletteRequested();
+    void historyRequested();
     // Nutzer will einen zweiten Server, waehrend dieser Tab schon verbunden
     // ist — das Hauptfenster oeffnet dafuer einen neuen Tab.
     void connectInNewTabRequested(const core::ServerProfile &profile);
@@ -126,7 +131,8 @@ private:
     // F5: Bestaetigungsdialog mit waehlbarem Zielordner, dann uebertragen.
     void confirmAndTransfer(core::FileSystemProvider *src,
                             const std::vector<QString> &srcPaths,
-                            core::FileSystemProvider *dst, const QString &dstDir);
+                            core::FileSystemProvider *dst, const QString &dstDir,
+                            bool viaShortcut = false);
     // Wie confirmAndTransfer, entfernt die Quelle aber nach Erfolg.
     void confirmAndMove(core::FileSystemProvider *src,
                         const std::vector<QString> &srcPaths,

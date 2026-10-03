@@ -59,6 +59,10 @@ public:
     // landet "." wortwoertlich in der Pfadleiste und "C:/" und "C:\" gelten
     // als zwei verschiedene Ebenen.
     virtual QString normalize(const QString &path) const { return path; }
+
+    // Absoluter Pfad zu einem relativen ("." / "backups" = relativ zum Home).
+    // Darf das Netz befragen — nur im Worker aufrufen. Standard: unveraendert.
+    virtual QString resolve(const QString &path) { return path; }
 };
 
 // Lokales Dateisystem (blockierende OS-Calls; via Bridge auf Worker-Threads).

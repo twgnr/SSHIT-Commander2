@@ -33,6 +33,19 @@ QPushButton *makeBookmarkButton(const QStringList &paths,
     return button;
 }
 
+// Haken "Nicht mehr fragen": erst beim Bestaetigen wirksam — wer abbricht,
+// will auch diese Aenderung nicht.
+static QCheckBox *makeSkipBox(QDialog *dlg, const QString &settingKey, const QString &label)
+{
+    auto *box = new QCheckBox(label, dlg);
+    box->setToolTip(_t("Wieder einschalten: Einstellungen → Allgemein"));
+    QObject::connect(dlg, &QDialog::accepted, dlg, [box, settingKey] {
+        if (box->isChecked())
+            core::setSetting(settingKey, false);
+    });
+    return box;
+}
+
 // ---------------------------------------------------------------------------
 // PathConfirmDialog
 // ---------------------------------------------------------------------------
@@ -72,6 +85,8 @@ PathConfirmDialog::PathConfirmDialog(const QString &title, const QString &intro,
             table->setItem(row, 1, new QTableWidgetItem(dst));
     }
     layout->addWidget(table);
+    if (!options.skipSettingKey.isEmpty())
+        layout->addWidget(makeSkipBox(this, options.skipSettingKey, options.skipLabel));
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                          this);
@@ -108,6 +123,7 @@ TransferConfirmDialog::TransferConfirmDialog(const QString &title, const QString
     resize(820, 460);
 
     auto *layout = new QVBoxLayout(this);
+    m_layout = layout;
     layout->addWidget(new QLabel(
         QStringLiteral("%1 Objekt(e) %2:").arg(m_names.size()).arg(verb.toLower()), this));
 
@@ -168,6 +184,12 @@ TransferConfirmDialog::TransferConfirmDialog(const QString &title, const QString
     layout->addWidget(buttons);
 
     refresh();
+}
+
+void TransferConfirmDialog::offerSkip(const QString &settingKey, const QString &label)
+{
+    // Direkt ueber der Knopfleiste (letztes Element) einfuegen.
+    m_layout->insertWidget(m_layout->count() - 1, makeSkipBox(this, settingKey, label));
 }
 
 void TransferConfirmDialog::refresh()

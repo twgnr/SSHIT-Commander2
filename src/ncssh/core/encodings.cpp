@@ -243,7 +243,11 @@ QString detectEncoding(const QByteArray &data)
     if (data.startsWith("\xFF\xFE") || data.startsWith("\xFE\xFF"))
         return QStringLiteral("utf-16");
     QStringDecoder dec(QStringConverter::Utf8);
-    dec.decode(data);
+    // decode() liefert nur einen Platzhalter — dekodiert (und hasError()
+    // gesetzt) wird erst bei der Umwandlung in QString. Ohne sie galt jede
+    // Datei als UTF-8, ANSI-Umlaute erschienen im Editor als "f�r".
+    const QString decoded = dec.decode(data);
+    Q_UNUSED(decoded);
     if (!dec.hasError())
         return QStringLiteral("utf-8");
     return QStringLiteral("cp1252");

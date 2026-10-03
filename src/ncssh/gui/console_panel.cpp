@@ -65,7 +65,33 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
         else
             emit dockRequested();
     });
+    // Verbindungsaufbau abbrechen — nur sichtbar, solange einer laeuft. In der
+    // Kopfzeile, damit er im Befehls- wie im Terminal-Modus erreichbar ist.
+    m_connectCancelButton = new QPushButton(_t("Verbindung abbrechen"), this);
+    m_connectCancelButton->setObjectName(QStringLiteral("Chip"));
+    m_connectCancelButton->setVisible(false);
+    connect(m_connectCancelButton, &QPushButton::clicked, this,
+            &ConsolePanel::connectCancelRequested);
+    // Befehlspalette und Verlauf direkt an der Konsole (wie in der
+    // Python-Version): gewaehlter Befehl landet hier — auch im Terminal.
+    auto *paletteButton = new QPushButton(_t("Befehle"), this);
+    paletteButton->setObjectName(QStringLiteral("Chip"));
+    paletteButton->setToolTip(_t("Befehlspalette — Befehl auswählen und hier einfügen"));
+    connect(paletteButton, &QPushButton::clicked, this, [this] {
+        emit activated();   // diese Seite wird Ziel
+        emit paletteRequested();
+    });
+    auto *historyButton = new QPushButton(_t("Verlauf"), this);
+    historyButton->setObjectName(QStringLiteral("Chip"));
+    historyButton->setToolTip(_t("Befehlsverlauf & Favoriten — Befehl hier einfügen"));
+    connect(historyButton, &QPushButton::clicked, this, [this] {
+        emit activated();
+        emit historyRequested();
+    });
     headerRow->addWidget(m_header, 1);
+    headerRow->addWidget(m_connectCancelButton);
+    headerRow->addWidget(paletteButton);
+    headerRow->addWidget(historyButton);
     headerRow->addWidget(aiButton);
     headerRow->addWidget(m_modeButton);
     headerRow->addWidget(m_dockButton);
@@ -93,6 +119,9 @@ ConsolePanel::ConsolePanel(AsyncBridge *bridge, const QString &title, QWidget *p
     auto *inputRow = new QHBoxLayout();
     m_prompt = new QLabel(QStringLiteral("$"), m_commandPage);
     m_prompt->setObjectName(QStringLiteral("Muted"));
+    // Harte Obergrenze, falls die Stylesheet-Schrift breiter ist als beim
+    // Kuerzen gemessen — die Spaltenbreite darf nie am Pfad haengen.
+    m_prompt->setMaximumWidth(300);
     m_input = new QLineEdit(m_commandPage);
     m_input->setFont(mono);
     m_input->setPlaceholderText(
@@ -133,7 +162,15 @@ void ConsolePanel::setCwd(const QString &cwd)
 {
     const bool changed = (m_cwd != cwd);
     m_cwd = cwd;
-    m_prompt->setText(cwd.isEmpty() ? QStringLiteral("$") : cwd + QStringLiteral(" $"));
+    // Langen Pfad vorne kuerzen (Ende bleibt lesbar), voller Pfad im Tooltip.
+    // Ungekuerzt wurde die Textbreite zur Mindestbreite der Konsole — und damit
+    // der ganzen Spalte: ein Ordner wie ~/.cache/electron/<sha256> zog die
+    // Pane beim Betreten breiter.
+    constexpr int kPromptMaxWidth = 260;
+    const QString full = cwd.isEmpty() ? QStringLiteral("$") : cwd + QStringLiteral(" $");
+    m_prompt->setText(
+        m_prompt->fontMetrics().elidedText(full, Qt::ElideLeft, kPromptMaxWidth));
+    m_prompt->setToolTip(cwd);
     // Beim Verzeichniswechsel der Pane ein 'cd' ins laufende Terminal senden.
     if (changed && !cwd.isEmpty() && m_terminal->isRunning())
         m_terminal->sendText(QStringLiteral("cd \"%1\"\r").arg(cwd));
@@ -223,6 +260,19 @@ void ConsolePanel::explainWithAi()
 
 void ConsolePanel::runCommand(const QString &command, bool execute)
 {
+    // Terminal-Modus: in die laufende Shell tippen. Vorher landete der Befehl
+    // in der (unsichtbaren) Eingabezeile des Befehlsmodus.
+    if (m_stack->currentWidget() == m_terminal && m_terminal->isRunning()) {
+        if (command.trimmed().isEmpty())
+            return;
+        m_terminal->sendText(execute ? command + QStringLiteral("\r") : command);
+        if (execute) {
+            m_historyStore.add(command);
+            m_historyStore.save();
+        }
+        m_terminal->setFocus();
+        return;
+    }
     if (!execute) {
         m_input->setText(command);
         m_input->setFocus();
@@ -322,6 +372,18 @@ void ConsolePanel::submit()
     m_historyStore.add(command);
     m_historyStore.save();
     runCommand(command, true);
+}
+
+void ConsolePanel::printInfo(const QString &text, bool error)
+{
+    appendOutput(error ? QStringLiteral("✖ ") + text : QStringLiteral("» ") + text);
+    if (m_stack->currentWidget() == m_terminal)
+        m_terminal->printLocal(text, error);
+}
+
+void ConsolePanel::setConnectCancelVisible(bool visible)
+{
+    m_connectCancelButton->setVisible(visible);
 }
 
 void ConsolePanel::appendOutput(const QString &text)

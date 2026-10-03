@@ -11,6 +11,8 @@
 #include <QByteArray>
 #include <QString>
 #include <atomic>
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -54,6 +56,7 @@ public:
 class SFTPFileSystem;
 class RemoteCommandRunner;
 class RemoteShell;
+struct ConnectControl;
 
 struct ExecResult {
     int exitStatus = -1;
@@ -96,9 +99,10 @@ public:
     int socket() const { return m_socket; }
 
 private:
-    friend std::shared_ptr<SSHSession> connectSession(const ServerProfile &, HostKeyStore *);
+    friend std::shared_ptr<SSHSession> connectSession(const ServerProfile &, HostKeyStore *,
+                                                      const ConnectControl &);
     friend int openViaProxyJump(const std::shared_ptr<SSHSession> &, const ServerProfile &,
-                                HostKeyStore *);
+                                HostKeyStore *, const ConnectControl &);
 
     std::recursive_mutex m_mutex;
     LIBSSH2_SESSION *m_session = nullptr;
@@ -121,6 +125,22 @@ QString resolveKeyPath(const QString &keyPath);
 // Baut eine SSH-Verbindung gemaess Profil auf (Key/Passwort/Agent). Host-Key-
 // Pruefung erfolgt NACH dem Handshake, aber VOR jeder Authentifizierung.
 SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkeys);
+
+// Steuerung eines Verbindungsaufbaus aus der Oberflaeche.
+struct ConnectControl {
+    // Meldet den aktuellen Schritt ("Verbinde TCP …", "Authentifiziere …").
+    // Wird im Worker-Thread aufgerufen.
+    std::function<void(const QString &)> progress;
+    // Gesamtfrist fuer den Aufbau; Standardwert = keine Frist (nur die
+    // Einzel-Timeouts des Profils gelten).
+    std::chrono::steady_clock::time_point deadline{};
+    // Abbruch durch den Nutzer. Wird zwischen den Schritten und waehrend des
+    // TCP-Aufbaus geprueft; ein laufender libssh2-Aufruf endet erst mit seinem
+    // Timeout (die Oberflaeche verwirft das Ergebnis dann).
+    std::shared_ptr<std::atomic_bool> cancelled;
+};
+SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkeys,
+                             const ConnectControl &control);
 
 // Zweite, unabhaengige Verbindung zum Server einer bestehenden Session — als
 // eigene Datenleitung fuer Transfers, damit Listings/Konsole nicht am Session-
@@ -152,6 +172,7 @@ public:
     QString parent(const QString &path) const override;
     QString basename(const QString &path) const override;
     QString home() override;
+    QString resolve(const QString &path) override;
     void symlink(const QString &target, const QString &linkPath) override;
 
     // Groesse einer Remote-Datei (fuer Transfer/Resume).

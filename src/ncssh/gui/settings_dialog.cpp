@@ -159,6 +159,14 @@ QWidget *SettingsDialog::buildGeneralTab()
     execRow->addWidget(m_execColorBtn);
     form->addRow(_t("Farbe für ausführbare Dateien"), execRow);
 
+    // Rueckfragen vor F5/F8 — auch direkt im jeweiligen Dialog abschaltbar.
+    m_confirmCopy = new QCheckBox(_t("Vor dem Kopieren (F5) Bestätigungsfenster zeigen"), page);
+    m_confirmCopy->setChecked(core::getSettingBool(QStringLiteral("confirm_copy"), true));
+    form->addRow(QString(), m_confirmCopy);
+    m_confirmDelete = new QCheckBox(_t("Vor dem Löschen (F8) Bestätigungsfenster zeigen"), page);
+    m_confirmDelete->setChecked(core::getSettingBool(QStringLiteral("confirm_delete"), true));
+    form->addRow(QString(), m_confirmDelete);
+
     m_restoreTabs = new QCheckBox(_t("Tabs beim Start wiederherstellen"), page);
     m_restoreTabs->setChecked(core::getSettingBool(QStringLiteral("restore_tabs"), true));
     form->addRow(QString(), m_restoreTabs);
@@ -561,6 +569,8 @@ void SettingsDialog::save()
     core::setSetting(QStringLiteral("compact_rows"), m_compactRows->isChecked());
     core::setSetting(QStringLiteral("exec_highlight"), m_execHighlight->isChecked());
     core::setSetting(QStringLiteral("exec_color"), m_execColor);
+    core::setSetting(QStringLiteral("confirm_copy"), m_confirmCopy->isChecked());
+    core::setSetting(QStringLiteral("confirm_delete"), m_confirmDelete->isChecked());
     core::setSetting(QStringLiteral("restore_tabs"), m_restoreTabs->isChecked());
     core::setSetting(QStringLiteral("auto_connect_last"), m_autoConnect->isChecked());
     core::setSetting(QStringLiteral("start_path"), m_startPath->text());

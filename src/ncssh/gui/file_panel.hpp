@@ -60,6 +60,8 @@ public:
     std::vector<QString> selectedPaths() const;   // Mehrfachauswahl
     // Markierter Eintrag oder nullptr (auch bei ".."); zeigt in m_rows.
     const core::FileEntry *selectedEntry() const;
+    // Eintrag unter dem Cursor-Balken, auch "..". nullptr = keiner.
+    const core::FileEntry *cursorEntry() const;
     void setHeaderTitle(const QString &title);
     // Fokus auf die Dateiliste (bzw. Kacheln) setzen — fuer den Pane-Wechsel.
     void focusView();
@@ -79,11 +81,11 @@ public:
     void setViewMode(bool grid);
     bool gridMode() const { return m_gridMode; }
 
-    // Verzeichnis-Status statt Dateiliste zeigen (Strg+F9 im Hauptfenster).
+    // Status statt Dateiliste zeigen (Panes -> Status anzeigen / Strg+F9).
     void showStatus(const QString &html);
     void hideStatus();
     bool statusShown() const { return m_statusShown; }
-    // Lesezeichen dieser Pane (fuer den Strg+F9-Auswahlzyklus).
+    // Lesezeichen dieser Pane.
     QStringList bookmarkList() const { return m_bookmarks.list(m_bookmarkKey); }
 
     // --- Verlauf (Alt+Links / Alt+Rechts) ---
@@ -115,6 +117,10 @@ signals:
     void sudoToggled(bool on);                    // sudo-Chip umgeschaltet
     // Auswahl geaendert (fuer das Vorschau-Panel); leer = nichts markiert.
     void selectionChanged(const QString &path);
+    // Cursor-Balken steht auf einer anderen Zeile (auch nach dem Neuladen).
+    void cursorMoved();
+    // Die Status-Seite wurde verlassen (Navigieren, Ansichtswechsel, Schliessen).
+    void statusClosed();
     // Drop aus einer anderen Pane (source) bzw. aus dem Explorer
     // (source == nullptr -> lokale Pfade).
     void filesDropped(const QStringList &paths, FilePanel *source);
@@ -166,6 +172,8 @@ private:
     void updateBookmarkButton();
     // Statuszeile: Verzeichnis-Zusammenfassung plus aktuelle Auswahl.
     void updateSelectionStatus();
+    void setStatusText(const QString &text);   // gekuerzt, voller Text im Tooltip
+    void elideStatus();
     void sortBy(int column);          // Spaltenkopf angeklickt
     void applyFilter(const QString &pattern);
 
@@ -265,7 +273,7 @@ private:
     QTableWidget *m_table = nullptr;
     QStackedWidget *m_viewStack = nullptr;
     QListView *m_grid = nullptr;      // teilt Model UND Auswahl mit m_table
-    QTextBrowser *m_statusView = nullptr;  // Verzeichnis-Status (Strg+F9)
+    QTextBrowser *m_statusView = nullptr;  // Status-Seite (Strg+F9)
     bool m_statusShown = false;
     bool m_gridMode = false;
     QTimer *m_thumbTimer = nullptr;   // Nachladen beim Scrollen entprellen
@@ -273,6 +281,7 @@ private:
     QSet<QString> m_thumbRequested;
     QLabel *m_status = nullptr;
     QString m_baseStatus;             // Zusammenfassung ohne Auswahl-Teil
+    QString m_statusFull;             // ungekuerzter Text der Statuszeile
     QPushButton *m_starButton = nullptr;
     QPushButton *m_sudoChip = nullptr;
     QPushButton *m_disconnectChip = nullptr;
