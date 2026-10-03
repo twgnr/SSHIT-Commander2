@@ -89,14 +89,25 @@ function(provide_openssl)
         message(FATAL_ERROR "OpenSSL Configure fehlgeschlagen (perl/MSVC-Umgebung?).")
     endif()
 
-    # Bauen + Header/Libs installieren (nmake aus der MSVC-Umgebung).
-    execute_process(COMMAND nmake WORKING_DIRECTORY "${_src}" RESULT_VARIABLE _rc)
-    if(NOT _rc EQUAL 0)
-        message(FATAL_ERROR "OpenSSL-Build (nmake) fehlgeschlagen — MSVC-Umgebung aktiv?")
+    # Bauen + Header/Libs installieren (nmake aus der MSVC-Umgebung). nmake
+    # vorher suchen: ein fehlendes nmake meldete execute_process sonst nur als
+    # nichtssagenden Fehlercode ohne jede Ausgabe.
+    find_program(_nmake NAMES nmake)
+    if(NOT _nmake)
+        message(FATAL_ERROR
+            "OpenSSL-Bau: nmake nicht gefunden. Aus einer MSVC-Umgebung bauen "
+            "(build.ps1 bzw. 'x64 Native Tools Command Prompt') oder ein fertiges "
+            "OpenSSL per -DOPENSSL_ROOT_DIR=<pfad> angeben, oder mit "
+            "-DUSE_OPENSSL_BACKEND=OFF auf WinCNG ausweichen.")
     endif()
-    execute_process(COMMAND nmake install_dev WORKING_DIRECTORY "${_src}" RESULT_VARIABLE _rc)
+    execute_process(COMMAND "${_nmake}" WORKING_DIRECTORY "${_src}" RESULT_VARIABLE _rc)
     if(NOT _rc EQUAL 0)
-        message(FATAL_ERROR "OpenSSL install_dev fehlgeschlagen.")
+        message(FATAL_ERROR "OpenSSL-Build (nmake) fehlgeschlagen (Rueckgabe: ${_rc}).")
+    endif()
+    execute_process(COMMAND "${_nmake}" install_dev WORKING_DIRECTORY "${_src}"
+                    RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+        message(FATAL_ERROR "OpenSSL install_dev fehlgeschlagen (Rueckgabe: ${_rc}).")
     endif()
 
     set(OPENSSL_ROOT_DIR "${_install}" CACHE PATH "OpenSSL-Wurzel" FORCE)

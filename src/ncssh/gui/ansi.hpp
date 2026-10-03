@@ -33,8 +33,12 @@ private:
     QTextCharFormat format() const;
     void applySgr(const QString &params);
     void handleCsi(QTextCursor &cur, const QString &params, QChar final);
-    void clearLine(QTextCursor &cur);
     void newline(QTextCursor &cur);
+    // Schreibt text ab der Cursorspalte der letzten Zeile und UEBERSCHREIBT
+    // dabei vorhandene Zeichen (wie ein echtes Terminal).
+    void writeText(QTextCursor &cur, const QString &text);
+    // Cursor auf (letzte Zeile, m_col) setzen; fehlende Spalten mit Leerzeichen.
+    void placeCursor(QTextCursor &cur, bool pad);
 
     QPlainTextEdit *m_editor;
     QString m_defFg;
@@ -45,7 +49,8 @@ private:
     bool m_italic = false;
     bool m_underline = false;
     bool m_reverse = false;
-    bool m_pendingCr = false;  // \r am Chunk-Ende (moegliches \r\n ueber die Grenze)
+    bool m_pendingCr = false;  // (unbenutzt; Zeilenmodell braucht es nicht mehr)
+    int m_col = 0;             // Cursorspalte in der letzten Zeile (bleibt ueber Chunks)
     QString m_carry;           // angeschnittene Escape-Sequenz vom letzten Chunk
     bool m_inString = false;   // mitten in OSC/DCS (bis BEL bzw. ESC \ ueberspringen)
     int m_stringLen = 0;       // bisher uebersprungene Zeichen dieser Zeichenkette

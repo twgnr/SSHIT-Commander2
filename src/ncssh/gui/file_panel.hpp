@@ -87,6 +87,9 @@ public:
     bool statusShown() const { return m_statusShown; }
     // Lesezeichen dieser Pane.
     QStringList bookmarkList() const { return m_bookmarks.list(m_bookmarkKey); }
+    // Lesezeichen-Menue dieser Pane am Lesezeichen-Knopf oeffnen (Knopf und
+    // Tastenkuerzel Strg+B). Per Pfeiltasten/Enter bedienbar.
+    void showBookmarksMenu();
 
     // --- Verlauf (Alt+Links / Alt+Rechts) ---
     void goBack();
@@ -173,6 +176,7 @@ private:
     void opProperties();
     void toggleBookmark();
     void openBookmarks();
+    QPushButton *m_bookmarksBtn = nullptr;
     void updateBookmarkButton();
     // Statuszeile: Verzeichnis-Zusammenfassung plus aktuelle Auswahl.
     void updateSelectionStatus();

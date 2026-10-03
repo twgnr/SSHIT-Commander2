@@ -6,6 +6,7 @@
 #include <QPlainTextEdit>
 #include <QRegularExpression>
 #include <QTextBlock>
+#include <QTextDocument>
 #include <QTextCursor>
 #include <algorithm>
 
@@ -67,6 +68,7 @@ void AnsiRenderer::reset()
     m_carry.clear();
     m_inString = false;
     m_stringLen = 0;
+    m_col = 0;
 }
 
 QTextCharFormat AnsiRenderer::format() const
@@ -145,28 +147,101 @@ void AnsiRenderer::applySgr(const QString &params)
     }
 }
 
-void AnsiRenderer::clearLine(QTextCursor &cur)
+// Zeilenmodell: Gearbeitet wird immer in der LETZTEN Zeile des Dokuments, an
+// der Spalte m_col. Frueher begann jeder Chunk am Dokumentende und Text wurde
+// EINGEFUEGT: Shells, die beim Bearbeiten mitten in der Zeile mit Rueckschritt
+// bzw. Cursor-Sequenzen zurueckgehen und den Rest neu schreiben (bash/readline,
+// PowerShell/PSReadLine via ConPTY), erzeugten so doppelte Zeichen.
+
+void AnsiRenderer::placeCursor(QTextCursor &cur, bool pad)
 {
-    cur.movePosition(QTextCursor::StartOfBlock);
-    cur.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
-    cur.removeSelectedText();
+    const QTextBlock block = cur.document()->lastBlock();
+    const int len = block.length() - 1;
+    if (pad && m_col > len) {
+        cur.setPosition(block.position() + len);
+        cur.insertText(QString(m_col - len, QLatin1Char(' ')), format());
+    }
+    cur.setPosition(block.position() + std::min(m_col, std::max(0, block.length() - 1)));
+}
+
+void AnsiRenderer::writeText(QTextCursor &cur, const QString &text)
+{
+    placeCursor(cur, /*pad=*/true);
+    const QTextBlock block = cur.document()->lastBlock();
+    const int len = block.length() - 1;
+    const int over = std::min<int>(int(text.size()), std::max(0, len - m_col));
+    if (over > 0)
+        cur.setPosition(block.position() + m_col + over, QTextCursor::KeepAnchor);
+    cur.insertText(text, format());   // ersetzt die markierten (alten) Zeichen
+    m_col += int(text.size());
 }
 
 void AnsiRenderer::newline(QTextCursor &cur)
 {
     cur.movePosition(QTextCursor::End);
     cur.insertText(QStringLiteral("\n"));
+    m_col = 0;
 }
 
 void AnsiRenderer::handleCsi(QTextCursor &cur, const QString &params, QChar final)
 {
-    if (final == QLatin1Char('m')) {
+    // Erster Zahlenparameter (Standard 1), gedeckelt gegen Unsinnswerte.
+    const auto num = [&params](int def) {
+        bool ok = false;
+        const int v = params.section(QLatin1Char(';'), 0, 0).toInt(&ok);
+        return (!ok || v <= 0) ? def : std::min(v, 9999);
+    };
+    const QTextBlock block = cur.document()->lastBlock();
+    const int len = block.length() - 1;
+    const ushort f = final.unicode();
+    if (f == 'm') {
         applySgr(params);
-    } else if (final == QLatin1Char('K')) {  // Zeile loeschen (ab Cursor)
-        cur.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
-        cur.removeSelectedText();
+    } else if (f == 'K') {  // Zeile loeschen: 0 = ab Cursor, 1 = bis Cursor, 2 = ganz
+        const int mode = params.isEmpty() ? 0 : params.toInt();
+        if (mode == 2) {
+            cur.setPosition(block.position());
+            cur.setPosition(block.position() + len, QTextCursor::KeepAnchor);
+            cur.removeSelectedText();
+        } else if (mode == 1) {
+            const int n = std::min(m_col + 1, len);
+            if (n > 0) {
+                cur.setPosition(block.position());
+                cur.setPosition(block.position() + n, QTextCursor::KeepAnchor);
+                cur.insertText(QString(n, QLatin1Char(' ')), format());
+            }
+        } else if (m_col < len) {
+            cur.setPosition(block.position() + m_col);
+            cur.setPosition(block.position() + len, QTextCursor::KeepAnchor);
+            cur.removeSelectedText();
+        }
+    } else if (f == 'C') {          // Cursor rechts
+        m_col += num(1);
+    } else if (f == 'D') {          // Cursor links
+        m_col = std::max(0, m_col - num(1));
+    } else if (f == 'G' || f == '`') {  // Spalte absolut (1-basiert)
+        m_col = num(1) - 1;
+    } else if (f == 'P') {          // Zeichen ab Cursor loeschen (Rest rueckt nach)
+        if (m_col < len) {
+            cur.setPosition(block.position() + m_col);
+            cur.setPosition(block.position() + std::min(len, m_col + num(1)),
+                            QTextCursor::KeepAnchor);
+            cur.removeSelectedText();
+        }
+    } else if (f == '@') {          // Leerzeichen am Cursor einfuegen
+        if (m_col <= len) {
+            cur.setPosition(block.position() + m_col);
+            cur.insertText(QString(num(1), QLatin1Char(' ')), format());
+        }
+    } else if (f == 'X') {          // Zeichen ab Cursor durch Leerzeichen ersetzen
+        const int n = std::min(num(1), std::max(0, len - m_col));
+        if (n > 0) {
+            cur.setPosition(block.position() + m_col);
+            cur.setPosition(block.position() + m_col + n, QTextCursor::KeepAnchor);
+            cur.insertText(QString(n, QLatin1Char(' ')), format());
+        }
     }
-    // andere (Cursorbewegung, Bildschirm loeschen) werden ignoriert
+    // andere (Zeilen hoch/runter, Bildschirm loeschen) werden ignoriert — im
+    // Rollpuffer-Modus gibt es nur die laufende Zeile.
 }
 
 void AnsiRenderer::feed(const QString &textIn)
@@ -176,18 +251,10 @@ void AnsiRenderer::feed(const QString &textIn)
     // einzelnes ESC am Chunk-Ende liess die Schleife unten nie fortschreiten.
     QString text = m_carry + textIn;
     m_carry.clear();
-    QTextCursor cur = m_editor->textCursor();
-    cur.movePosition(QTextCursor::End);
-
-    if (m_pendingCr) {  // \r vom letzten Chunk
-        m_pendingCr = false;
-        if (text.startsWith(QLatin1Char('\n'))) {
-            newline(cur);
-            text.remove(0, 1);
-        } else {
-            clearLine(cur);
-        }
-    }
+    // Eigener Cursor (nicht der des Widgets: den verstellt z. B. eine
+    // Mausmarkierung); Position kommt aus dem Zeilenmodell.
+    QTextCursor cur(m_editor->document());
+    placeCursor(cur, /*pad=*/false);
 
     const int n = text.size();
     int i = 0;
@@ -280,17 +347,9 @@ void AnsiRenderer::feed(const QString &textIn)
             continue;
         }
         if (ch == QLatin1Char('\r')) {
-            if (i == n - 1) {  // \r am Ende -> auf naechsten Chunk warten (\r\n?)
-                m_pendingCr = true;
-                ++i;
-                continue;
-            }
-            if (text.at(i + 1) == QLatin1Char('\n')) {  // CRLF -> ein Zeilenumbruch
-                newline(cur);
-                i += 2;
-                continue;
-            }
-            clearLine(cur);  // einzelnes \r -> Zeile ueberschreiben
+            // Wagenruecklauf: nur an den Zeilenanfang — folgender Text
+            // ueberschreibt (Fortschrittsanzeigen, Prompt-Neuzeichnen).
+            m_col = 0;
             ++i;
             continue;
         }
@@ -301,7 +360,7 @@ void AnsiRenderer::feed(const QString &textIn)
         }
         if (ch == QChar(0x08) || ch == QChar(0x07)) {
             if (ch == QChar(0x08))
-                cur.movePosition(QTextCursor::Left);
+                m_col = std::max(0, m_col - 1);   // Rueckschritt: nur Cursor
             ++i;
             continue;
         }
@@ -320,7 +379,7 @@ void AnsiRenderer::feed(const QString &textIn)
         constexpr int kMaxBlockLen = 8192;
         int from = i;
         while (from < j) {
-            int room = kMaxBlockLen - (cur.block().length() - 1);
+            int room = kMaxBlockLen - m_col;
             if (room <= 0) {
                 newline(cur);
                 continue;
@@ -329,11 +388,12 @@ void AnsiRenderer::feed(const QString &textIn)
             // Surrogatpaar nicht zerschneiden.
             if (from + room < j && room > 1 && text.at(from + room - 1).isHighSurrogate())
                 --room;
-            cur.insertText(text.mid(from, room), format());
+            writeText(cur, text.mid(from, room));
             from += room;
         }
         i = j;
     }
+    placeCursor(cur, /*pad=*/false);
     m_editor->setTextCursor(cur);
     m_editor->ensureCursorVisible();
 }

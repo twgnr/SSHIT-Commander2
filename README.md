@@ -5,9 +5,9 @@
 Two panes for local and remote directories, paired with a full SSH console and a
 real terminal. Written in C++20 with Qt 6 and libssh2.
 
-> **Status: beta.** The application works and is covered by 186 automated tests;
-> the SSH layer has been validated against a real OpenSSH server. Broad testing
-> across different servers is still outstanding — see
+> **Version 1.0.1.** The application is covered by 258 automated tests, and the
+> SSH layer has been validated against a real OpenSSH server. Testing across a
+> wider range of servers is still outstanding — see
 > [Known limitations](#known-limitations).
 
 ![SSHIT-Commander: two file panes, each with its own console, the active side outlined in blue](docs/screenshot-main.png)
@@ -73,8 +73,11 @@ worker threads — the window never freezes during SSH operations or transfers.
 - Windows 10/11 (x64)
 - Visual Studio 2022 with the C++ workload (MSVC, CMake, Ninja)
 - Qt 6.8 for MSVC x64
-- Internet access on the first configure — libssh2 is fetched via CMake
-  FetchContent
+- Internet access on the first configure — libssh2 and OpenSSL are fetched via
+  CMake FetchContent / git
+- A complete perl (Strawberry Perl, ActiveState, or the perl bundled with an
+  Oracle installation) for the one-time OpenSSL build — see *Crypto backend*
+  below. Not needed with `-DOPENSSL_ROOT_DIR=…` or the WinCNG fallback.
 
 **Compiling**
 
@@ -105,17 +108,13 @@ Produces `build\SSHIT-Commander-<version>.zip`.
 **Tests**
 
 ```powershell
-.\test.ps1             # 186 tests (or: ctest --test-dir build)
+.\test.ps1             # all unit tests (or: ctest --test-dir build)
 ```
 
 ### Crypto backend (WinCNG or OpenSSL)
 
-- **Default: WinCNG** (`-DUSE_OPENSSL_BACKEND=OFF`). No OpenSSL required, but
-  **no ed25519/curve25519**. `ENABLE_ECDSA_WINCNG` enables ecdsa host keys and
-  ecdh-sha2-nistp* key exchange, so standard OpenSSH servers (which offer
-  several algorithms) work. It only fails against servers that offer
-  *exclusively* ed25519/curve25519, or with ed25519 **login keys**.
-- **Opt-in: OpenSSL** (`-DUSE_OPENSSL_BACKEND=ON`) → ed25519/curve25519 + ecdsa.
+- **Default: OpenSSL** (`-DUSE_OPENSSL_BACKEND=ON`) → ed25519/curve25519 + ecdsa,
+  i.e. ed25519 login keys (the default of ssh-keygen and PuTTYgen) work.
   `cmake/OpenSSLBackend.cmake` provides OpenSSL in one of two ways:
   1. point `-DOPENSSL_ROOT_DIR=<path>` at a prebuilt static OpenSSL, **or**
   2. build from source (OpenSSL 3.3.2, `Configure VC-WIN64A no-asm no-shared`,
@@ -126,7 +125,12 @@ Produces `build\SSHIT-Commander-<version>.zip`.
   from an MSVC environment (vcvars) so that `nmake`/`cl` are available.
 - libssh2 then uses its OpenSSL path, where `LIBSSH2_ED25519=1` applies for
   OpenSSL ≥ 1.1.1 and X25519 is compiled in. Linked statically (no libcrypto
-  DLL). If you use it, keep OpenSSL on a maintained branch (CVEs).
+  DLL). Keep OpenSSL on a maintained branch (CVEs).
+- **Fallback: WinCNG** (`-DUSE_OPENSSL_BACKEND=OFF`). No OpenSSL/perl required,
+  but **no ed25519/curve25519**: it fails with ed25519 **login keys** and against
+  servers that offer *exclusively* ed25519/curve25519. `ENABLE_ECDSA_WINCNG`
+  enables ecdsa host keys and ecdh-sha2-nistp* key exchange. The app detects
+  unsupported key types up front and says so instead of hanging.
 
 ## Configuration
 
@@ -137,10 +141,7 @@ go into the **Windows Credential Manager**, not into the configuration files.
 
 - **Windows only.** ConPTY, the Credential Manager and the macro actions use the
   Win32 API directly.
-- The default build (WinCNG) lacks **ed25519 host keys and curve25519**. Servers
-  offering ecdsa/rsa and ecdh/DH — the OpenSSH default configuration — work
-  fine; only servers that offer *exclusively* ed25519/curve25519, as well as
-  ed25519 **login keys**, require the OpenSSL build.
+- Builds with the WinCNG fallback lack **ed25519 and curve25519** (see above).
 - **Agent forwarding** is not possible: libssh2 cannot accept the agent channels
   the server opens back. The option is therefore deliberately disabled rather
   than appearing to work.
@@ -158,7 +159,7 @@ this program's own licence.
 |---|---|---|
 | **Qt 6.8** (Core, Gui, Widgets, Network, Concurrent, Svg) | application foundation: user interface, event loop, threads, JSON, HTTP, image/SVG display | LGPL v3 |
 | **libssh2 1.11** | SSH connection, authentication, SFTP, PTY, tunnels | BSD-3-Clause |
-| **OpenSSL 3** *(optional)* | crypto backend, only in builds with `-DUSE_OPENSSL_BACKEND=ON` | Apache-2.0 |
+| **OpenSSL 3** | crypto backend (default; not in WinCNG fallback builds) | Apache-2.0 |
 
 Qt is linked **dynamically**: the `Qt6*.dll` files sit next to the executable and
 can be replaced with your own compatible build of Qt. Qt's source code is

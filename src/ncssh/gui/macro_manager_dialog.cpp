@@ -56,6 +56,9 @@ namespace mc = core::macros;
 KeyTile::KeyTile(int index, QWidget *parent)
     : QPushButton(parent), m_index(index), m_holdTimer(new QTimer(this))
 {
+    // Keinen Tastaturfokus annehmen: sonst tippte "Text tippen" in die Taste
+    // statt in das zuvor fokussierte Feld (Terminal, Editor …).
+    setFocusPolicy(Qt::NoFocus);
     m_holdTimer->setSingleShot(true);
     m_holdTimer->setInterval(kHoldMs);
     connect(m_holdTimer, &QTimer::timeout, this, [this] {
@@ -323,6 +326,21 @@ MacroManagerDialog::MacroManagerDialog(AsyncBridge *bridge,
     connect(m_foregroundTimer, &QTimer::timeout, this, &MacroManagerDialog::pollForeground);
     if (m_config.contextAware)
         m_foregroundTimer->start();
+
+    // Zielfenster fuer Tastatur-Makros mitschreiben (nur fremde Fenster).
+    m_targetTimer = new QTimer(this);
+    m_targetTimer->setInterval(250);
+    connect(m_targetTimer, &QTimer::timeout, this, [this] {
+        const quintptr fg = core::foregroundWindowHandle();
+        if (fg && !core::isOwnProcessWindow(fg))
+            m_lastExternalWindow = fg;
+    });
+    m_targetTimer->start();
+    connect(qApp, &QGuiApplication::applicationStateChanged, this,
+            [this](Qt::ApplicationState state) {
+                if (state == Qt::ApplicationActive)
+                    m_appActivatedAt.restart();
+            });
 }
 
 MacroManagerDialog::~MacroManagerDialog()
@@ -733,6 +751,23 @@ void MacroManagerDialog::runKey(const QJsonObject &config, int index)
     const QString type = config.value(QStringLiteral("action_type")).toString();
     const QJsonValue payload = config.value(QStringLiteral("payload"));
     const QString keyId = QStringLiteral("%1:%2").arg(m_currentLayer).arg(index);
+
+    // Kam der Klick aus einem anderen Programm (die App wurde gerade erst
+    // durch diesen Klick aktiv), gilt das zuvor aktive Fenster als Ziel:
+    // erst dorthin zurueck, dann ausfuehren — wie bei einem Stream Deck.
+    // Wer schon in der App arbeitete, tippt weiter ins fokussierte Feld.
+    const ma::ActionSpec &spec = ma::spec(type);
+    const bool consoleAction = type == QLatin1String("ssh_command")
+                               || type == QLatin1String("ssh_broadcast");
+    const bool fromOutside = m_appActivatedAt.isValid() && m_appActivatedAt.elapsed() < 1000
+                             && QGuiApplication::applicationState() == Qt::ApplicationActive;
+    if (fromOutside && !spec.navigation && !spec.gui && !consoleAction
+        && core::bringWindowToFront(m_lastExternalWindow)) {
+        m_appActivatedAt.invalidate();
+        // Kurz warten, bis das Fenster wirklich vorn ist und Eingaben annimmt.
+        QTimer::singleShot(120, this, [this, config, index] { runKey(config, index); });
+        return;
+    }
 
     // Sequenz/Mehrere Aktionen: Schritte der Reihe nach, jeder erst nach
     // Abschluss des vorherigen — sonst wuerden Verzoegerungen und Reihenfolge

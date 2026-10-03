@@ -216,24 +216,12 @@ void FilePanel::buildUi(const QString &title)
     m_starButton->setToolTip(_t("Aktuellen Pfad als Lesezeichen (pro Server)"));
     connect(m_starButton, &QPushButton::clicked, this, &FilePanel::toggleBookmark);
     auto *bookmarksBtn = new QPushButton(this);
+    m_bookmarksBtn = bookmarksBtn;
     bookmarksBtn->setIcon(themedIcon(QStringLiteral("bookmark"), 16));  // gezeichnetes Symbol statt Text
     bookmarksBtn->setFixedWidth(28);
-    bookmarksBtn->setToolTip(_t("Lesezeichen dieses Servers"));
+    bookmarksBtn->setToolTip(_t("Lesezeichen dieses Servers (Strg+B)"));
     // Aufklappmenue mit den gemerkten Pfaden — schneller als der Dialog.
-    connect(bookmarksBtn, &QPushButton::clicked, this, [this, bookmarksBtn] {
-        QMenu menu(this);
-        const QStringList paths = m_bookmarks.list(m_bookmarkKey);
-        if (paths.isEmpty()) {
-            menu.addAction(_t("(keine Lesezeichen)"))->setEnabled(false);
-        } else {
-            for (const QString &path : paths)
-                menu.addAction(path, this, [this, path] { navigateTo(path); });
-        }
-        menu.addSeparator();
-        menu.addAction(_t("★ Aktuellen Pfad merken"), this, &FilePanel::toggleBookmark);
-        menu.addAction(_t("Verwalten…"), this, &FilePanel::openBookmarks);
-        menu.exec(bookmarksBtn->mapToGlobal(QPoint(0, bookmarksBtn->height())));
-    });
+    connect(bookmarksBtn, &QPushButton::clicked, this, &FilePanel::showBookmarksMenu);
     pathRow->addWidget(m_driveCombo);
     pathRow->addWidget(back);
     pathRow->addWidget(forward);
@@ -2167,6 +2155,31 @@ void FilePanel::elideStatus()
 {
     m_status->setText(m_status->fontMetrics().elidedText(m_statusFull, Qt::ElideRight,
                                                          qMax(0, m_status->width())));
+}
+
+void FilePanel::showBookmarksMenu()
+{
+    // Frisch laden: die andere Pane (oder ein anderer Tab) kann inzwischen
+    // Lesezeichen hinzugefuegt haben.
+    m_bookmarks.load();
+    QMenu menu(this);
+    const QStringList paths = m_bookmarks.list(m_bookmarkKey);
+    if (paths.isEmpty()) {
+        menu.addAction(_t("(keine Lesezeichen)"))->setEnabled(false);
+    } else {
+        for (const QString &path : paths)
+            menu.addAction(path, this, [this, path] { navigateTo(path); });
+    }
+    menu.addSeparator();
+    menu.addAction(_t("★ Aktuellen Pfad merken"), this, &FilePanel::toggleBookmark);
+    menu.addAction(_t("Verwalten…"), this, &FilePanel::openBookmarks);
+    // Erster Eintrag vorausgewaehlt: per Tastatur direkt mit Enter springen.
+    if (!menu.actions().isEmpty() && menu.actions().first()->isEnabled())
+        menu.setActiveAction(menu.actions().first());
+    const QPoint at = m_bookmarksBtn && m_bookmarksBtn->isVisible()
+                          ? m_bookmarksBtn->mapToGlobal(QPoint(0, m_bookmarksBtn->height()))
+                          : mapToGlobal(QPoint(width() / 3, 40));
+    menu.exec(at);
 }
 
 void FilePanel::openBookmarks()

@@ -86,6 +86,14 @@ namespace ncssh::gui {
 
 using core::_t;
 
+// "1.0.1" bzw. "1.1.0 (Beta.1)" — die Stufe erscheint nur, wenn CMake eine setzt.
+static QString versionLabel()
+{
+    const QString stage = QString::fromLatin1(SSHIT_VERSION_STAGE);
+    const QString version = QString::fromLatin1(SSHIT_VERSION);
+    return stage.isEmpty() ? version : QStringLiteral("%1 (%2)").arg(version, stage);
+}
+
 MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
     : QMainWindow(parent), m_bridge(bridge)
 {
@@ -182,11 +190,9 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
                 m_githubNotice->setVisible(true);
             });
 
-    // Version + Entwicklungsstand im Titel — beides kommt aus CMake, damit es
-    // nicht doppelt gepflegt werden muss.
-    const QString appTitle = QStringLiteral("SSHIT-Commander %1 (%2)")
-                                 .arg(QString::fromLatin1(SSHIT_VERSION),
-                                      QString::fromLatin1(SSHIT_VERSION_STAGE));
+    // Version (+ ggf. Entwicklungsstand) im Titel — beides kommt aus CMake,
+    // damit es nicht doppelt gepflegt werden muss.
+    const QString appTitle = QStringLiteral("SSHIT-Commander ") + versionLabel();
     setWindowTitle(appTitle);
     const QString iconPath = core::assetPath(QStringLiteral("sshit.png"));
     if (!iconPath.isEmpty())
@@ -514,6 +520,12 @@ void MainWindow::buildMenus()
         }));
     // Strg+F9: Status des Cursor-Eintrags der anderen Pane in der aktiven Pane
     // (ein/aus) — ohne Zwischenauswahl.
+    reg(QStringLiteral("bookmarks"),
+        panes->addAction(_t("Lesezeichen …"), this, [this] {
+            if (Workspace *ws = currentWorkspace())
+                if (FilePanel *panel = ws->activePanel())
+                    panel->showBookmarksMenu();
+        }));
     reg(QStringLiteral("pane_status"),
         panes->addAction(_t("Status anzeigen"), this, &MainWindow::togglePaneStatus));
     panes->addSeparator();
@@ -721,13 +733,12 @@ void MainWindow::showAbout()
     box.setTextFormat(Qt::RichText);
     box.setText(QStringLiteral("<b>SSHIT-Commander</b><br>"
                                "%1<br><br>"
-                               "Version %2 (%3)<br>"
+                               "Version %2<br>"
                                "Copyright (c) by Tobias Wagner<br><br>"
                                "<a href=\"https://www.twgnr.de\">www.twgnr.de</a><br>"
                                "GitHub: <a href=\"https://github.com/twgnr\">github.com/twgnr</a>")
                     .arg(_t("Dual-Pane-Dateimanager mit SSH/SFTP und Terminal."),
-                         QString::fromLatin1(SSHIT_VERSION),
-                         QString::fromLatin1(SSHIT_VERSION_STAGE)));
+                         versionLabel()));
     // Links anklickbar machen (oeffnen im Standardbrowser).
     box.setTextInteractionFlags(Qt::TextBrowserInteraction);
     box.exec();

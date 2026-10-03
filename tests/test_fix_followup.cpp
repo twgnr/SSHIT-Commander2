@@ -89,3 +89,35 @@ TEST(fix_followup, profile_rename_moves_tab_and_bookmark_references)
     }
     qputenv("APPDATA", oldAppData);
 }
+
+namespace {
+QString render(const QStringList &chunks)
+{
+    QPlainTextEdit edit;
+    gui::AnsiRenderer renderer(&edit);
+    for (const QString &c : chunks)
+        renderer.feed(c);
+    return edit.toPlainText();
+}
+} // namespace
+
+TEST(fix_followup, terminal_overwrites_when_editing_mid_line)
+{
+    // Rueckschritt + neu schreiben (bash/readline beim Einfuegen mitten in der Zeile)
+    CHECK_EQ(render({QStringLiteral("abc\b\bX")}), QStringLiteral("aXc"));
+    // ueber Chunk-Grenzen hinweg (Tastendruck fuer Tastendruck)
+    CHECK_EQ(render({QStringLiteral("abc"), QStringLiteral("\b"), QStringLiteral("X")}),
+             QStringLiteral("abX"));
+    // Cursor links per CSI, dann ueberschreiben
+    CHECK_EQ(render({QStringLiteral("abcd\x1b[2DZ")}), QStringLiteral("abZd"));
+    // Wagenruecklauf ueberschreibt ab Spalte 0
+    CHECK_EQ(render({QStringLiteral("hello\rJ")}), QStringLiteral("Jello"));
+    // Spalte absolut + Rest der Zeile loeschen (PSReadLine/ConPTY)
+    CHECK_EQ(render({QStringLiteral("abcdef\x1b[3G\x1b[K")}), QStringLiteral("ab"));
+    // Zeichen loeschen (DCH) und einfuegen (ICH)
+    CHECK_EQ(render({QStringLiteral("abcdef\x1b[3G\x1b[2P")}), QStringLiteral("abef"));
+    CHECK_EQ(render({QStringLiteral("abef\x1b[3G\x1b[2@cd")}), QStringLiteral("abcdef"));
+    // CRLF bleibt ein normaler Zeilenumbruch
+    CHECK_EQ(render({QStringLiteral("eins\r"), QStringLiteral("\nzwei")}),
+             QStringLiteral("eins\nzwei"));
+}

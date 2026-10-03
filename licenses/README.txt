@@ -18,7 +18,8 @@ libssh2 (compiled into the executable)
     BSD 3-Clause  ->  libssh2-BSD-3-Clause.txt
     Source code: https://www.libssh2.org
 
-OpenSSL 3 (only in builds made with -DUSE_OPENSSL_BACKEND=ON)
-    Apache License 2.0
+OpenSSL 3 (compiled into the executable; standard builds)
+    Apache License 2.0  ->  OpenSSL-Apache-2.0.txt
     Source code: https://www.openssl.org
-    Standard builds use Windows CNG instead and contain no OpenSSL.
+    Builds made with -DUSE_OPENSSL_BACKEND=OFF use Windows CNG instead and
+    contain no OpenSSL.

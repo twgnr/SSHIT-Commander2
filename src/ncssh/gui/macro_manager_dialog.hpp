@@ -9,6 +9,7 @@
 #include "ncssh/gui/bridge.hpp"
 
 #include <QDialog>
+#include <QElapsedTimer>
 #include <QJsonObject>
 #include <QPushButton>
 #include <QStringList>
@@ -139,6 +140,12 @@ private:
     bool m_runMode = false;
     QTimer *m_foregroundTimer = nullptr;
     QString m_lastForegroundApp;
+    // Ziel fuer Tastatur-Makros: das zuletzt aktive FREMDE Fenster. Ein Klick
+    // auf eine Taste holt sonst SSHIT-Commander nach vorn, und getippter Text
+    // landete hier statt im Fenster, in dem man gerade gearbeitet hat.
+    QTimer *m_targetTimer = nullptr;
+    quintptr m_lastExternalWindow = 0;
+    QElapsedTimer m_appActivatedAt;   // wann die App zuletzt aktiv wurde
 
     QListWidget *m_layerList = nullptr;
     QWidget *m_gridHost = nullptr;

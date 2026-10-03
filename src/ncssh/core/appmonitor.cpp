@@ -32,9 +32,36 @@ std::pair<quint32, QString> foregroundProcess()
     return {pid, exe};
 }
 
+quintptr foregroundWindowHandle()
+{
+    return reinterpret_cast<quintptr>(GetForegroundWindow());
+}
+
+bool isOwnProcessWindow(quintptr window)
+{
+    if (!window)
+        return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(reinterpret_cast<HWND>(window), &pid);
+    return pid == GetCurrentProcessId();
+}
+
+bool bringWindowToFront(quintptr window)
+{
+    const HWND hwnd = reinterpret_cast<HWND>(window);
+    if (!hwnd || !IsWindow(hwnd))
+        return false;
+    if (IsIconic(hwnd))
+        ShowWindow(hwnd, SW_RESTORE);
+    return SetForegroundWindow(hwnd) != FALSE;
+}
+
 #else
 
 std::pair<quint32, QString> foregroundProcess() { return {0, {}}; }
+quintptr foregroundWindowHandle() { return 0; }
+bool isOwnProcessWindow(quintptr) { return false; }
+bool bringWindowToFront(quintptr) { return false; }
 
 #endif
 

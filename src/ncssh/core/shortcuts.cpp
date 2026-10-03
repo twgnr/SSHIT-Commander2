@@ -39,6 +39,7 @@ const std::vector<ShortcutDef> &shortcutDefs()
         {QStringLiteral("hidden"), _t("Werkzeuge"), _t("Versteckte Dateien"), QStringLiteral("Ctrl+.")},
         {QStringLiteral("sync_panes"), _t("Werkzeuge"), _t("Panes synchronisieren"), QStringLiteral("Ctrl+E")},
         {QStringLiteral("swap_panes"), _t("Werkzeuge"), _t("Panes tauschen"), QStringLiteral("Ctrl+U")},
+        {QStringLiteral("bookmarks"), _t("Werkzeuge"), _t("Lesezeichen der aktiven Pane"), QStringLiteral("Ctrl+B")},
         {QStringLiteral("pane_status"), _t("Werkzeuge"), _t("Status anzeigen (folgt dem Cursor der anderen Pane)"), QStringLiteral("Ctrl+F9")},
 
         {QStringLiteral("disconnect"), _t("Aktionen"), _t("Verbindung trennen"), QString()},
