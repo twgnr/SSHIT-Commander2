@@ -32,6 +32,8 @@ private:
     QWidget *buildGeneralTab();
     QWidget *buildAiTab();
     QWidget *buildShortcutsTab();
+    QWidget *buildSecurityTab();
+    void refreshSecurityTab();   // Haken/Knoepfe nach dem Sperr-Zustand
     void save();
     void testOllama();
     void loadOllamaModels();
@@ -73,6 +75,13 @@ private:
     QCheckBox *m_thumbnails = nullptr;
     QCheckBox *m_execHighlight = nullptr;
     QCheckBox *m_autoConnect = nullptr;
+    QSpinBox *m_githubInterval = nullptr;   // Minuten
+    // Sicherheit (wirkt sofort, nicht erst mit "Speichern")
+    QCheckBox *m_lockEnabled = nullptr;
+    QPushButton *m_lockChange = nullptr;
+    QCheckBox *m_twoFactor = nullptr;
+    QPushButton *m_newCodes = nullptr;
+    QLabel *m_lockStatus = nullptr;
     QCheckBox *m_compactRows = nullptr;
     QPushButton *m_execColorBtn = nullptr;
     QString m_execColor;

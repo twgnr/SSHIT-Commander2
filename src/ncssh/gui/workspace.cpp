@@ -229,6 +229,9 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
         if (m_rightPreview->isVisible())
             m_rightPreview->preview(m_rightPanel->provider(), path);
     });
+    // Vergleichen-Knopf des Hauptfensters nachfuehren.
+    for (FilePanel *p : {m_leftPanel, m_rightPanel})
+        connect(p, &FilePanel::selectionChanged, this, &Workspace::fileSelectionChanged);
 
     // Abdocken/Andocken der Konsolen-Spalte.
     for (ConsolePanel *console : {m_leftConsole, m_rightConsole}) {
@@ -419,6 +422,16 @@ QSet<const core::FileSystemProvider *> Workspace::ownedProviders() const
         add(r.sudoFs.get());
     }
     return owned;
+}
+
+bool Workspace::fileSelectedInBothPanes() const
+{
+    for (const FilePanel *panel : {m_leftPanel, m_rightPanel}) {
+        const core::FileEntry *entry = panel->selectedEntry();
+        if (!entry || entry->isDir() || entry->name == QLatin1String(".."))
+            return false;
+    }
+    return true;
 }
 
 void Workspace::openServerInfo()

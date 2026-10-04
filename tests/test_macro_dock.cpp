@@ -123,3 +123,39 @@ TEST(macro_dock, docked_keys_clip_instead_of_blocking_window_width)
     CHECK(shrinksAndClips(QStringLiteral("top"), QSize(300, 1000)));
     qputenv("APPDATA", oldAppData);
 }
+
+TEST(macro_dock, edit_mode_button_offers_docking)
+{
+    const QByteArray oldAppData = qgetenv("APPDATA");
+    QTemporaryDir tmp;
+    CHECK(tmp.isValid());
+    qputenv("APPDATA", tmp.path().toUtf8());
+    {
+        gui::AsyncBridge bridge;
+        QMainWindow main;
+        main.show();
+        auto *dlg = new gui::MacroManagerDialog(&bridge, {}, {}, &main);
+        dlg->openManager();   // Bearbeiten-Modus, schwebend
+        QCoreApplication::processEvents();
+        auto *mb = dlg->findChild<QPushButton *>(QStringLiteral("MacroModeButton"));
+        auto *combo = dlg->findChild<QComboBox *>(QStringLiteral("MacroDockCombo"));
+        CHECK(mb && combo);
+        // Noch keine Seite gewaehlt: Klick fuehrt schwebend aus, dockt nicht.
+        CHECK(mb->text() != QStringLiteral("An App andocken"));
+
+        combo->setCurrentIndex(combo->findData(QStringLiteral("right")));   // dockt an
+        QCoreApplication::processEvents();
+        dlg->openManager();   // zum Bearbeiten wieder schwebend
+        QCoreApplication::processEvents();
+        CHECK_EQ(mb->text(), QStringLiteral("An App andocken"));
+        mb->click();          // -> Ausfuehren-Modus, angedockt
+        QCoreApplication::processEvents();
+        // Ein frueheres Dock steht ggf. noch zur (verzoegerten) Loeschung an —
+        // entscheidend ist, dass ein sichtbares existiert.
+        bool docked = false;
+        for (QDockWidget *dock : main.findChildren<QDockWidget *>(QStringLiteral("MacroManagerDock")))
+            docked = docked || dock->isVisible();
+        CHECK(docked);
+    }
+    qputenv("APPDATA", oldAppData);
+}

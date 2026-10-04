@@ -24,6 +24,8 @@ public:
 
     void reload();
     void checkNow();
+    // Pruef-Intervall in Sekunden (aus den Einstellungen).
+    static int intervalSeconds();
 
 signals:
     void repoChanged(const QString &fullName, const QString &pushedAt);

@@ -98,6 +98,21 @@ void drawHistory(QPainter &p, qreal s, const QColor &c)
     p.drawLine(QPointF(s * 0.50, s * 0.50), QPointF(s * 0.66, s * 0.58));
 }
 
+void drawDiff(QPainter &p, qreal s, const QColor &c)
+{
+    // Zwei Seiten nebeneinander, deren mittlere Zeile unterschiedlich lang ist.
+    p.setPen(strokePen(c, s * 0.07));
+    p.setBrush(Qt::NoBrush);
+    for (int side = 0; side < 2; ++side) {
+        const qreal x = s * (side == 0 ? 0.12 : 0.54);
+        p.drawRoundedRect(QRectF(x, s * 0.18, s * 0.34, s * 0.64), s * 0.05, s * 0.05);
+        const qreal l = x + s * 0.08;
+        p.drawLine(QPointF(l, s * 0.34), QPointF(x + s * 0.26, s * 0.34));
+        p.drawLine(QPointF(l, s * 0.50), QPointF(x + s * (side == 0 ? 0.26 : 0.16), s * 0.50));
+        p.drawLine(QPointF(l, s * 0.66), QPointF(x + s * 0.26, s * 0.66));
+    }
+}
+
 void drawParams(QPainter &p, qreal s, const QColor &c)
 {
     // Drei Schieberegler (Optionen eines Befehls einstellen).
@@ -381,6 +396,7 @@ const QHash<QString, DrawFn> &registry()
         {QStringLiteral("palette"), drawPalette},
         {QStringLiteral("history"), drawHistory},
         {QStringLiteral("params"), drawParams},
+        {QStringLiteral("diff"), drawDiff},
         {QStringLiteral("tunnels"), drawTunnels},
         {QStringLiteral("view"), drawView},
         {QStringLiteral("rename"), drawRename},

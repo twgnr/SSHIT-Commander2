@@ -242,6 +242,21 @@ QString detectEncoding(const QByteArray &data)
         return QStringLiteral("utf-8-sig");
     if (data.startsWith("\xFF\xFE") || data.startsWith("\xFE\xFF"))
         return QStringLiteral("utf-16");
+    // UTF-16 ohne BOM: bei lateinischem Text ist jedes zweite Byte 0 — als
+    // UTF-8 gelesen wurde daraus "p\0a\0r\0…" (Kaestchen zwischen allen Zeichen).
+    const qsizetype sample = qMin<qsizetype>(data.size(), 4096) & ~qsizetype(1);
+    if (sample >= 4) {
+        qsizetype zeroEven = 0, zeroOdd = 0;
+        for (qsizetype i = 0; i < sample; i += 2) {
+            zeroEven += data.at(i) == '\0';
+            zeroOdd += data.at(i + 1) == '\0';
+        }
+        const qsizetype pairs = sample / 2;
+        if (zeroOdd * 10 > pairs * 3 && zeroEven * 20 < pairs)
+            return QStringLiteral("utf-16-le");
+        if (zeroEven * 10 > pairs * 3 && zeroOdd * 20 < pairs)
+            return QStringLiteral("utf-16-be");
+    }
     QStringDecoder dec(QStringConverter::Utf8);
     // decode() liefert nur einen Platzhalter — dekodiert (und hasError()
     // gesetzt) wird erst bei der Umwandlung in QString. Ohne sie galt jede
@@ -251,6 +266,15 @@ QString detectEncoding(const QByteArray &data)
     if (!dec.hasError())
         return QStringLiteral("utf-8");
     return QStringLiteral("cp1252");
+}
+
+QString decodeAuto(const QByteArray &data)
+{
+    try {
+        return decodeBytes(data, detectEncoding(data), QStringLiteral("replace"));
+    } catch (const std::exception &) {
+        return QString::fromUtf8(data);   // z. B. cp1252 ausserhalb von Windows
+    }
 }
 
 } // namespace ncssh::core

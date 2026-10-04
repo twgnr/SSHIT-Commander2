@@ -1,9 +1,12 @@
 // GUI-Einstiegspunkt: QApplication + Async-Bruecke + Hauptfenster.
 #include "ncssh/gui/app.hpp"
 
+#include "ncssh/core/applock.hpp"
 #include "ncssh/core/assets.hpp"
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/core/profiles.hpp"
 #include "ncssh/core/settings.hpp"
+#include "ncssh/gui/applock_dialogs.hpp"
 #include "ncssh/gui/bridge.hpp"
 #include "ncssh/gui/main_window.hpp"
 #include "ncssh/gui/style.hpp"
@@ -12,6 +15,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QIcon>
+#include <QMessageBox>
 #include <QPixmap>
 
 #ifdef Q_OS_WIN
@@ -50,6 +54,25 @@ int appMain(int argc, char *argv[])
 
     // Fenstergroessen und Spaltenansichten aller Dialoge merken/wiederherstellen.
     ViewStateKeeper::install();
+
+    // App-Sperre: vor allem anderen (Hauptfenster, Sitzungs-Wiederherstellung,
+    // Auto-Verbinden) Passwort und ggf. Code abfragen. Abbrechen beendet.
+    if (ncssh::core::applock::isEnabled()) {
+        UnlockDialog unlock;
+        if (unlock.exec() != QDialog::Accepted)
+            return 0;
+    }
+    // Verschluesselte Serverprofile, die sich nicht oeffnen lassen (Sperre
+    // entfernt bzw. applock.json ersetzt): beiseitelegen statt die App mit
+    // einer gesperrten Profilliste zu blockieren.
+    const QString lockedProfiles = ncssh::core::setAsideUnreadableProfiles();
+    if (!lockedProfiles.isEmpty())
+        QMessageBox::warning(
+            nullptr, QStringLiteral("SSHIT-Commander"),
+            ncssh::core::_t("Die Serverprofile sind verschlüsselt, lassen sich aber nicht "
+                            "entschlüsseln (die App-Sperre wurde entfernt oder ersetzt).\n\n"
+                            "Die Datei wurde gesichert als:\n%1\n\nEs geht mit einer leeren "
+                            "Profilliste weiter.").arg(lockedProfiles));
 
     AsyncBridge bridge;
     bridge.start();

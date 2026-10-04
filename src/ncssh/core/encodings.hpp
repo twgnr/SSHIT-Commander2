@@ -25,8 +25,14 @@ QByteArray convert(const QByteArray &data, const QString &srcCodec,
 // Dekodiert (fehlertolerant) die ersten Bytes — fuer die Vorschau.
 QString decodePreview(const QByteArray &data, const QString &codec, int limit = 2000);
 
-// Grobe Quell-Encoding-Heuristik (BOM/UTF-8, sonst Windows-1252).
+// Grobe Quell-Encoding-Heuristik: BOM, UTF-16 ohne BOM (Null-Bytes an
+// jeder zweiten Stelle, typisch fuer Windows-INI/-REG-Dateien), gueltiges
+// UTF-8, sonst Windows-1252.
 QString detectEncoding(const QByteArray &data);
+
+// Text mit erkannter Kodierung dekodieren (fehlertolerant) — fuer Ansehen,
+// Vorschau und readText() aller Dateisysteme.
+QString decodeAuto(const QByteArray &data);
 
 // Bausteine (auch einzeln nutzbar, z.B. im Editor):
 QString decodeBytes(const QByteArray &data, const QString &codec,

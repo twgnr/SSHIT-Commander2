@@ -1,6 +1,7 @@
 #include "ncssh/core/configio.hpp"
 
 #include "ncssh/config.hpp"
+#include "ncssh/core/applock.hpp"
 
 #include <QFile>
 #include <QJsonArray>
@@ -38,8 +39,14 @@ QJsonObject buildBundle()
         QFile f(it.value());
         QJsonValue value;  // null bei Fehler/fehlender Datei
         if (f.open(QIODevice::ReadOnly)) {
+            QByteArray bytes = f.readAll();
+            // Verschluesselte Serverprofile im Klartext exportieren (die Datei
+            // soll auf einem anderen PC importierbar sein); nicht entsperrt ->
+            // Abschnitt fehlt.
+            if (applock::isEncrypted(bytes))
+                bytes = applock::decryptData(bytes).value_or(QByteArray());
             QJsonParseError err{};
-            const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &err);
+            const QJsonDocument doc = QJsonDocument::fromJson(bytes, &err);
             if (err.error == QJsonParseError::NoError && !doc.isNull())
                 value = doc.isObject() ? QJsonValue(doc.object()) : QJsonValue(doc.array());
         }
@@ -93,8 +100,12 @@ QStringList applyBundle(const QJsonObject &bundle, const QStringList &sections)
         const QJsonValue v = files.value(key);
         const QJsonDocument doc = v.isArray() ? QJsonDocument(v.toArray())
                                               : QJsonDocument(v.toObject());
-        ncssh::atomicWriteText(paths.value(key),
-                               QString::fromUtf8(doc.toJson(QJsonDocument::Indented)));
+        const QByteArray json = doc.toJson(QJsonDocument::Indented);
+        // Serverprofile bei aktiver Sperre gleich wieder verschluesselt ablegen.
+        if (key == QLatin1String("servers"))
+            applock::writeProtectedFile(paths.value(key), json);
+        else
+            ncssh::atomicWriteText(paths.value(key), QString::fromUtf8(json));
         applied.append(key);
     }
     return applied;

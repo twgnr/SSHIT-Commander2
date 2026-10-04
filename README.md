@@ -5,7 +5,7 @@
 Two panes for local and remote directories, paired with a full SSH console and a
 real terminal. Written in C++20 with Qt 6 and libssh2.
 
-> **Version 1.0.2.** The application is covered by 276 automated tests, and the
+> **Version 1.0.4.** The application is covered by 297 automated tests, and the
 > SSH layer has been validated against a real OpenSSH server. Testing across a
 > wider range of servers is still outstanding — see
 > [Known limitations](#known-limitations).
@@ -105,6 +105,26 @@ build internals):
 
 Produces `build\SSHIT-Commander-<version>.zip`.
 
+**Code signing** (recommended for releases, otherwise Windows SmartScreen warns
+on first start). `build.ps1` signs the executable with `signtool` before
+packaging, including an RFC 3161 timestamp. Pass exactly one certificate source:
+
+```powershell
+# certificate in the Windows certificate store (also hardware tokens)
+.\build.ps1 -Package -SignThumbprint <SHA1 thumbprint>
+
+# PFX file — the password only via environment variable
+$env:SSHIT_SIGN_PFX_PASSWORD = "…"
+.\build.ps1 -Package -SignPfx C:\certs\codesign.pfx
+
+# Azure Trusted Signing
+.\build.ps1 -Package -SignDlib <path>\Azure.CodeSigning.Dlib.dll -SignMetadata metadata.json
+```
+
+The same values can be set as `SSHIT_SIGN_THUMBPRINT`, `SSHIT_SIGN_PFX`,
+`SSHIT_SIGN_DLIB` and `SSHIT_SIGN_METADATA`. Requires the Windows SDK
+(`signtool.exe`).
+
 **Tests**
 
 ```powershell
@@ -160,6 +180,7 @@ this program's own licence.
 | **Qt 6.8** (Core, Gui, Widgets, Network, Concurrent, Svg) | application foundation: user interface, event loop, threads, JSON, HTTP, image/SVG display | LGPL v3 |
 | **libssh2 1.11** | SSH connection, authentication, SFTP, PTY, tunnels | BSD-3-Clause |
 | **OpenSSL 3** | crypto backend (default; not in WinCNG fallback builds) | Apache-2.0 |
+| **QR Code generator** (Project Nayuki) 1.8 | QR code in the two-factor setup dialog | MIT |
 
 Qt is linked **dynamically**: the `Qt6*.dll` files sit next to the executable and
 can be replaced with your own compatible build of Qt. Qt's source code is

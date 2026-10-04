@@ -4,7 +4,9 @@
 #include "ncssh/net/cloudai.hpp"
 #include "ncssh/core/configio.hpp"
 #include "ncssh/core/dateformat.hpp"
+#include "ncssh/core/applock.hpp"
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/core/profiles.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/core/shortcuts.hpp"
 #include "ncssh/gui/style.hpp"
@@ -18,6 +20,7 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QProgressBar>
+#include "ncssh/gui/applock_dialogs.hpp"
 #include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -29,6 +32,7 @@
 #include <QMessageBox>
 #include <QProcess>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QTableWidget>
@@ -49,6 +53,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, AsyncBridge *bridge)
     tabs->addTab(buildGeneralTab(), _t("Allgemein"));
     tabs->addTab(buildAiTab(), _t("KI"));
     tabs->addTab(buildShortcutsTab(), _t("Tastenkürzel"));
+    tabs->addTab(buildSecurityTab(), _t("Sicherheit"));
     layout->addWidget(tabs, 1);
 
     // Konfiguration als Ganzes sichern/einspielen (ohne Geheimnisse).
@@ -188,6 +193,17 @@ QWidget *SettingsDialog::buildGeneralTab()
     // zeigt der Haken etwas anderes, als die App beim Start tatsaechlich tut.
     m_autoConnect->setChecked(core::getSettingBool(QStringLiteral("auto_connect_last"), true));
     form->addRow(QString(), m_autoConnect);
+
+    // GitHub-Repo-Alarm: wie oft die ueberwachten Repos abgefragt werden.
+    // Gespeichert in Sekunden (github_alarm_interval), angezeigt in Minuten.
+    m_githubInterval = new QSpinBox(page);
+    m_githubInterval->setRange(1, 1440);
+    m_githubInterval->setSuffix(_t(" min"));
+    m_githubInterval->setValue(qMax(1, core::getSettingInt(QStringLiteral("github_alarm_interval"), 900) / 60));
+    m_githubInterval->setToolTip(
+        _t("Ohne GitHub-Token erlaubt GitHub 60 Abfragen pro Stunde — bei vielen Repos "
+           "und kurzem Intervall den Token im GitHub-Alarm hinterlegen."));
+    form->addRow(_t("GitHub-Alarm: Repos prüfen alle"), m_githubInterval);
 
     auto *pathRow = new QHBoxLayout();
     m_startPath = new QLineEdit(core::getSettingString(QStringLiteral("start_path")), page);
@@ -648,6 +664,117 @@ void SettingsDialog::importConfig()
     }
 }
 
+QWidget *SettingsDialog::buildSecurityTab()
+{
+    namespace lock = core::applock;
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+
+    m_lockEnabled = new QCheckBox(_t("Passwort beim Start der App abfragen"), page);
+    m_lockEnabled->setObjectName(QStringLiteral("AppLockEnabled"));
+    m_lockChange = new QPushButton(_t("Passwort ändern …"), page);
+    auto *pwRow = new QHBoxLayout();
+    pwRow->addWidget(m_lockEnabled, 1);
+    pwRow->addWidget(m_lockChange);
+    layout->addLayout(pwRow);
+
+    m_twoFactor = new QCheckBox(_t("Zwei-Faktor-Authentifizierung (Authenticator-App)"), page);
+    m_twoFactor->setObjectName(QStringLiteral("AppLockTwoFactor"));
+    m_newCodes = new QPushButton(_t("Neue Wiederherstellungscodes …"), page);
+    auto *tfRow = new QHBoxLayout();
+    tfRow->addWidget(m_twoFactor, 1);
+    tfRow->addWidget(m_newCodes);
+    layout->addLayout(tfRow);
+
+    m_lockStatus = new QLabel(page);
+    m_lockStatus->setObjectName(QStringLiteral("Muted"));
+    m_lockStatus->setWordWrap(true);
+    layout->addWidget(m_lockStatus);
+
+    auto *note = new QLabel(
+        _t("Änderungen hier wirken sofort. Bei aktiver Sperre sind die Serverprofile "
+           "(Hosts, Benutzer, Schlüsselpfade) mit dem Passwort verschlüsselt (AES-256). "
+           "Einstellungen, Verlauf und Lesezeichen bleiben unverschlüsselt; Server-Passwörter "
+           "liegen weiterhin im Windows-Schlüsselbund. Ein vergessenes Passwort lässt sich "
+           "nicht zurücksetzen — die verschlüsselten Profile sind dann verloren."), page);
+    note->setWordWrap(true);
+    note->setObjectName(QStringLiteral("Muted"));
+    layout->addWidget(note);
+    layout->addStretch(1);
+
+    connect(m_lockEnabled, &QCheckBox::toggled, this, [this](bool on) {
+        if (on && !lock::isEnabled()) {
+            PasswordDialog dlg(false, this);
+            dlg.exec();
+        } else if (!on && lock::isEnabled()) {
+            if (confirmCurrentPassword(this, _t("Passwortabfrage abschalten"))) {
+                // Serverprofile erst entschluesselt einlesen, dann die Sperre
+                // entfernen und sie als Klartext zurueckschreiben.
+                core::ProfileStore store;
+                if (store.unreadable()) {
+                    QMessageBox::warning(this, _t("Passwortabfrage abschalten"),
+                                         _t("Die Serverprofile lassen sich nicht entschlüsseln — "
+                                            "die Sperre bleibt aktiv."));
+                } else {
+                    lock::disable();
+                    store.save();
+                }
+            }
+        }
+        refreshSecurityTab();   // bei Abbruch springt der Haken zurueck
+    });
+    connect(m_lockChange, &QPushButton::clicked, this, [this] {
+        PasswordDialog dlg(true, this);
+        dlg.exec();
+        refreshSecurityTab();
+    });
+    connect(m_twoFactor, &QCheckBox::toggled, this, [this](bool on) {
+        if (on && !lock::hasTwoFactor()) {
+            TwoFactorSetupDialog dlg(this);
+            dlg.exec();
+        } else if (!on && lock::hasTwoFactor()) {
+            if (confirmCurrentPassword(this, _t("Zwei-Faktor abschalten")))
+                lock::disableTwoFactor();
+        }
+        refreshSecurityTab();
+    });
+    connect(m_newCodes, &QPushButton::clicked, this, [this] {
+        if (!confirmCurrentPassword(this, _t("Neue Wiederherstellungscodes")))
+            return;
+        const QStringList codes = lock::newRecoveryCodes();
+        lock::replaceRecoveryCodes(codes);
+        RecoveryCodesDialog dlg(codes, this);
+        dlg.exec();
+        refreshSecurityTab();
+    });
+    refreshSecurityTab();
+    return page;
+}
+
+void SettingsDialog::refreshSecurityTab()
+{
+    namespace lock = core::applock;
+    const bool enabled = lock::isEnabled();
+    const bool twoFactor = lock::hasTwoFactor();
+    {
+        const QSignalBlocker b1(m_lockEnabled);
+        const QSignalBlocker b2(m_twoFactor);
+        m_lockEnabled->setChecked(enabled);
+        m_twoFactor->setChecked(twoFactor);
+    }
+    m_lockChange->setEnabled(enabled);
+    m_twoFactor->setEnabled(enabled);   // 2FA nur zusammen mit dem Passwort
+    m_newCodes->setEnabled(twoFactor);
+    if (!enabled)
+        m_lockStatus->setText(_t("Keine Passwortabfrage beim Start."));
+    else if (!twoFactor)
+        m_lockStatus->setText(_t("Beim Start wird das Passwort abgefragt."));
+    else
+        m_lockStatus->setText(_t("Beim Start werden Passwort und Code abgefragt. "
+                                 "Verbleibende Wiederherstellungscodes: %1")
+                                  .arg(lock::remainingRecoveryCodes()));
+}
+
 QWidget *SettingsDialog::buildShortcutsTab()
 {
     auto *page = new QWidget(this);
@@ -788,6 +915,7 @@ void SettingsDialog::save()
     core::setSetting(QStringLiteral("restore_tabs"), m_restoreTabs->isChecked());
     core::setSetting(QStringLiteral("local_shell"), m_localShell->currentData().toString());
     core::setSetting(QStringLiteral("auto_connect_last"), m_autoConnect->isChecked());
+    core::setSetting(QStringLiteral("github_alarm_interval"), m_githubInterval->value() * 60);
     core::setSetting(QStringLiteral("start_path"), m_startPath->text());
     core::setSetting(QString::fromLatin1(core::AI_ENABLED), m_aiEnabled->isChecked());
     stashAiProvider();

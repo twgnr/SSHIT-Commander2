@@ -1101,8 +1101,14 @@ void MacroManagerDialog::importLayers()
 
 void MacroManagerDialog::updateModeLabel()
 {
-    m_modeButton->setText(m_runMode ? _t("▶ Ausführen (Klick löst aus)")
-                                    : _t("✎ Bearbeiten (Klick öffnet Editor)"));
+    // Im Bearbeiten-Modus beschreibt der Knopf, was ein Klick tut: zurueck in
+    // den Ausfuehren-Modus — mit gewaehltem Andock-Rand also an die App andocken.
+    if (m_runMode)
+        m_modeButton->setText(_t("▶ Ausführen (Klick löst aus)"));
+    else if (m_config.dock != QLatin1String("float"))
+        m_modeButton->setText(_t("An App andocken"));
+    else
+        m_modeButton->setText(_t("▶ Ausführen (schwebend)"));
     m_status->setText(m_runMode
                           ? _t("Ausführen-Modus — langes Halten öffnet den Editor.")
                           : _t("Bearbeiten-Modus — Klick auf eine Taste öffnet den Editor."));
@@ -1231,6 +1237,7 @@ void MacroManagerDialog::onDockCombo()
     const QString side = m_dockCombo->currentData().toString();
     m_config.dock = side;
     saveConfig();
+    updateModeLabel();   // Knopftext haengt an der gewaehlten Seite
     if (m_runMode) {
         // Bereits im Ausfuehren-Modus: Seite direkt anwenden.
         setDock(side, /*persist=*/false);

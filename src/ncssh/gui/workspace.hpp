@@ -100,6 +100,9 @@ public:
     // Server-Info der Verbindung zeigen (Info-Chip der verbundenen Pane).
     void openServerInfo();
 
+    // Ist links UND rechts je eine Datei (kein Ordner) markiert?
+    bool fileSelectedInBothPanes() const;
+
     // Zustand des Tabs fuer Tab-Favoriten / Sitzungswiederherstellung.
     QJsonObject toJson() const;
     void restoreFrom(const QJsonObject &state);
@@ -115,6 +118,8 @@ signals:
     void connectionChanged();
     // Aus dem Pane-Kontextmenue: Verzeichnis-Vergleich beider Seiten oeffnen.
     void dirDiffRequested();
+    // Markierung in einer der Panes geaendert (fuer den Vergleichen-Knopf).
+    void fileSelectionChanged();
     // Alarm fuer ein Verzeichnis der Pane anlegen (remote = SFTP-Pfad).
     void dirAlarmRequested(const QString &path, bool remote);
     // Netzwerk-Modus: Scanner erneut oeffnen bzw. zu einem Host verbinden.

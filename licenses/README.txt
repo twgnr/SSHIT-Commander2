@@ -18,6 +18,11 @@ libssh2 (compiled into the executable)
     BSD 3-Clause  ->  libssh2-BSD-3-Clause.txt
     Source code: https://www.libssh2.org
 
+QR Code generator library by Project Nayuki (compiled into the executable)
+    MIT License  ->  qrcodegen-MIT.txt
+    Used to show the QR code when setting up two-factor authentication.
+    Source code: https://www.nayuki.io/page/qr-code-generator-library
+
 OpenSSL 3 (compiled into the executable; standard builds)
     Apache License 2.0  ->  OpenSSL-Apache-2.0.txt
     Source code: https://www.openssl.org

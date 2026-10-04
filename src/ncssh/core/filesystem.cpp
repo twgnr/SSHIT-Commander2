@@ -1,4 +1,5 @@
 #include "ncssh/core/filesystem.hpp"
+#include "ncssh/core/encodings.hpp"
 
 #include <QDir>
 #include <QDirIterator>
@@ -165,7 +166,8 @@ void LocalFileSystem::remove(const QString &path, bool recursive)
 
 QString LocalFileSystem::readText(const QString &path, qint64 maxBytes)
 {
-    return QString::fromUtf8(readBytes(path, maxBytes));
+    // Kodierung erkennen (UTF-8, UTF-16 mit/ohne BOM, ANSI) statt stur UTF-8.
+    return core::decodeAuto(readBytes(path, maxBytes));
 }
 
 void LocalFileSystem::writeText(const QString &path, const QString &content)

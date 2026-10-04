@@ -1,4 +1,5 @@
 #include "ncssh/net/sudofs.hpp"
+#include "ncssh/core/encodings.hpp"
 
 #include "ncssh/core/lsparse.hpp"
 
@@ -135,7 +136,8 @@ QByteArray SudoFileSystem::readBytes(const QString &path, qint64 maxBytes)
 
 QString SudoFileSystem::readText(const QString &path, qint64 maxBytes)
 {
-    return QString::fromUtf8(readBytes(path, maxBytes));
+    // Kodierung erkennen (UTF-8, UTF-16 mit/ohne BOM, ANSI) statt stur UTF-8.
+    return core::decodeAuto(readBytes(path, maxBytes));
 }
 
 qint64 SudoFileSystem::size(const QString &path)

@@ -71,6 +71,7 @@ private:
     void openGithubAlarms();
     void openMacroManager();
     void ensureMacroDialog();     // legt m_macroDialog bei Bedarf an
+    void updateFileDiffAction();  // Vergleichen-Knopf je nach Markierung
     void saveSession();      // offene Tabs fuer die Wiederherstellung sichern
     // Fragt jeden geaenderten Editor unterhalb von scope ("speichern?").
     // false = Schliessen abbrechen (Abbrechen gewaehlt oder Speichern laeuft).
@@ -108,6 +109,7 @@ private:
 
     AsyncBridge *m_bridge;
     QAction *m_onlyFsAction = nullptr;
+    QAction *m_fileDiffAction = nullptr;  // Symbolleiste: nur mit Datei links + rechts
     QAction *m_onlyTermAction = nullptr;
     QAction *m_vertPanesAction = nullptr;
     QAction *m_gridAction = nullptr;      // Haken folgt der Pane-Ansicht

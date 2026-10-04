@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(sshit_commander2 VERSION 1.0.2 LANGUAGES C CXX)
+project(sshit_commander2 VERSION 1.0.4 LANGUAGES C CXX)
 
 # ---------------------------------------------------------------------------
 # SSHIT-Commander — Dual-Pane-Dateimanager mit SSH/SFTP und Terminal.
@@ -57,6 +57,18 @@ FetchContent_Declare(libssh2
     GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(libssh2)
 
+# QR-Code-Erzeuger (Project Nayuki, MIT) fuer den 2FA-Einrichtungsdialog.
+# Eine einzelne C++-Datei ohne eigenes CMake — als feste Version mit
+# Pruefsumme geladen und hier als kleine statische Bibliothek gebaut.
+# Offline: -DFETCHCONTENT_SOURCE_DIR_QRCODEGEN=<entpacktes Archiv>.
+FetchContent_Declare(qrcodegen
+    URL      https://github.com/nayuki/QR-Code-generator/archive/refs/tags/v1.8.0.tar.gz
+    URL_HASH SHA256=2ec0a4d33d6f521c942eeaf473d42d5fe139abcfa57d2beffe10c5cf7d34ae60)
+FetchContent_MakeAvailable(qrcodegen)
+add_library(qrcodegen STATIC "${qrcodegen_SOURCE_DIR}/cpp/qrcodegen.cpp")
+target_include_directories(qrcodegen SYSTEM PUBLIC "${qrcodegen_SOURCE_DIR}/cpp")
+set_target_properties(qrcodegen PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
 # --- Quellen ---------------------------------------------------------------
 file(GLOB_RECURSE NCSSH_SOURCES CONFIGURE_DEPENDS
     src/*.cpp src/*.hpp)
@@ -77,6 +89,7 @@ target_compile_definitions(ncssh PUBLIC
 target_link_libraries(ncssh PUBLIC
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg
     libssh2::libssh2_static
+    qrcodegen
     ws2_32 crypt32 bcrypt advapi32 iphlpapi ole32 shell32 user32)
 # Statisches OpenSSL braucht zusaetzlich diese System-Libs.
 if(USE_OPENSSL_BACKEND)
@@ -126,6 +139,12 @@ endif()
 # Windows-Icon
 if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/resources/app.rc")
     target_sources(sshit-commander PRIVATE resources/app.rc)
+    # Versionsinfo der EXE (app.rc) aus project(VERSION).
+    target_compile_definitions(sshit-commander PRIVATE
+        SSHIT_VER_MAJOR=${PROJECT_VERSION_MAJOR}
+        SSHIT_VER_MINOR=${PROJECT_VERSION_MINOR}
+        SSHIT_VER_PATCH=${PROJECT_VERSION_PATCH}
+        SSHIT_VERSION_RC="${PROJECT_VERSION}")
 endif()
 
 # Qt-DLLs neben die EXE deployen (Post-Build, nur wenn windeployqt existiert)

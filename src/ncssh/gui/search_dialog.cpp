@@ -81,6 +81,11 @@ SearchDialog::SearchDialog(AsyncBridge *bridge, const QString &mode,
     if (content) {
         optRow->addWidget(m_wholeWord);
         optRow->addWidget(m_binary);
+    } else {
+        // Nur fuer die Inhaltssuche: ohne Layout lagen sie sonst lose oben
+        // links ueber dem Dialog ("Include binary" ueber "Root").
+        m_wholeWord->setVisible(false);
+        m_binary->setVisible(false);
     }
     optRow->addStretch(1);
     form->addRow(_t("Optionen"), optRow);

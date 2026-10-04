@@ -86,7 +86,7 @@ namespace ncssh::gui {
 
 using core::_t;
 
-// "1.0.2" bzw. "1.1.0 (Beta.1)" — die Stufe erscheint nur, wenn CMake eine setzt.
+// "1.0.4" bzw. "1.1.0 (Beta.1)" — die Stufe erscheint nur, wenn CMake eine setzt.
 static QString versionLabel()
 {
     const QString stage = QString::fromLatin1(SSHIT_VERSION_STAGE);
@@ -283,6 +283,7 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
     connect(m_tabs, &QTabWidget::currentChanged, this, [this](int) {
         syncViewActions();
         updateConnectionStatus();
+        updateFileDiffAction();
     });
 
     buildMenus();
@@ -625,8 +626,6 @@ void MainWindow::buildMenus()
                        &MainWindow::openHistory);
     toolbar->addAction(themedIcon(QStringLiteral("transfers")), _t("Übertragungen"), this,
                        &MainWindow::openTransfers);
-    toolbar->addAction(themedIcon(QStringLiteral("tunnels")), _t("Tunnel"), this,
-                       &MainWindow::openTunnels);
     toolbar->addAction(themedIcon(QStringLiteral("search")), _t("Suchen"), this,
                        [this] { openSearch(QStringLiteral("content")); });
     toolbar->addSeparator();
@@ -645,6 +644,12 @@ void MainWindow::buildMenus()
                        [fileOp] { fileOp(QStringLiteral("delete")); });
     toolbar->addAction(themedIcon(QStringLiteral("reload")), _t("Neu laden"), this,
                        [reloadPanel] { reloadPanel(); });
+    // Datei-Vergleich: nur aktiv, wenn links UND rechts eine Datei markiert ist.
+    m_fileDiffAction = toolbar->addAction(themedIcon(QStringLiteral("diff")),
+                                          _t("Dateien vergleichen"), this,
+                                          &MainWindow::openFileDiff);
+    m_fileDiffAction->setToolTip(_t("Dateien vergleichen — links und rechts je eine Datei markieren"));
+    m_fileDiffAction->setEnabled(false);
     toolbar->addSeparator();
     toolbar->addAction(themedIcon(QStringLiteral("clipboard")), _t("Clipboard"), this,
                        &MainWindow::openClipboard);
@@ -851,6 +856,7 @@ Workspace *MainWindow::addTab()
     });
     // Verzeichnis-Vergleich aus dem Pane-Kontextmenue.
     connect(ws, &Workspace::dirDiffRequested, this, &MainWindow::openDirDiff);
+    connect(ws, &Workspace::fileSelectionChanged, this, &MainWindow::updateFileDiffAction);
     connect(ws, &Workspace::paletteRequested, this, &MainWindow::openCommandPalette);
     connect(ws, &Workspace::historyRequested, this, &MainWindow::openHistory);
     // "Alarm Trigger fuer Verzeichnis setzen …" aus dem Pane-Kontextmenue —
@@ -1179,6 +1185,14 @@ void MainWindow::openBulkRename()
         panel->refresh();
 }
 
+void MainWindow::updateFileDiffAction()
+{
+    if (!m_fileDiffAction)
+        return;
+    Workspace *ws = currentWorkspace();
+    m_fileDiffAction->setEnabled(ws && ws->fileSelectedInBothPanes());
+}
+
 void MainWindow::openFileDiff()
 {
     Workspace *ws = currentWorkspace();
@@ -1232,6 +1246,7 @@ void MainWindow::openSettings()
                 }
             }
         }
+        m_githubAlarms->reload();   // neues Pruef-Intervall gilt sofort
         statusBar()->showMessage(
             _t("Einstellungen gespeichert (Terminal- und Editor-Schrift ab nächstem Öffnen)."),
             8000);

@@ -9,14 +9,20 @@
 
 namespace ncssh::core {
 
-// Laedt/speichert ServerProfile-Objekte aus einer JSON-Datei.
+// Laedt/speichert ServerProfile-Objekte aus einer JSON-Datei — bei aktiver
+// App-Sperre verschluesselt (siehe applock.hpp).
 class ProfileStore {
 public:
     ProfileStore();
 
     // --- Persistenz --------------------------------------------------------
     void load();
+    // Wirft, wenn die Datei verschluesselt und nicht entsperrt ist (unreadable)
+    // — sonst ueberschriebe eine leere Liste die echten Profile.
     void save() const;
+    // Verschluesselte Datei, die (ohne/mit falschem Datenschluessel) nicht
+    // gelesen werden konnte.
+    bool unreadable() const { return m_unreadable; }
 
     // --- CRUD --------------------------------------------------------------
     std::vector<ServerProfile> profiles() const { return m_profiles; }
@@ -35,6 +41,13 @@ public:
 
 private:
     std::vector<ServerProfile> m_profiles;
+    bool m_unreadable = false;
 };
+
+// Beim Start (nach dem Entsperren): Ist servers.json verschluesselt, aber nicht
+// lesbar (App-Sperre entfernt, applock.json fehlt/gehoert zu anderen Daten),
+// wird sie als servers.json.locked-<Zeit> beiseitegelegt, damit die App mit
+// leerer Liste weiterarbeiten kann. Liefert den neuen Dateinamen oder "".
+QString setAsideUnreadableProfiles();
 
 } // namespace ncssh::core

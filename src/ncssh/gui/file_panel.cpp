@@ -61,6 +61,8 @@
 #include <QUrl>
 #include <QLabel>
 #include <QLineEdit>
+#include <QStyleHints>
+#include <QGuiApplication>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPixmap>
@@ -262,6 +264,15 @@ void FilePanel::buildUi(const QString &title)
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
     m_table->setSortingEnabled(false);   // eigene Sortierung (Ordner zuerst)
     connect(m_table, &QTableWidget::cellDoubleClicked, this, &FilePanel::onDoubleClick);
+    // Langsamer Doppelklick: erst nach Ablauf der Doppelklick-Zeit umbenennen —
+    // ein echter Doppelklick (oeffnen) bricht vorher ab.
+    m_renameTimer = new QTimer(this);
+    m_renameTimer->setSingleShot(true);
+    connect(m_renameTimer, &QTimer::timeout, this, [this] {
+        if (m_renameRow >= 0 && m_renameRow == m_table->currentRow())
+            beginInlineRename(m_renameRow);
+        m_renameRow = -1;
+    });
     connect(m_table, &QTableWidget::customContextMenuRequested, this,
             &FilePanel::openContextMenu);
     // Auswahl an die Vorschau melden und die Statuszeile nachziehen.
@@ -971,6 +982,7 @@ void FilePanel::loadDir(const QString &rawPath, bool record)
 
 void FilePanel::populate(const std::vector<FileEntry> &entries)
 {
+    cancelInlineRename();
     // Sortieren nach der gewaehlten Spalte — ".." und Ordner bleiben oben.
     // Namen wahlweise natuerlich (datei2 vor datei10).
     const bool natural = core::getSettingBool(QStringLiteral("natural_sort"), true);
@@ -1535,6 +1547,14 @@ void FilePanel::opRename()
     const QString target = dlg.resultPath();
     if (target.isEmpty() || target == path)
         return;
+    renamePath(path, target);
+}
+
+void FilePanel::renamePath(const QString &path, const QString &target)
+{
+    if (!m_provider)
+        return;
+    core::FileSystemProvider *provider = m_provider;
     m_bridge->run(
         [provider, path, target] {
             // Vorhandenes Ziel nicht wortlos ersetzen (sudo/mv wuerde zudem in
@@ -1556,6 +1576,81 @@ void FilePanel::opRename()
         },
         [this] { refresh(); },
         [this](const QString &err) { QMessageBox::warning(this, _t("Fehler"), err); }, this);
+}
+
+void FilePanel::beginInlineRename(int row)
+{
+    cancelInlineRename();
+    if (!m_provider || row < 0 || row >= int(m_rows.size()) || m_path.startsWith(QLatin1String("net://")))
+        return;
+    const FileEntry entry = m_rows[size_t(row)];
+    if (entry.type == EntryType::Parent || entry.name == QLatin1String(".."))
+        return;
+    const QString path = m_provider->join(m_path, entry.name);
+    const QString dir = m_path;
+
+    // Feld ueber der Namenszelle — mindestens so breit, dass laengere Namen
+    // lesbar bleiben, aber nie breiter als die Liste.
+    QRect rect = m_table->visualRect(m_table->model()->index(row, 0));
+    rect.setWidth(qMin(qMax(rect.width(), 240), m_table->viewport()->width() - rect.left()));
+    auto *editor = new QLineEdit(m_table->viewport());
+    editor->setObjectName(QStringLiteral("InlineRenameEditor"));
+    // Ohne das grosszuegige Padding des globalen QLineEdit-Stils — in einer
+    // kompakten Zeile wurde der Name sonst oben und unten abgeschnitten.
+    editor->setStyleSheet(QStringLiteral("QLineEdit#InlineRenameEditor { padding: 0px 4px; "
+                                         "border-radius: 3px; }"));
+    editor->setFont(m_table->font());
+    editor->setText(entry.name);
+    // Mindestens Schrifthoehe + Rand, ueber der Zeile zentriert.
+    const int height = qMax(rect.height(), editor->fontMetrics().height() + 8);
+    rect.setTop(rect.center().y() - height / 2);
+    rect.setHeight(height);
+    editor->setGeometry(rect);
+    // Wie im Explorer: bei Dateien nur den Namen ohne Endung markieren.
+    const int dot = entry.name.lastIndexOf(QLatin1Char('.'));
+    if (entry.type != EntryType::Dir && dot > 0)
+        editor->setSelection(0, dot);
+    else
+        editor->selectAll();
+    m_renameEditor = editor;
+
+    auto finish = [this, editor, path, dir, oldName = entry.name](bool accept) {
+        if (editor->property("done").toBool())
+            return;
+        editor->setProperty("done", true);
+        const QString name = editor->text().trimmed();
+        editor->deleteLater();
+        m_table->setFocus();
+        if (!accept || name.isEmpty() || name == oldName || !m_provider)
+            return;
+        if (name.contains(QLatin1Char('/'))
+            || (!m_provider->isRemote && name.contains(QLatin1Char('\\')))) {
+            QMessageBox::warning(this, _t("Umbenennen"),
+                                 _t("Der Name darf kein „/“ enthalten — zum Verschieben F2 verwenden."));
+            return;
+        }
+        renamePath(path, m_provider->join(dir, name));
+    };
+    connect(editor, &QLineEdit::editingFinished, this, [finish] { finish(true); });
+    auto *cancel = new QAction(editor);
+    cancel->setShortcut(QKeySequence(Qt::Key_Escape));
+    cancel->setShortcutContext(Qt::WidgetShortcut);
+    editor->addAction(cancel);
+    connect(cancel, &QAction::triggered, this, [finish] { finish(false); });
+    editor->show();
+    editor->setFocus();
+}
+
+void FilePanel::cancelInlineRename()
+{
+    if (m_renameTimer)
+        m_renameTimer->stop();
+    m_renameRow = -1;
+    if (!m_renameEditor)
+        return;
+    m_renameEditor->setProperty("done", true);
+    m_renameEditor->deleteLater();
+    m_renameEditor = nullptr;
 }
 
 void FilePanel::opDelete()
@@ -2313,6 +2408,35 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
         endPathEdit();
         return false;
     }
+    // Langsamer Doppelklick: Klick auf den bereits (allein) markierten Eintrag,
+    // loslassen ohne zu ziehen, dann die Doppelklick-Zeit abwarten.
+    if (obj == m_table->viewport()) {
+        const auto type = event->type();
+        if (type == QEvent::MouseButtonPress || type == QEvent::MouseButtonDblClick) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            m_renameTimer->stop();
+            const int prevRow = m_renameRow;
+            m_renameRow = -1;
+            const QModelIndex idx = m_table->indexAt(me->position().toPoint());
+            if (type == QEvent::MouseButtonPress && prevRow < 0 && me->button() == Qt::LeftButton
+                && me->modifiers() == Qt::NoModifier && idx.isValid() && idx.column() == 0
+                && idx.row() == m_table->currentRow() && m_table->selectionModel()
+                && m_table->selectionModel()->selectedRows().size() == 1
+                && m_table->selectionModel()->isRowSelected(idx.row(), QModelIndex())) {
+                m_renameRow = idx.row();
+                m_renamePressPos = me->position().toPoint();
+            }
+        } else if (type == QEvent::MouseButtonRelease && m_renameRow >= 0) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            const QPoint pos = me->position().toPoint();
+            if (m_table->indexAt(pos).row() == m_renameRow
+                && (pos - m_renamePressPos).manhattanLength()
+                       < QGuiApplication::styleHints()->startDragDistance())
+                m_renameTimer->start(QGuiApplication::styleHints()->mouseDoubleClickInterval());
+            else
+                m_renameRow = -1;
+        }
+    }
     // Ziehen aus der Pane starten (auch fuer Remote-Pfade und den Explorer).
     if (obj == m_table->viewport() && event->type() == QEvent::MouseMove) {
         auto *me = static_cast<QMouseEvent *>(event);
@@ -2341,6 +2465,10 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
     }
     if (event->type() == QEvent::KeyPress) {
         auto *ke = static_cast<QKeyEvent *>(event);
+        // Tippen im Inline-Umbenennen-Feld: nicht behandelte Tasten (Enter, F8 …)
+        // wandern zur Liste hoch und duerfen dort KEINE Datei-Operation ausloesen.
+        if (m_renameEditor && m_renameEditor->hasFocus())
+            return false;
         // Das Pfad-Eingabefeld ist ein normales QLineEdit: Esc bricht ab, alle
         // uebrigen Tasten (auch Strg+C zum Kopieren, Backspace, +/-/*) gehoeren
         // dem Feld — sie duerfen keine Datei-Operationen ausloesen.

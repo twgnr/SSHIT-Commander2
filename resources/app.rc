@@ -1,1 +1,33 @@
 IDI_ICON1 ICON "../assets/sshit.ico"
+
+// Versionsinformationen der EXE (Explorer -> Eigenschaften -> Details und der
+// SmartScreen-/Signatur-Dialog). Die Nummern kommen aus project(VERSION) der
+// CMakeLists (SSHIT_VER_*), damit nichts doppelt gepflegt wird.
+1 VERSIONINFO
+ FILEVERSION     SSHIT_VER_MAJOR,SSHIT_VER_MINOR,SSHIT_VER_PATCH,0
+ PRODUCTVERSION  SSHIT_VER_MAJOR,SSHIT_VER_MINOR,SSHIT_VER_PATCH,0
+ FILEFLAGSMASK   0x3fL
+ FILEFLAGS       0x0L
+ FILEOS          0x40004L
+ FILETYPE        0x1L
+ FILESUBTYPE     0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName",      "Tobias Wagner"
+            VALUE "FileDescription",  "SSHIT-Commander"
+            VALUE "FileVersion",      SSHIT_VERSION_RC
+            VALUE "InternalName",     "sshit-commander"
+            VALUE "LegalCopyright",   "Copyright (C) 2026 Tobias Wagner, GPL-3.0"
+            VALUE "OriginalFilename", "sshit-commander.exe"
+            VALUE "ProductName",      "SSHIT-Commander"
+            VALUE "ProductVersion",   SSHIT_VERSION_RC
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

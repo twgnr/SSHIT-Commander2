@@ -1,4 +1,5 @@
 #include "ncssh/net/ssh.hpp"
+#include "ncssh/core/encodings.hpp"
 
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/lsparse.hpp"
@@ -1324,7 +1325,8 @@ QByteArray SFTPFileSystem::readBytes(const QString &path, qint64 maxBytes)
 
 QString SFTPFileSystem::readText(const QString &path, qint64 maxBytes)
 {
-    return QString::fromUtf8(readBytes(path, maxBytes));
+    // Kodierung erkennen (UTF-8, UTF-16 mit/ohne BOM, ANSI) statt stur UTF-8.
+    return core::decodeAuto(readBytes(path, maxBytes));
 }
 
 void SFTPFileSystem::writeBytes(const QString &path, const QByteArray &data)

@@ -28,15 +28,21 @@ GithubAlarmManager::GithubAlarmManager(AsyncBridge *bridge, QObject *parent)
     : QObject(parent), m_bridge(bridge), m_timer(new QTimer(this))
 {
     connect(m_timer, &QTimer::timeout, this, &GithubAlarmManager::checkNow);
-    // Pruef-Intervall aus den Einstellungen (verstecktes github_alarm_interval,
-    // Sekunden; Standard 900 = 15 min, min. 30).
-    m_timer->setInterval(
-        qMax(30, core::getSettingInt(QStringLiteral("github_alarm_interval"), 900)) * 1000);
     reload();
+}
+
+int GithubAlarmManager::intervalSeconds()
+{
+    // Einstellungen -> Allgemein (github_alarm_interval, Sekunden; Standard
+    // 900 = 15 min, min. 60).
+    return qMax(60, core::getSettingInt(QStringLiteral("github_alarm_interval"), 900));
 }
 
 void GithubAlarmManager::reload()
 {
+    // Intervall jedes Mal neu lesen: eine Aenderung in den Einstellungen gilt
+    // sofort (setInterval startet einen laufenden Timer neu).
+    m_timer->setInterval(intervalSeconds() * 1000);
     m_repos = core::loadRepos();
     const bool anyEnabled = std::any_of(m_repos.begin(), m_repos.end(),
                                         [](const RepoSpec &r) { return r.enabled; });

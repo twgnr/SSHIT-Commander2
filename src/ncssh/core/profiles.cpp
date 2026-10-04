@@ -1,11 +1,13 @@
 #include "ncssh/core/profiles.hpp"
 
 #include "ncssh/config.hpp"
+#include "ncssh/core/applock.hpp"
 #include "ncssh/core/bookmarks.hpp"
 #include "ncssh/core/filealarm.hpp"
 #include "ncssh/core/secrets.hpp"
 #include "ncssh/core/settings.hpp"
 
+#include <QDateTime>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -33,9 +35,19 @@ void ProfileStore::load()
     if (!f.open(QIODevice::ReadOnly))
         throw std::runtime_error(
             (QStringLiteral("Kann Datei nicht lesen: ") + path).toStdString());
-    QJsonParseError err{};
-    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &err);
+    QByteArray bytes = f.readAll();
     m_profiles.clear();
+    m_unreadable = false;
+    if (applock::isEncrypted(bytes)) {
+        const auto plain = applock::decryptData(bytes);
+        if (!plain) {
+            m_unreadable = true;   // gesperrt/fremder Schluessel: NICHT anfassen
+            return;
+        }
+        bytes = *plain;
+    }
+    QJsonParseError err{};
+    const QJsonDocument doc = QJsonDocument::fromJson(bytes, &err);
     // Defekte oder unerwartete Datei -> leere Liste
     if (err.error != QJsonParseError::NoError || !doc.isArray())
         return;
@@ -50,12 +62,28 @@ void ProfileStore::load()
 
 void ProfileStore::save() const
 {
+    if (m_unreadable)
+        throw std::runtime_error(
+            "Die Serverprofile sind verschlüsselt und nicht entsperrt — Änderungen "
+            "werden nicht gespeichert.");
     QJsonArray data;
     for (const ServerProfile &p : m_profiles)
         data.append(p.toJson());
-    ncssh::atomicWriteText(
-        ncssh::profilesFile(),
-        QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Indented)));
+    // Bei aktiver App-Sperre verschluesselt, sonst Klartext-JSON wie bisher.
+    applock::writeProtectedFile(ncssh::profilesFile(),
+                                QJsonDocument(data).toJson(QJsonDocument::Indented));
+}
+
+QString setAsideUnreadableProfiles()
+{
+    const ProfileStore store;
+    if (!store.unreadable())
+        return {};
+    const QString target = ncssh::profilesFile() + QStringLiteral(".locked-")
+                           + QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
+    if (!QFile::rename(ncssh::profilesFile(), target))
+        return {};
+    return target;
 }
 
 // --- CRUD ------------------------------------------------------------------

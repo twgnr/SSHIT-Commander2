@@ -12,6 +12,8 @@
 #include <QKeySequence>
 #include <QSet>
 #include <QStringList>
+#include <QPoint>
+#include <QPointer>
 #include <QWidget>
 #include <memory>
 #include <vector>
@@ -90,6 +92,9 @@ public:
     // Lesezeichen-Menue dieser Pane am Lesezeichen-Knopf oeffnen (Knopf und
     // Tastenkuerzel Strg+B). Per Pfeiltasten/Enter bedienbar.
     void showBookmarksMenu();
+    // Name direkt in der Liste editieren (langsamer Doppelklick auf einen
+    // markierten Eintrag, wie im Explorer). Enter uebernimmt, Esc verwirft.
+    void beginInlineRename(int row);
 
     // --- Verlauf (Alt+Links / Alt+Rechts) ---
     void goBack();
@@ -159,6 +164,10 @@ protected:
 
 private:
     void updateSudoFrame();   // sudo-Property fuer den orangen Rahmen nachfuehren
+    // Umbenennen (Dialog wie Inline): vorhandenes Ziel nicht ersetzen, dann
+    // umbenennen und neu laden.
+    void renamePath(const QString &path, const QString &target);
+    void cancelInlineRename();
     void buildUi(const QString &title);
     void loadDir(const QString &path, bool record = true);
     void populate(const std::vector<core::FileEntry> &entries);
@@ -297,6 +306,12 @@ private:
     QPushButton *m_sudoChip = nullptr;
     QPushButton *m_disconnectChip = nullptr;
     QPushButton *m_serverInfoChip = nullptr;
+    // Inline-Umbenennen: Feld ueber der Namenszelle und der "langsame
+    // Doppelklick" (Klick auf den schon markierten Eintrag, dann Pause).
+    QPointer<QLineEdit> m_renameEditor;
+    QTimer *m_renameTimer = nullptr;
+    int m_renameRow = -1;
+    QPoint m_renamePressPos;
     QLineEdit *m_filterEdit = nullptr;
 };
 
