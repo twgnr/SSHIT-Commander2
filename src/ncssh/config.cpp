@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QSaveFile>
+#include <QThread>
 #include <QStandardPaths>
 #include <stdexcept>
 
@@ -32,12 +33,26 @@ QString configDir()
 
 void atomicWriteText(const QString &path, const QString &text)
 {
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly))
-        throw std::runtime_error(("Kann Datei nicht schreiben: " + path).toStdString());
-    file.write(text.toUtf8());
-    if (!file.commit())
-        throw std::runtime_error(("Schreiben fehlgeschlagen: " + path).toStdString());
+    // Virenscanner, Endpoint-Schutz oder Ordner-Synchronisation sperren eine
+    // gerade geschriebene Datei oft fuer Millisekunden — das Ersetzen schlaegt
+    // dann fehl. Ein paar Versuche mit kurzer Pause statt sofort aufzugeben.
+    const QByteArray data = text.toUtf8();
+    QString error;
+    for (int attempt = 0; attempt < 6; ++attempt) {
+        if (attempt > 0)
+            QThread::msleep(25 * attempt);
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
+            error = file.errorString();
+            continue;
+        }
+        file.write(data);
+        if (file.commit())
+            return;
+        error = file.errorString();
+    }
+    throw std::runtime_error(
+        ("Schreiben fehlgeschlagen: " + path + " (" + error + ")").toStdString());
 }
 
 QString profilesFile()     { return configDir() + QStringLiteral("/servers.json"); }

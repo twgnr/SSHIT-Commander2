@@ -152,8 +152,15 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     };
     restoreColumn(leftCol, savedSplits, 0);
     restoreColumn(rightCol, savedSplits, 1);
+    // Beim Ziehen feuert splitterMoved pro Pixel. Gespeichert wird erst, wenn
+    // die Trennlinie kurz ruht — vorher wurde settings.json dutzendfach pro
+    // Sekunde geschrieben (auf Rechnern mit Virenscanner bis zum Absturz).
+    m_splitSaveTimer = new QTimer(this);
+    m_splitSaveTimer->setSingleShot(true);
+    m_splitSaveTimer->setInterval(500);
+    connect(m_splitSaveTimer, &QTimer::timeout, this, &Workspace::saveConsoleSplits);
     for (QSplitter *col : {leftCol, rightCol})
-        connect(col, &QSplitter::splitterMoved, this, [this] { saveConsoleSplits(); });
+        connect(col, &QSplitter::splitterMoved, m_splitSaveTimer, qOverload<>(&QTimer::start));
 
     // Lokale Provider zuweisen. Der konfigurierte Standard-Startpfad gewinnt
     // gegen das Home-Verzeichnis, sofern er (noch) existiert.
@@ -805,7 +812,12 @@ void Workspace::saveConsoleSplits()
             sizes.append(s);
         cols.append(sizes);
     }
-    core::setSetting(QStringLiteral("console_splits"), cols);
+    try {
+        core::setSetting(QStringLiteral("console_splits"), cols);
+    } catch (const std::exception &exc) {
+        // Nur die Fenster-Aufteilung — kein Grund fuer mehr als einen Hinweis.
+        emit statusMessage(_t("Aufteilung nicht gespeichert: %1").arg(QString::fromUtf8(exc.what())));
+    }
 }
 
 void Workspace::highlightActive()

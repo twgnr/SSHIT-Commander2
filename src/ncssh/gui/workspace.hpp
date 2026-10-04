@@ -215,6 +215,7 @@ private:
     quint64 m_sudoSeq = 0;
     QList<QPointer<QWidget>> m_boundDialogs;   // siehe bindDialog()
     QPointer<QWidget> m_serverInfo;            // offener Server-Info-Dialog
+    QTimer *m_splitSaveTimer = nullptr;        // Trennlinien erst nach dem Ziehen speichern
 
     FilePanel *m_leftPanel = nullptr;
     FilePanel *m_rightPanel = nullptr;

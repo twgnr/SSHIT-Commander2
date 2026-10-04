@@ -310,6 +310,8 @@ private:
     // Doppelklick" (Klick auf den schon markierten Eintrag, dann Pause).
     QPointer<QLineEdit> m_renameEditor;
     QTimer *m_renameTimer = nullptr;
+    QTimer *m_colSaveTimer = nullptr;            // Spaltenbreiten gesammelt speichern
+    QHash<QString, int> m_pendingColWidths;
     int m_renameRow = -1;
     QPoint m_renamePressPos;
     QLineEdit *m_filterEdit = nullptr;

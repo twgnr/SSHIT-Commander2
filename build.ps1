@@ -134,7 +134,7 @@ $exe = Join-Path $build "sshit-commander.exe"
 if (-not (Test-Path $exe)) { throw "sshit-commander.exe nicht gefunden - Build fehlgeschlagen?" }
 
 # Version und Entwicklungsstufe aus der CMakeLists lesen - eine Quelle fuer
-# Programm und Paketname. Ergebnis z. B.: SSHIT-Commander-1.0.4-win64
+# Programm und Paketname. Ergebnis z. B.: SSHIT-Commander-1.0.5-win64
 # (mit Stufe: SSHIT-Commander-1.1.0-beta.1-win64)
 $cmakeFile = Join-Path $root "CMakeLists.txt"
 $version = (Select-String -Path $cmakeFile `
@@ -191,6 +191,17 @@ Get-ChildItem (Join-Path $build "SSHIT-Commander-*.zip") -ErrorAction SilentlyCo
 $zip = Join-Path $build "$releaseName.zip"
 Compress-Archive -Path "$stageDir\*" -DestinationPath $zip
 Write-Host "Paket erstellt: $zip"
+
+# Symbole zum Paket aufbewahren (NICHT ausliefern): Absturzberichte nennen nur
+# Modul+Offset — erst mit exe+pdb GENAU dieses Builds werden daraus Codezeilen.
+# Ordner je Paket-Hash, damit spaetere Builds sie nicht ueberschreiben.
+$zipHash = (Get-FileHash $zip -Algorithm SHA256).Hash.Substring(0, 8)
+$symDir = Join-Path $build "symbols\$releaseName-$zipHash"
+New-Item -ItemType Directory -Force $symDir | Out-Null
+Copy-Item $exe $symDir
+$pdb = [System.IO.Path]::ChangeExtension($exe, ".pdb")
+if (Test-Path $pdb) { Copy-Item $pdb $symDir }
+Write-Host "Symbole fuer Absturzberichte: $symDir"
 if (-not $signed) {
     Write-Warning ("Die EXE ist NICHT signiert - Windows SmartScreen warnt beim ersten Start. " +
                    "Signieren mit -SignThumbprint, -SignPfx oder -SignDlib (siehe Kopf von build.ps1).")

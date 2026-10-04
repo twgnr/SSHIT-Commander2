@@ -8,6 +8,7 @@
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/applock_dialogs.hpp"
 #include "ncssh/gui/bridge.hpp"
+#include "ncssh/gui/crash_handler.hpp"
 #include "ncssh/gui/main_window.hpp"
 #include "ncssh/gui/style.hpp"
 #include "ncssh/gui/view_state.hpp"
@@ -34,10 +35,33 @@ static void setWindowsAppId()
 #endif
 }
 
+// QApplication mit Sicherheitsnetz: Eine Ausnahme, die aus einem Slot oder
+// Event-Handler entkommt, beendete bisher sofort die ganze App (so beim Ziehen
+// der Trennlinie, als settings.json gesperrt war). Hier wird sie abgefangen,
+// protokolliert und gemeldet; die App laeuft weiter.
+class SafeApplication : public QApplication {
+public:
+    using QApplication::QApplication;
+
+    bool notify(QObject *receiver, QEvent *event) override
+    {
+        try {
+            return QApplication::notify(receiver, event);
+        } catch (const std::exception &exc) {
+            reportCaughtException(QString::fromUtf8(exc.what()));
+        } catch (...) {
+            reportCaughtException(QStringLiteral("Unbekannte Ausnahme"));
+        }
+        return false;
+    }
+};
+
 int appMain(int argc, char *argv[])
 {
+    // Absturzberichte zuerst — auch Fehler beim Start sollen einen erzeugen.
+    installCrashHandler();
     setWindowsAppId();
-    QApplication app(argc, argv);
+    SafeApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("SSHIT-Commander"));
     app.setApplicationVersion(QString::fromLatin1(SSHIT_VERSION));
     // Bewusst KEIN applicationDisplayName: Qt haengt ihn sonst an jeden
@@ -79,6 +103,8 @@ int appMain(int argc, char *argv[])
 
     MainWindow window(&bridge);
     window.show();
+    // Gab es beim letzten Mal einen Absturz? Dann auf den Bericht hinweisen.
+    reportPreviousCrash(&window);
 
     const int exitCode = app.exec();
     bridge.stop();

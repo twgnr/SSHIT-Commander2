@@ -86,7 +86,7 @@ namespace ncssh::gui {
 
 using core::_t;
 
-// "1.0.4" bzw. "1.1.0 (Beta.1)" — die Stufe erscheint nur, wenn CMake eine setzt.
+// "1.0.5" bzw. "1.1.0 (Beta.1)" — die Stufe erscheint nur, wenn CMake eine setzt.
 static QString versionLabel()
 {
     const QString stage = QString::fromLatin1(SSHIT_VERSION_STAGE);

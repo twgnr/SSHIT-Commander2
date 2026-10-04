@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(sshit_commander2 VERSION 1.0.4 LANGUAGES C CXX)
+project(sshit_commander2 VERSION 1.0.5 LANGUAGES C CXX)
 
 # ---------------------------------------------------------------------------
 # SSHIT-Commander — Dual-Pane-Dateimanager mit SSH/SFTP und Terminal.
@@ -90,7 +90,7 @@ target_link_libraries(ncssh PUBLIC
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg
     libssh2::libssh2_static
     qrcodegen
-    ws2_32 crypt32 bcrypt advapi32 iphlpapi ole32 shell32 user32)
+    ws2_32 crypt32 bcrypt advapi32 iphlpapi ole32 shell32 user32 dbghelp)
 # Statisches OpenSSL braucht zusaetzlich diese System-Libs.
 if(USE_OPENSSL_BACKEND)
     target_link_libraries(ncssh PUBLIC OpenSSL::Crypto)

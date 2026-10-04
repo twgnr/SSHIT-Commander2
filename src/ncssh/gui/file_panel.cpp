@@ -300,11 +300,26 @@ void FilePanel::buildUi(const QString &title)
             [this](int index, int, int newSize) {
                 if (!m_userResizing || index < 0 || index >= m_fileCols.size())
                     return;
-                QVariantMap widths = core::getSetting(QStringLiteral("pane_col_widths")).toMap();
-                widths[m_fileCols.at(index)] = newSize;
-                core::setSetting(QStringLiteral("pane_col_widths"),
-                                 QJsonObject::fromVariantMap(widths));
+                // Sammeln und erst nach dem Ziehen schreiben (sonst pro Pixel).
+                m_pendingColWidths[m_fileCols.at(index)] = newSize;
+                m_colSaveTimer->start();
             });
+    m_colSaveTimer = new QTimer(this);
+    m_colSaveTimer->setSingleShot(true);
+    m_colSaveTimer->setInterval(500);
+    connect(m_colSaveTimer, &QTimer::timeout, this, [this] {
+        if (m_pendingColWidths.isEmpty())
+            return;
+        try {
+            QVariantMap widths = core::getSetting(QStringLiteral("pane_col_widths")).toMap();
+            for (auto it = m_pendingColWidths.cbegin(); it != m_pendingColWidths.cend(); ++it)
+                widths[it.key()] = it.value();
+            core::setSetting(QStringLiteral("pane_col_widths"), QJsonObject::fromVariantMap(widths));
+            m_pendingColWidths.clear();
+        } catch (const std::exception &exc) {
+            emit statusMessage(_t("Spaltenbreiten nicht gespeichert: %1").arg(QString::fromUtf8(exc.what())));
+        }
+    });
     m_table->installEventFilter(this);
     m_table->viewport()->installEventFilter(this);
     // Drag & Drop: Ziehen aus der Pane heraus, Fallenlassen hinein.
