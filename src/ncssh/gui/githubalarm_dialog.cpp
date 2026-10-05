@@ -1,15 +1,19 @@
 #include "ncssh/gui/githubalarm_dialog.hpp"
 
+#include "ncssh/core/gitstatus.hpp"
 #include "ncssh/core/settings.hpp"
 
 #include "ncssh/core/i18n.hpp"
 
+#include <QDir>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QTableWidget>
@@ -76,6 +80,9 @@ void GithubAlarmManager::checkNow()
         },
         [this](const std::vector<RepoSpec> &changed) {
             if (!changed.empty()) {
+                // Frisch laden: Panes tragen zwischendurch gelernte lokale
+                // Ordner ein — die alte Kopie wuerde sie sonst ueberschreiben.
+                m_repos = core::loadRepos();
                 // Neuen Stand merken, damit nur einmal gemeldet wird.
                 for (const RepoSpec &c : changed) {
                     for (RepoSpec &r : m_repos) {
@@ -126,9 +133,11 @@ GithubAlarmDialog::GithubAlarmDialog(GithubAlarmManager *manager, QWidget *paren
     form->addRow(_t("GitHub-Token"), tokenRow);
     layout->addLayout(form);
 
-    m_table = new QTableWidget(0, 3, this);
-    m_table->setHorizontalHeaderLabels({_t("Repository"), _t("Letzter Push"), _t("Aktiv")});
+    m_table = new QTableWidget(0, 4, this);
+    m_table->setHorizontalHeaderLabels(
+        {_t("Repository"), _t("Lokaler Ordner"), _t("Letzter Push"), _t("Aktiv")});
     m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_table->verticalHeader()->setVisible(false);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -153,6 +162,14 @@ GithubAlarmDialog::GithubAlarmDialog(GithubAlarmManager *manager, QWidget *paren
     auto *checkBtn = new QPushButton(_t("Jetzt prüfen"), this);
     auto *toggleBtn = new QPushButton(_t("Aktiv/Inaktiv"), this);
     auto *removeBtn = new QPushButton(_t("Entfernen"), this);
+    // Lokaler Klon: Panes markieren bei Aenderungen darin alle Ordner darueber.
+    auto *localBtn = new QPushButton(_t("Lokaler Ordner"), this);
+    localBtn->setToolTip(_t("Lokalen Klon zuordnen — Panes markieren dann bei Änderungen "
+                            "darin auch alle übergeordneten Ordner farbig"));
+    auto *localMenu = new QMenu(localBtn);
+    localMenu->addAction(_t("Ordner wählen …"), this, &GithubAlarmDialog::chooseLocalPath);
+    localMenu->addAction(_t("Zuordnung entfernen"), this, &GithubAlarmDialog::clearLocalPath);
+    localBtn->setMenu(localMenu);
     auto *closeBtn = new QPushButton(_t("Schließen"), this);
     closeBtn->setDefault(true);
     connect(checkBtn, &QPushButton::clicked, this, [this] {
@@ -165,6 +182,7 @@ GithubAlarmDialog::GithubAlarmDialog(GithubAlarmManager *manager, QWidget *paren
     buttons->addWidget(checkBtn);
     buttons->addWidget(toggleBtn);
     buttons->addWidget(removeBtn);
+    buttons->addWidget(localBtn);
     buttons->addStretch(1);
     buttons->addWidget(closeBtn);
     layout->addLayout(buttons);
@@ -179,9 +197,12 @@ void GithubAlarmDialog::reload()
     int row = 0;
     for (const RepoSpec &r : m_repos) {
         m_table->insertRow(row);
-        m_table->setItem(row, 0, new QTableWidgetItem(r.display()));
-        m_table->setItem(row, 1, new QTableWidgetItem(r.lastPushed));
-        m_table->setItem(row, 2, new QTableWidgetItem(r.enabled ? QStringLiteral("✓")
+        auto *nameItem = new QTableWidgetItem(r.display());
+        nameItem->setData(Qt::UserRole, r.id);
+        m_table->setItem(row, 0, nameItem);
+        m_table->setItem(row, 1, new QTableWidgetItem(r.localPath));
+        m_table->setItem(row, 2, new QTableWidgetItem(r.lastPushed));
+        m_table->setItem(row, 3, new QTableWidgetItem(r.enabled ? QStringLiteral("✓")
                                                                 : QString()));
         ++row;
     }
@@ -196,6 +217,7 @@ void GithubAlarmDialog::addRepo()
                              _t("Bitte ein gültiges Repo angeben (owner/repo)."));
         return;
     }
+    m_repos = core::loadRepos();   // zwischendurch gelernte Ordner nicht verlieren
     RepoSpec spec;
     int maxId = 0;
     for (const RepoSpec &r : m_repos)
@@ -210,12 +232,25 @@ void GithubAlarmDialog::addRepo()
     reload();
 }
 
+core::RepoSpec *GithubAlarmDialog::repoAtRow(int row)
+{
+    const QTableWidgetItem *item = row >= 0 ? m_table->item(row, 0) : nullptr;
+    if (!item)
+        return nullptr;
+    const int id = item->data(Qt::UserRole).toInt();
+    m_repos = core::loadRepos();
+    for (RepoSpec &r : m_repos)
+        if (r.id == id)
+            return &r;
+    return nullptr;
+}
+
 void GithubAlarmDialog::toggleRepo()
 {
-    const int row = m_table->currentRow();
-    if (row < 0 || row >= int(m_repos.size()))
+    RepoSpec *repo = repoAtRow(m_table->currentRow());
+    if (!repo)
         return;
-    m_repos[row].enabled = !m_repos[row].enabled;
+    repo->enabled = !repo->enabled;
     core::saveRepos(m_repos);
     m_manager->reload();
     reload();
@@ -223,10 +258,49 @@ void GithubAlarmDialog::toggleRepo()
 
 void GithubAlarmDialog::removeRepo()
 {
-    const int row = m_table->currentRow();
-    if (row < 0 || row >= int(m_repos.size()))
+    RepoSpec *repo = repoAtRow(m_table->currentRow());
+    if (!repo)
         return;
-    m_repos.erase(m_repos.begin() + row);
+    m_repos.erase(m_repos.begin() + (repo - m_repos.data()));
+    core::saveRepos(m_repos);
+    m_manager->reload();
+    reload();
+}
+
+void GithubAlarmDialog::chooseLocalPath()
+{
+    if (!repoAtRow(m_table->currentRow())) {
+        m_status->setText(_t("Bitte zuerst ein Repository in der Liste wählen."));
+        return;
+    }
+    const int row = m_table->currentRow();
+    const QString start = repoAtRow(row)->localPath;
+    const QString dir = QFileDialog::getExistingDirectory(
+        this, _t("Lokalen Klon wählen"), start.isEmpty() ? QDir::homePath() : start);
+    if (dir.isEmpty())
+        return;
+    // Auf die Wurzel des Klons abbilden (auch wenn ein Unterordner gewaehlt wurde).
+    const core::GitRepoInfo info = core::gitRepoInfo(dir);
+    if (info.root.isEmpty()) {
+        QMessageBox::warning(this, _t("Kein Git-Repository"),
+                             _t("„%1“ ist kein Git-Repository.").arg(QDir::toNativeSeparators(dir)));
+        return;
+    }
+    RepoSpec *repo = repoAtRow(row);   // nach dem modalen Dialog frisch laden
+    if (!repo)
+        return;
+    repo->localPath = info.root;
+    core::saveRepos(m_repos);
+    m_manager->reload();
+    reload();
+}
+
+void GithubAlarmDialog::clearLocalPath()
+{
+    RepoSpec *repo = repoAtRow(m_table->currentRow());
+    if (!repo || repo->localPath.isEmpty())
+        return;
+    repo->localPath.clear();
     core::saveRepos(m_repos);
     m_manager->reload();
     reload();

@@ -4,6 +4,7 @@
 #include "tests/harness.hpp"
 
 #include "ncssh/core/filesystem.hpp"
+#include "ncssh/core/i18n.hpp"
 #include "ncssh/core/settings.hpp"
 #include "ncssh/gui/bridge.hpp"
 #include "ncssh/gui/editor_dialog.hpp"
@@ -15,6 +16,8 @@
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
+#include <QLineEdit>
+#include <QPushButton>
 #include <QShortcut>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -121,6 +124,67 @@ TEST(editor_syntax, ansi_umlauts_shown_and_saved_in_original_encoding)
         QFile in(path);
         return in.open(QIODevice::ReadOnly) && in.readAll() == QByteArray("f\xFCr Gr\xF6\xDF" "e!\n");
     }));
+}
+
+TEST(editor_syntax, opening_with_highlighting_is_not_modified)
+{
+    // Das Umfaerben nach dem Laden (rehighlight) loeste textChanged aus — die
+    // Datei stand sofort als "geaendert" im Titel, ohne jede Eingabe.
+    QTemporaryDir tmp;
+    CHECK(tmp.isValid());
+    const QString path = tmp.path() + QStringLiteral("/main.cpp");
+    QFile f(path);
+    CHECK(f.open(QIODevice::WriteOnly));
+    f.write("// Kommentar\nint main() { return 0; }\n");
+    f.close();
+
+    gui::AsyncBridge bridge;
+    core::LocalFileSystem fs;
+    gui::EditorDialog dlg(&bridge, &fs, path);
+    auto *editor = dlg.findChild<gui::CodeEditor *>();
+    CHECK(editor != nullptr);
+    if (!editor)
+        return;
+    CHECK(pump([&] { return editor->toPlainText().contains(QStringLiteral("int main")); }));
+    pump([] { return false; }, 300);   // verzoegertes Hervorheben abwarten
+    const QString modified = core::_t(" · geändert");
+    CHECK(!dlg.isDirty());
+    CHECK(!dlg.windowTitle().contains(modified));
+
+    // Echte Eingabe markiert, Rueckgaengig bis zum Original nimmt es zurueck.
+    QTextCursor cur(editor->document());
+    cur.insertText(QStringLiteral("x"));
+    CHECK(dlg.isDirty());
+    CHECK(dlg.windowTitle().contains(modified));
+    editor->undo();
+    CHECK(!dlg.isDirty());
+    CHECK(!dlg.windowTitle().contains(modified));
+
+    // "Alle ersetzen" ist eine Aenderung (frueher: setPlainText -> galt als
+    // unveraendert, Schliessen fragte nicht) und laesst sich rueckgaengig machen.
+    QLineEdit *find = nullptr;
+    QLineEdit *replace = nullptr;
+    for (QLineEdit *e : dlg.findChildren<QLineEdit *>()) {
+        if (e->placeholderText() == core::_t("Suchen …"))
+            find = e;
+        else if (e->placeholderText() == core::_t("Ersetzen durch …"))
+            replace = e;
+    }
+    QPushButton *replaceAll = nullptr;
+    for (QPushButton *b : dlg.findChildren<QPushButton *>())
+        if (b->text() == core::_t("Alle"))
+            replaceAll = b;
+    CHECK(find && replace && replaceAll);
+    if (!find || !replace || !replaceAll)
+        return;
+    find->setText(QStringLiteral("main"));
+    replace->setText(QStringLiteral("start"));
+    replaceAll->click();
+    CHECK(editor->toPlainText().contains(QStringLiteral("int start()")));
+    CHECK(dlg.isDirty());
+    editor->undo();
+    CHECK(editor->toPlainText().contains(QStringLiteral("int main()")));
+    CHECK(!dlg.isDirty());
 }
 
 TEST(editor_syntax, delete_without_confirmation_when_disabled)

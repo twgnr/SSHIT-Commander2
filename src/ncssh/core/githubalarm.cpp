@@ -23,6 +23,7 @@ QJsonObject RepoSpec::toJson() const
         {QStringLiteral("name"), name},
         {QStringLiteral("enabled"), enabled},
         {QStringLiteral("last_pushed"), lastPushed},
+        {QStringLiteral("local_path"), localPath},
     };
 }
 
@@ -35,6 +36,7 @@ RepoSpec RepoSpec::fromJson(const QJsonObject &d)
     r.name = d.value(QStringLiteral("name")).toString();
     r.enabled = d.value(QStringLiteral("enabled")).toBool(true);
     r.lastPushed = d.value(QStringLiteral("last_pushed")).toString();
+    r.localPath = d.value(QStringLiteral("local_path")).toString();
     return r;
 }
 

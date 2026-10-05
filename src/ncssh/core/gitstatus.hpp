@@ -4,6 +4,7 @@
 
 #include <QHash>
 #include <QString>
+#include <QStringList>
 
 namespace ncssh::core {
 
@@ -21,5 +22,28 @@ QHash<QString, QString> parsePorcelain(const QString &text, const QString &prefi
 
 // Fuehrt git status im Verzeichnis aus (leeres Dict, wenn kein Repo).
 QHash<QString, QString> gitStatus(const QString &directory, int timeoutMs = 4000);
+
+// Sammelstatus mehrerer Badges: leer, wenn keine; der gemeinsame Code, wenn
+// alle gleich sind; sonst "M" (gemischt).
+QString aggregateBadge(const QHash<QString, QString> &status);
+
+// Name des direkten Kindes von directory, das auf dem Weg zu path liegt
+// (path muss echt darunter liegen, sonst leer). Separatoren egal, unter
+// Windows ohne Gross-/Kleinschreibung.
+QString childTowards(const QString &directory, const QString &path);
+
+// Markierungen OBERHALB von Repos: fuer jedes Repo (Wurzelpfad) unterhalb von
+// directory mit Aenderungen erhaelt das Kind auf dem Weg dorthin dessen
+// Sammelstatus -> {direkter_kind_name: badge}. Fuehrt git aus (Worker).
+QHash<QString, QString> repoAncestorMarks(const QString &directory, const QStringList &repoRoots,
+                                          int timeoutMs = 4000);
+
+// Wurzel des Arbeitsverzeichnisses und URL von "origin" (leer, wenn kein Repo
+// bzw. kein origin). Fuehrt git aus (Worker).
+struct GitRepoInfo {
+    QString root;
+    QString originUrl;
+};
+GitRepoInfo gitRepoInfo(const QString &directory, int timeoutMs = 4000);
 
 } // namespace ncssh::core

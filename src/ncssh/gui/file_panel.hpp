@@ -172,6 +172,8 @@ private:
     void loadDir(const QString &path, bool record = true);
     void populate(const std::vector<core::FileEntry> &entries);
     void onDoubleClick(int row, int column);
+    // Ordner/".." betreten; Datei ausfuehren (execute, Enter) oder anzeigen.
+    void openEntry(int row, bool execute);
     void goUp();
     void openContextMenu(const QPoint &pos);
     // True, solange die Pane die Host-Liste des Scanners zeigt.
@@ -233,6 +235,7 @@ private:
 
     // --- Kontextmenue-Aktionen ---
     void opExecute();                            // mit dem Standardprogramm oeffnen
+    void executePath(const QString &path);       // dito fuer einen bestimmten Pfad
     void openWithProgram(const QString &exe);    // mit einem bestimmten Programm
     void openWithChooser();                      // "Oeffnen mit"-Dialog (Windows)
     void addOpenWithMenu(QMenu *menu, bool isFile, const core::FileEntry *entry);
@@ -246,6 +249,7 @@ private:
     // Fuehrt fn mit einem lokalen Pfad aus; Remote-Dateien werden vorher in einen
     // temporaeren Ordner geholt.
     void withLocalCopy(const std::function<void(const QString &)> &fn);
+    void withLocalCopy(const QString &path, const std::function<void(const QString &)> &fn);
 
     // --- Markieren / Tippsuche (Hilfen) ---
     std::vector<int> markableRows() const;

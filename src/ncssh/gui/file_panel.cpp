@@ -3,6 +3,7 @@
 #include "ncssh/core/dateformat.hpp"
 #include "ncssh/core/execfile.hpp"
 #include "ncssh/core/fileops.hpp"
+#include "ncssh/core/githubalarm.hpp"
 #include "ncssh/core/gitstatus.hpp"
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/natsort.hpp"
@@ -813,12 +814,63 @@ void FilePanel::loadGitStatus()
     }
     const quint64 token = ++m_gitToken;
     const QString path = m_path;
-    m_bridge->run<QHash<QString, QString>>(
-        [path] { return core::gitStatus(path); },
-        [this, token, path](const QHash<QString, QString> &status) {
-            if (token != m_gitToken || path != m_path || status == m_gitStatus)
+    // Aktive GitHub-Alarme: mit lokalem Klon -> Ordner darueber markieren;
+    // ohne -> Klon lernen, falls dieser Ordner einer mit passendem origin ist.
+    QStringList alarmRoots;
+    std::vector<core::RepoSpec> unmapped;
+    for (const core::RepoSpec &r : core::loadRepos()) {
+        if (!r.enabled)
+            continue;
+        if (r.localPath.isEmpty())
+            unmapped.push_back(r);
+        else
+            alarmRoots << r.localPath;
+    }
+    struct Result {
+        QHash<QString, QString> status;
+        int learnedId = 0;
+        QString learnedRoot;
+    };
+    m_bridge->run<Result>(
+        [path, alarmRoots, unmapped] {
+            Result res;
+            res.status = core::gitStatus(path);
+            const QHash<QString, QString> marks = core::repoAncestorMarks(path, alarmRoots);
+            for (auto it = marks.constBegin(); it != marks.constEnd(); ++it) {
+                const QString prev = res.status.value(it.key());
+                res.status.insert(it.key(), (!prev.isEmpty() && prev != it.value())
+                                                ? QStringLiteral("M") : it.value());
+            }
+            if (!unmapped.empty() && core::inGitRepo(path)) {
+                const core::GitRepoInfo info = core::gitRepoInfo(path);
+                if (const auto origin = core::parseRepoInput(info.originUrl)) {
+                    for (const core::RepoSpec &r : unmapped) {
+                        if (r.owner.compare(origin->first, Qt::CaseInsensitive) == 0
+                            && r.repo.compare(origin->second, Qt::CaseInsensitive) == 0) {
+                            res.learnedId = r.id;
+                            res.learnedRoot = info.root;
+                            break;
+                        }
+                    }
+                }
+            }
+            return res;
+        },
+        [this, token, path](const Result &res) {
+            if (res.learnedId != 0 && !res.learnedRoot.isEmpty()) {
+                // Frisch laden und nur eintragen, wenn noch kein Ordner gesetzt ist.
+                std::vector<core::RepoSpec> repos = core::loadRepos();
+                for (core::RepoSpec &r : repos) {
+                    if (r.id == res.learnedId && r.localPath.isEmpty()) {
+                        r.localPath = res.learnedRoot;
+                        core::saveRepos(repos);
+                        break;
+                    }
+                }
+            }
+            if (token != m_gitToken || path != m_path || res.status == m_gitStatus)
                 return;   // veraltet (Ordner gewechselt) oder unveraendert
-            m_gitStatus = status;
+            m_gitStatus = res.status;
             applyGitStatus();
         },
         [](const QString &) {}, this);
@@ -1190,7 +1242,12 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
 
 void FilePanel::onDoubleClick(int row, int)
 {
-    if (row < 0 || !m_provider)
+    openEntry(row, /*execute=*/false);
+}
+
+void FilePanel::openEntry(int row, bool execute)
+{
+    if (row < 0 || row >= m_table->rowCount() || !m_provider || !m_table->item(row, 0))
         return;
     const QString name = m_table->item(row, 0)->data(Qt::UserRole).toString();
     if (name == QLatin1String("..")) {
@@ -1202,6 +1259,9 @@ void FilePanel::onDoubleClick(int row, int)
         if (e.name == name) {
             if (e.isDir()) {
                 navigateTo(m_provider->join(m_path, name));
+            } else if (execute && !hostMode()) {
+                // Pfad der Cursorzeile — die Markierung kann woanders liegen.
+                executePath(m_provider->join(m_path, name));
             } else {
                 opView();
             }
@@ -1830,7 +1890,12 @@ void FilePanel::opNewFile()
 // Remote-Dateien muessen erst lokal vorliegen; fn bekommt immer einen lokalen Pfad.
 void FilePanel::withLocalCopy(const std::function<void(const QString &)> &fn)
 {
-    const QString path = selectedPath();
+    withLocalCopy(selectedPath(), fn);
+}
+
+void FilePanel::withLocalCopy(const QString &path,
+                              const std::function<void(const QString &)> &fn)
+{
     if (path.isEmpty() || !m_provider)
         return;
     if (!m_provider->isRemote) {
@@ -1860,7 +1925,12 @@ void FilePanel::withLocalCopy(const std::function<void(const QString &)> &fn)
 
 void FilePanel::opExecute()
 {
-    withLocalCopy([](const QString &local) {
+    executePath(selectedPath());
+}
+
+void FilePanel::executePath(const QString &path)
+{
+    withLocalCopy(path, [](const QString &local) {
         QDesktopServices::openUrl(QUrl::fromLocalFile(local));
     });
 }
@@ -2662,6 +2732,15 @@ bool FilePanel::eventFilter(QObject *obj, QEvent *event)
                 m_table->setFocus();
                 if (m_table->rowCount() > 0 && m_table->currentRow() < 0)
                     m_table->selectRow(0);
+                return true;
+            }
+            // Enter in der Liste: Ordner betreten, Datei ausfuehren (Standard-
+            // programm). Wirkt auf die Cursorzeile, nicht auf die Markierung.
+            if (ke->key() != Qt::Key_Down && (obj == m_table || obj == m_grid)
+                && !(ke->modifiers()
+                     & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier))) {
+                m_typeAheadBuffer.clear();
+                openEntry(m_table->currentRow(), /*execute=*/true);
                 return true;
             }
             break;

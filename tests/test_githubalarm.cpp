@@ -24,6 +24,19 @@ TEST(githubalarm, parse_repo_input_variants)
     CHECK(parsesTo("github.com/octocat/Hello-World/", "octocat", "Hello-World"));
 }
 
+TEST(githubalarm, repospec_keeps_local_path)
+{
+    RepoSpec r;
+    r.id = 7;
+    r.owner = QStringLiteral("octocat");
+    r.repo = QStringLiteral("Hello-World");
+    r.localPath = QStringLiteral("C:\\Repos\\Hello-World");
+    const RepoSpec back = RepoSpec::fromJson(r.toJson());
+    CHECK_EQ(back.localPath, r.localPath);
+    // Alte Eintraege ohne Feld -> leer (kein Klon zugeordnet).
+    CHECK(RepoSpec::fromJson(QJsonObject{{QStringLiteral("id"), 1}}).localPath.isEmpty());
+}
+
 TEST(githubalarm, parse_repo_input_invalid)
 {
     CHECK(!parseRepoInput(QString()).has_value());

@@ -13,6 +13,7 @@
 #include <QCoreApplication>
 #include <QDeadlineTimer>
 #include <QDir>
+#include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QTableWidget>
@@ -129,4 +130,49 @@ TEST(terminal_keys, relative_start_path_resolved_and_history_reset)
     CHECK(pump([&] { return panel.currentPath() == QDir::toNativeSeparators(tmp.path()); }));
     CHECK(!panel.canGoBack());
     CHECK(!panel.canGoForward());
+}
+
+TEST(pane_keys, enter_opens_directory_under_cursor)
+{
+    // Enter in der Liste tat nichts (nur Doppelklick war verdrahtet). Er muss
+    // den Ordner unter dem CURSOR betreten — auch wenn woanders markiert ist —
+    // und ".." eine Ebene hoeher gehen.
+    QTemporaryDir tmp;
+    CHECK(tmp.isValid());
+    CHECK(QDir().mkpath(tmp.path() + QStringLiteral("/alpha")));
+    CHECK(QDir().mkpath(tmp.path() + QStringLiteral("/beta")));
+
+    gui::AsyncBridge bridge;
+    core::LocalFileSystem local;
+    gui::FilePanel panel(&bridge, QStringLiteral("Test"));
+    panel.setProvider(&local, tmp.path());
+    const QString root = QDir::toNativeSeparators(tmp.path());
+    CHECK(pump([&] { return panel.currentPath() == root && hasParentRow(panel); }));
+    auto *table = panel.findChild<QTableWidget *>();
+    CHECK(table != nullptr);
+    if (!table)
+        return;
+    auto rowOf = [&](const QString &name) {
+        for (int r = 0; r < table->rowCount(); ++r)
+            if (table->item(r, 0)->data(Qt::UserRole).toString() == name)
+                return r;
+        return -1;
+    };
+    const int alpha = rowOf(QStringLiteral("alpha"));
+    const int beta = rowOf(QStringLiteral("beta"));
+    CHECK(alpha >= 0 && beta >= 0);
+
+    // "alpha" markiert, Cursor auf "beta".
+    QItemSelectionModel *sel = table->selectionModel();
+    sel->select(table->model()->index(alpha, 0),
+                QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    sel->setCurrentIndex(table->model()->index(beta, 0), QItemSelectionModel::NoUpdate);
+    press(table, Qt::Key_Return);
+    CHECK(pump([&] { return panel.currentPath().endsWith(QStringLiteral("beta")); }));
+
+    // ".." per Enter (Ziffernblock-Enter) -> zurueck nach oben.
+    CHECK(pump([&] { return hasParentRow(panel); }));
+    table->setCurrentCell(rowOf(QStringLiteral("..")), 0);
+    press(table, Qt::Key_Enter, Qt::KeypadModifier);
+    CHECK(pump([&] { return panel.currentPath() == root; }));
 }

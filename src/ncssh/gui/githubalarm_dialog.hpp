@@ -48,6 +48,11 @@ private:
     void removeRepo();
     void toggleRepo();
     void saveToken();
+    void chooseLocalPath();
+    void clearLocalPath();
+    // Frisch geladener Eintrag der Tabellenzeile (Zuordnung ueber die id) —
+    // Panes koennen lokale Ordner zwischendurch eintragen.
+    core::RepoSpec *repoAtRow(int row);
 
     GithubAlarmManager *m_manager;
     std::vector<core::RepoSpec> m_repos;

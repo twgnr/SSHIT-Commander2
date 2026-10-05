@@ -203,12 +203,15 @@ EditorDialog::EditorDialog(AsyncBridge *bridge, core::FileSystemProvider *provid
     mono.setStyleHint(QFont::Monospace);
     mono.setPointSize(core::getSettingInt(QStringLiteral("editor_font_size"), 11));
     m_editor->setFont(mono);
-    connect(m_editor, &QPlainTextEdit::textChanged, this, [this] {
-        if (!m_dirty) {
-            m_dirty = true;
-            updateTitle();
-        }
-    });
+    // "Geaendert" am Modified-Flag des Dokuments festmachen, NICHT an
+    // textChanged: das feuert auch beim reinen Umfaerben (rehighlight nach dem
+    // Laden), die Datei galt dann sofort als geaendert. Rueckgaengig bis zum
+    // gespeicherten Stand nimmt die Markierung wieder weg.
+    connect(m_editor->document(), &QTextDocument::modificationChanged, this,
+            [this](bool changed) {
+                m_dirty = changed;
+                updateTitle();
+            });
     // Editor + Minimap nebeneinander
     auto *editorRow = new QHBoxLayout();
     editorRow->setContentsMargins(0, 0, 0, 0);
@@ -402,6 +405,7 @@ void EditorDialog::showText(const QString &text)
     QString normalized = text;
     normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
     m_editor->setPlainText(normalized);
+    m_editor->document()->setModified(false);
     m_dirty = false;
     updateTitle();
     updateCursorInfo();
@@ -554,6 +558,7 @@ void EditorDialog::writeFile(const QString &target, const QByteArray &bytes,
         [this, target, bytes, onSaved] {
             m_raw = bytes;
             m_path = target;
+            m_editor->document()->setModified(false);
             m_dirty = false;
             updateTitle();
             m_status->setText(_t("Gespeichert."));
@@ -622,7 +627,14 @@ void EditorDialog::replaceCurrent(bool all)
         result.replace(m_find->text(), m_replace->text(),
                        m_caseSensitive->isChecked() ? Qt::CaseSensitive : Qt::CaseInsensitive);
         if (result != text) {
-            m_editor->setPlainText(result);
+            // Als normale Bearbeitung einfuegen: setPlainText setzte das
+            // Modified-Flag zurueck (Datei galt als ungeaendert, Schliessen
+            // fragte nicht) und loeschte die Undo-Historie.
+            QTextCursor all(m_editor->document());
+            all.beginEditBlock();
+            all.select(QTextCursor::Document);
+            all.insertText(result);
+            all.endEditBlock();
             m_status->setText(_t("Alle Vorkommen ersetzt."));
         }
         return;

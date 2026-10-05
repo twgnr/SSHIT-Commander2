@@ -226,7 +226,10 @@ const std::vector<Topic> &topics()
             "- Ein optionales **Token** erhöht das API-Limit und liegt im "
             "Schlüsselbund, nicht im Klartext.\n"
             "- Geprüft wird der Zeitstempel des letzten Pushs; ändert er sich, gibt es "
-            "eine Meldung. *Jetzt prüfen* fragt sofort ab.")},
+            "eine Meldung. *Jetzt prüfen* fragt sofort ab.\n"
+            "- **Lokaler Ordner** ordnet den lokalen Klon zu (wird beim Öffnen des Klons "
+            "auch selbst erkannt). Hat er Änderungen, sind in den Panes alle Ordner "
+            "darüber bis zum Laufwerk farbig markiert.")},
         {_t("Zwischenablage-Verwaltung"),
          _t("*Clipboard → Clipboard-Manager* führt eine Historie aller kopierten Texte.\n\n"
             "- Doppelklick setzt einen Eintrag als **aktiven** Inhalt der Zwischenablage.\n"

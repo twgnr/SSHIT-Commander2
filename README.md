@@ -5,7 +5,7 @@
 Two panes for local and remote directories, paired with a full SSH console and a
 real terminal. Written in C++20 with Qt 6 and libssh2.
 
-> **Version 1.0.6.** The application is covered by 308 automated tests, and the
+> **Version 1.0.6.** The application is covered by 313 automated tests, and the
 > SSH layer has been validated against a real OpenSSH server. Testing across a
 > wider range of servers is still outstanding — see
 > [Known limitations](#known-limitations).
@@ -18,7 +18,9 @@ real terminal. Written in C++20 with Qt 6 and libssh2.
   queue, bandwidth limit, pause/resume, drag & drop, bulk rename, directory and
   file comparison, checksums, ZIP, symlinks, permission editor (chmod), file
   preview, tile and list view, per-server bookmarks (with import/export),
-  Git status colouring of changed/new/untracked entries in local repositories.
+  Git status colouring of changed/new/untracked entries in local repositories
+  (for repos with an active GitHub alarm also on every parent folder up to the
+  drive).
 - **SSH/SFTP**: profile management, authentication by password, key or agent,
   PuTTY PPK import, host key checking (TOFU) with OpenSSH `known_hosts`
   interoperability and a known-hosts manager, ProxyJump/bastion, port forwarding

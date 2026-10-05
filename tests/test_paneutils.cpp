@@ -111,6 +111,68 @@ TEST(paneutils, git_status_in_subdirectory)
     CHECK(!st.contains(QStringLiteral("sub")));
 }
 
+TEST(paneutils, child_towards_and_aggregate)
+{
+    CHECK_EQ(childTowards(QStringLiteral("C:\\Repository"),
+                          QStringLiteral("C:\\Repository\\App\\sub")), QStringLiteral("App"));
+    CHECK_EQ(childTowards(QStringLiteral("C:\\"), QStringLiteral("C:\\Repository\\App")),
+             QStringLiteral("Repository"));
+    CHECK_EQ(childTowards(QStringLiteral("C:/Repository/"), QStringLiteral("C:\\Repository\\App")),
+             QStringLiteral("App"));
+    // Der Repo-Ordner selbst bzw. Fremdes/Namensvettern -> nichts.
+    CHECK(childTowards(QStringLiteral("C:\\Repository\\App"),
+                       QStringLiteral("C:\\Repository\\App")).isEmpty());
+    CHECK(childTowards(QStringLiteral("C:\\Repo"), QStringLiteral("C:\\Repository\\App")).isEmpty());
+    CHECK(childTowards(QStringLiteral("D:\\"), QStringLiteral("C:\\Repository")).isEmpty());
+#ifdef Q_OS_WIN
+    CHECK_EQ(childTowards(QStringLiteral("c:\\repository"), QStringLiteral("C:\\Repository\\App")),
+             QStringLiteral("App"));
+#endif
+
+    CHECK(aggregateBadge({}).isEmpty());
+    CHECK_EQ(aggregateBadge({{QStringLiteral("a"), QStringLiteral("?")},
+                             {QStringLiteral("b"), QStringLiteral("?")}}), QStringLiteral("?"));
+    CHECK_EQ(aggregateBadge({{QStringLiteral("a"), QStringLiteral("?")},
+                             {QStringLiteral("b"), QStringLiteral("A")}}), QStringLiteral("M"));
+}
+
+TEST(paneutils, repo_changes_marked_up_to_the_top)
+{
+    // Repo tief unten mit Aenderung -> jede Ebene darueber markiert das Kind
+    // auf dem Weg dorthin; ein sauberes Repo markiert nichts.
+    QTemporaryDir tmp;
+    CHECK(tmp.isValid());
+    const QString repo = tmp.filePath(QStringLiteral("projekte/web/app"));
+    const QString clean = tmp.filePath(QStringLiteral("projekte/sauber"));
+    QDir().mkpath(repo);
+    QDir().mkpath(clean);
+    auto git = [](const QString &dir, const QStringList &args) {
+        QProcess p;
+        p.start(QStringLiteral("git"), QStringList{QStringLiteral("-C"), dir} + args);
+        return p.waitForFinished(10000) && p.exitCode() == 0;
+    };
+    if (!git(repo, {QStringLiteral("init"), QStringLiteral("-q")}))
+        return;   // kein git installiert
+    CHECK(git(clean, {QStringLiteral("init"), QStringLiteral("-q")}));
+    writeBytes(repo + QStringLiteral("/neu.txt"), QByteArrayLiteral("n"));
+
+    const QStringList roots{QDir::toNativeSeparators(repo), QDir::toNativeSeparators(clean)};
+    const auto top = repoAncestorMarks(tmp.path(), roots);
+    CHECK_EQ(top.size(), qsizetype(1));
+    CHECK_EQ(top.value(QStringLiteral("projekte")), QStringLiteral("?"));
+    const auto mid = repoAncestorMarks(tmp.filePath(QStringLiteral("projekte")), roots);
+    CHECK_EQ(mid.value(QStringLiteral("web")), QStringLiteral("?"));
+    CHECK(!mid.contains(QStringLiteral("sauber")));
+    CHECK_EQ(repoAncestorMarks(tmp.filePath(QStringLiteral("projekte/web")), roots)
+                 .value(QStringLiteral("app")), QStringLiteral("?"));
+    CHECK(repoAncestorMarks(repo, roots).isEmpty());   // im Repo: normale Faerbung
+
+    const GitRepoInfo info = gitRepoInfo(repo);
+    CHECK_EQ(QDir::cleanPath(QDir::fromNativeSeparators(info.root)).toLower(),
+             QDir::cleanPath(QDir::fromNativeSeparators(repo)).toLower());
+    CHECK(info.originUrl.isEmpty());
+}
+
 TEST(paneutils, hash_file_and_bytes)
 {
     QTemporaryDir tmp;

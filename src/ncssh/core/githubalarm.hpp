@@ -20,6 +20,9 @@ struct RepoSpec {
     QString name;
     bool enabled = true;
     QString lastPushed;  // gemerkter Stand (pushed_at), fuer Aenderungserkennung
+    // Lokaler Klon (optional): Panes markieren bei Aenderungen darin alle
+    // uebergeordneten Ordner. Wird beim Oeffnen des Klons auch selbst gelernt.
+    QString localPath;
 
     QString fullName() const { return owner + QLatin1Char('/') + repo; }
     QString display() const { return name.isEmpty() ? fullName() : name; }

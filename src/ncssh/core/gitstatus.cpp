@@ -114,4 +114,66 @@ QHash<QString, QString> gitStatus(const QString &directory, int timeoutMs)
     return parsePorcelain(*status, pre);
 }
 
+QString aggregateBadge(const QHash<QString, QString> &status)
+{
+    QString out;
+    for (const QString &code : status) {
+        if (out.isEmpty())
+            out = code;
+        else if (out != code)
+            return QStringLiteral("M");
+    }
+    return out;
+}
+
+QString childTowards(const QString &directory, const QString &path)
+{
+    QString dir = QDir::cleanPath(QDir::fromNativeSeparators(directory));
+    const QString target = QDir::cleanPath(QDir::fromNativeSeparators(path));
+    if (!dir.endsWith(QLatin1Char('/')))
+        dir += QLatin1Char('/');   // "C:/" bleibt, "C:/a" -> "C:/a/"
+#ifdef Q_OS_WIN
+    const Qt::CaseSensitivity cs = Qt::CaseInsensitive;
+#else
+    const Qt::CaseSensitivity cs = Qt::CaseSensitive;
+#endif
+    if (target.length() <= dir.length() || !target.startsWith(dir, cs))
+        return {};
+    return target.mid(dir.length()).section(QLatin1Char('/'), 0, 0);
+}
+
+QHash<QString, QString> repoAncestorMarks(const QString &directory, const QStringList &repoRoots,
+                                          int timeoutMs)
+{
+    QHash<QString, QString> out;
+    for (const QString &root : repoRoots) {
+        const QString child = childTowards(directory, root);
+        if (child.isEmpty())
+            continue;   // Repo liegt nicht unterhalb des angezeigten Ordners
+        const QString code = aggregateBadge(gitStatus(root, timeoutMs));
+        if (code.isEmpty())
+            continue;   // sauber -> nichts markieren
+        const QString prev = out.value(child);
+        out.insert(child, (!prev.isEmpty() && prev != code) ? QStringLiteral("M") : code);
+    }
+    return out;
+}
+
+GitRepoInfo gitRepoInfo(const QString &directory, int timeoutMs)
+{
+    if (!inGitRepo(directory))
+        return {};
+    const auto top = runGit(directory, {QStringLiteral("rev-parse"),
+                                        QStringLiteral("--show-toplevel")}, timeoutMs);
+    if (!top)
+        return {};
+    GitRepoInfo info;
+    info.root = QDir::toNativeSeparators(top->trimmed());
+    // Ohne origin endet git config mit Exit 1 -> URL bleibt leer.
+    if (const auto url = runGit(directory, {QStringLiteral("config"), QStringLiteral("--get"),
+                                            QStringLiteral("remote.origin.url")}, timeoutMs))
+        info.originUrl = url->trimmed();
+    return info;
+}
+
 } // namespace ncssh::core
