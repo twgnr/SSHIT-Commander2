@@ -3,6 +3,7 @@
 #include "ncssh/core/dateformat.hpp"
 #include "ncssh/core/execfile.hpp"
 #include "ncssh/core/fileops.hpp"
+#include "ncssh/core/gitstatus.hpp"
 #include "ncssh/core/i18n.hpp"
 #include "ncssh/core/natsort.hpp"
 #include "ncssh/core/netscan.hpp"
@@ -798,6 +799,70 @@ void FilePanel::loadVisibleThumbs()
     }
 }
 
+void FilePanel::loadGitStatus()
+{
+    // Nur lokal: remote/Host-Liste haben kein git, Netzfreigaben (UNC) waeren
+    // fuer "git status" zu langsam.
+    if (!m_provider || m_provider->isRemote || hostMode() || m_path.isEmpty()
+        || m_path.startsWith(QLatin1String("\\\\")) || m_path.startsWith(QLatin1String("//"))) {
+        if (!m_gitStatus.isEmpty()) {
+            m_gitStatus.clear();
+            applyGitStatus();
+        }
+        return;
+    }
+    const quint64 token = ++m_gitToken;
+    const QString path = m_path;
+    m_bridge->run<QHash<QString, QString>>(
+        [path] { return core::gitStatus(path); },
+        [this, token, path](const QHash<QString, QString> &status) {
+            if (token != m_gitToken || path != m_path || status == m_gitStatus)
+                return;   // veraltet (Ordner gewechselt) oder unveraendert
+            m_gitStatus = status;
+            applyGitStatus();
+        },
+        [](const QString &) {}, this);
+}
+
+void FilePanel::applyGitStatus()
+{
+    // Badge -> (Farbe, Beschriftung); unbekannte Codes gelten als "geaendert".
+    auto style = [](const QString &code) -> std::pair<QColor, QString> {
+        switch (code.isEmpty() ? 'M' : code.at(0).toLatin1()) {
+        case 'T': return {QColor(0xe5a50a), _t("Typ geändert")};
+        case 'A': return {QColor(0x33d17a), _t("neu")};
+        case 'D': return {QColor(0xf66151), _t("gelöscht")};
+        case 'U': return {QColor(0xf66151), _t("Konflikt")};
+        case 'R': return {QColor(0x62a0ea), _t("umbenannt")};
+        case 'C': return {QColor(0x62a0ea), _t("kopiert")};
+        case '?': return {QColor(0x9aa4b2), _t("unverfolgt")};
+        default:  return {QColor(0xe5a50a), _t("geändert")};
+        }
+    };
+    const bool execHighlight = core::getSettingBool(QStringLiteral("exec_highlight"), true);
+    const QColor execColor(core::getSettingString(QStringLiteral("exec_color"),
+                                                  QStringLiteral("#3fb950")));
+    for (int row = 0; row < int(m_rows.size()); ++row) {
+        QTableWidgetItem *item = m_table->item(row, 0);
+        if (!item)
+            continue;
+        const FileEntry &e = m_rows[size_t(row)];
+        const QString code = e.type == EntryType::Parent ? QString() : m_gitStatus.value(e.name);
+        if (code.isEmpty()) {
+            // Zustand wie in populate (Markierung kann beim Neuladen wegfallen).
+            if (execHighlight && core::isExecutable(e))
+                item->setForeground(execColor);
+            else
+                item->setData(Qt::ForegroundRole, QVariant());
+            item->setData(Qt::ToolTipRole, QVariant());
+            continue;
+        }
+        const auto [color, label] = style(code);
+        item->setForeground(color);
+        item->setToolTip(_t("Git-Status: %1").arg(QStringLiteral("%1 (%2)").arg(label, code)));
+    }
+}
+
 // Fuellt die Laufwerksauswahl. Nur lokal sinnvoll — remote gibt es keine
 // Laufwerksbuchstaben, dort bleibt sie ausgeblendet.
 void FilePanel::updateDriveCombo()
@@ -952,6 +1017,12 @@ void FilePanel::loadDir(const QString &rawPath, bool record)
                 m_histPos = m_history.size() - 1;
             }
             const bool modeChanged = hostMode() != path.startsWith(QLatin1String("net://"));
+            // Git-Markierungen gehoeren zum alten Ordner; beim Neuladen desselben
+            // Ordners bleiben sie bis zum frischen Ergebnis stehen (kein Flackern).
+            if (path != m_path) {
+                m_gitStatus.clear();
+                ++m_gitToken;
+            }
             m_path = path;
             m_pathEdit->setText(path);
             endPathEdit();
@@ -966,6 +1037,7 @@ void FilePanel::loadDir(const QString &rawPath, bool record)
             m_thumbRequested.clear();
             populate(entries);
             loadVisibleThumbs();
+            loadGitStatus();
             updateBookmarkButton();
             emit pathChanged(path);
         },
@@ -1103,6 +1175,7 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
         m_rows.push_back(e);
         ++row;
     }
+    applyGitStatus();
     m_table->setUpdatesEnabled(true);
     m_baseStatus = _t("%1 Einträge (%2 Ordner, %3 Dateien)")
                        .arg(dirCount + fileCount).arg(dirCount).arg(fileCount)

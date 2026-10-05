@@ -1,5 +1,6 @@
 #include "ncssh/core/macroactions.hpp"
 
+#include "ncssh/core/i18n.hpp"
 #include "ncssh/core/runner.hpp"
 
 #include <QDateTime>
@@ -30,110 +31,110 @@ const std::vector<ActionSpec> &actionSpecs()
 {
     static const std::vector<ActionSpec> specs = {
         // --- Programme / System ---
-        {QStringLiteral("execute"), QStringLiteral("Programm/Befehl ausführen"),
-         QStringLiteral("Programme & System"), QStringLiteral("text"),
-         QStringLiteral("Befehl oder vollständiger Pfad zur ausführbaren Datei.\nBeispiel: C:\\Windows\\System32\\calc.exe")},
-        {QStringLiteral("smart_open"), QStringLiteral("Öffnen oder fokussieren"),
-         QStringLiteral("Programme & System"), QStringLiteral("text"),
-         QStringLiteral("Läuft die App bereits, wird ihr Fenster fokussiert, sonst gestartet.\n"
-                        "Syntax: Start | Prozessname | Fenstertitel  (die letzten beiden optional).\n"
-                        "Beispiel: notepad.exe | notepad.exe | Editor")},
-        {QStringLiteral("open"), QStringLiteral("Datei/URL/Ordner öffnen"),
-         QStringLiteral("Programme & System"), QStringLiteral("text"),
-         QStringLiteral("Öffnet Pfad oder URL mit dem Standardprogramm.\nBeispiel: https://example.com")},
-        {QStringLiteral("screenshot"), QStringLiteral("Bildschirmfoto"),
-         QStringLiteral("Programme & System"), QStringLiteral("text"),
-         QStringLiteral("Speichert ein Bildschirmfoto (PNG) und legt es in die Zwischenablage.\n"
-                        "Zielordner angeben (leer = Bilder/Home). Beispiel: C:\\Screenshots"), false, true},
-        {QStringLiteral("lock_screen"), QStringLiteral("Bildschirm sperren"),
-         QStringLiteral("Programme & System"), QStringLiteral("none")},
-        {QStringLiteral("monitor_off"), QStringLiteral("Monitore ausschalten"),
-         QStringLiteral("Programme & System"), QStringLiteral("none")},
+        {QStringLiteral("execute"), _t("Programm/Befehl ausführen"),
+         _t("Programme & System"), QStringLiteral("text"),
+         _t("Befehl oder vollständiger Pfad zur ausführbaren Datei.\nBeispiel: C:\\Windows\\System32\\calc.exe")},
+        {QStringLiteral("smart_open"), _t("Öffnen oder fokussieren"),
+         _t("Programme & System"), QStringLiteral("text"),
+         _t("Läuft die App bereits, wird ihr Fenster fokussiert, sonst gestartet.\n"
+            "Syntax: Start | Prozessname | Fenstertitel  (die letzten beiden optional).\n"
+            "Beispiel: notepad.exe | notepad.exe | Editor")},
+        {QStringLiteral("open"), _t("Datei/URL/Ordner öffnen"),
+         _t("Programme & System"), QStringLiteral("text"),
+         _t("Öffnet Pfad oder URL mit dem Standardprogramm.\nBeispiel: https://example.com")},
+        {QStringLiteral("screenshot"), _t("Bildschirmfoto"),
+         _t("Programme & System"), QStringLiteral("text"),
+         _t("Speichert ein Bildschirmfoto (PNG) und legt es in die Zwischenablage.\n"
+            "Zielordner angeben (leer = Bilder/Home). Beispiel: C:\\Screenshots"), false, true},
+        {QStringLiteral("lock_screen"), _t("Bildschirm sperren"),
+         _t("Programme & System"), QStringLiteral("none")},
+        {QStringLiteral("monitor_off"), _t("Monitore ausschalten"),
+         _t("Programme & System"), QStringLiteral("none")},
         // --- Tastatur ---
-        {QStringLiteral("write"), QStringLiteral("Text tippen"), QStringLiteral("Tastatur"),
-         QStringLiteral("text"), QStringLiteral("Tippt den Text Zeichen für Zeichen.\nBeispiel: Hallo Welt")},
-        {QStringLiteral("insert_text"), QStringLiteral("Text einfügen"), QStringLiteral("Tastatur"),
+        {QStringLiteral("write"), _t("Text tippen"), _t("Tastatur"),
+         QStringLiteral("text"), _t("Tippt den Text Zeichen für Zeichen.\nBeispiel: Hallo Welt")},
+        {QStringLiteral("insert_text"), _t("Text einfügen"), _t("Tastatur"),
          QStringLiteral("text"),
-         QStringLiteral("Fügt Text über die Zwischenablage ein (schnell, erhält Zeilenumbrüche).\n"
-                        "Beispiel: Mit freundlichen Grüßen")},
-        {QStringLiteral("hotkey"), QStringLiteral("Tastenkürzel"), QStringLiteral("Tastatur"),
-         QStringLiteral("text"), QStringLiteral("Tastenkombination, mit + getrennt.\nBeispiel: ctrl+shift+m")},
-        {QStringLiteral("key_press"), QStringLiteral("Taste drücken (halten)"), QStringLiteral("Tastatur"),
-         QStringLiteral("text"), QStringLiteral("Drückt eine Taste und hält sie.\nBeispiel: shift")},
-        {QStringLiteral("key_release"), QStringLiteral("Taste loslassen"), QStringLiteral("Tastatur"),
-         QStringLiteral("text"), QStringLiteral("Lässt eine zuvor gedrückte Taste los.\nBeispiel: shift")},
-        {QStringLiteral("toggle_key"), QStringLiteral("Modifier umschalten"), QStringLiteral("Tastatur"),
-         QStringLiteral("text"), QStringLiteral("Erster Druck hält den Modifier, zweiter lässt ihn los.\nBeispiel: alt")},
-        {QStringLiteral("insert_datetime"), QStringLiteral("Datum/Uhrzeit einfügen"), QStringLiteral("Tastatur"),
+         _t("Fügt Text über die Zwischenablage ein (schnell, erhält Zeilenumbrüche).\n"
+            "Beispiel: Mit freundlichen Grüßen")},
+        {QStringLiteral("hotkey"), _t("Tastenkürzel"), _t("Tastatur"),
+         QStringLiteral("text"), _t("Tastenkombination, mit + getrennt.\nBeispiel: ctrl+shift+m")},
+        {QStringLiteral("key_press"), _t("Taste drücken (halten)"), _t("Tastatur"),
+         QStringLiteral("text"), _t("Drückt eine Taste und hält sie.\nBeispiel: shift")},
+        {QStringLiteral("key_release"), _t("Taste loslassen"), _t("Tastatur"),
+         QStringLiteral("text"), _t("Lässt eine zuvor gedrückte Taste los.\nBeispiel: shift")},
+        {QStringLiteral("toggle_key"), _t("Modifier umschalten"), _t("Tastatur"),
+         QStringLiteral("text"), _t("Erster Druck hält den Modifier, zweiter lässt ihn los.\nBeispiel: alt")},
+        {QStringLiteral("insert_datetime"), _t("Datum/Uhrzeit einfügen"), _t("Tastatur"),
          QStringLiteral("text"),
-         QStringLiteral("Fügt das aktuelle Datum/die Uhrzeit ein (Format wie strftime).\n"
-                        "Leer = %d.%m.%Y %H:%M. Beispiel: %Y-%m-%d")},
-        {QStringLiteral("toggle_key_timer"), QStringLiteral("Taste halten (mit Timer)"), QStringLiteral("Tastatur"),
+         _t("Fügt das aktuelle Datum/die Uhrzeit ein (Format wie strftime).\n"
+            "Leer = %d.%m.%Y %H:%M. Beispiel: %Y-%m-%d")},
+        {QStringLiteral("toggle_key_timer"), _t("Taste halten (mit Timer)"), _t("Tastatur"),
          QStringLiteral("text"),
-         QStringLiteral("Drückt die Taste und lässt sie nach X Sekunden automatisch los.\n"
-                        "Format: Taste|Sekunden  (z. B. ctrl|3)")},
+         _t("Drückt die Taste und lässt sie nach X Sekunden automatisch los.\n"
+            "Format: Taste|Sekunden  (z. B. ctrl|3)")},
         // --- Maus ---
-        {QStringLiteral("mouse_move"), QStringLiteral("Maus bewegen"), QStringLiteral("Maus"),
-         QStringLiteral("json"), QStringLiteral("JSON mit Zielkoordinaten.\nBeispiel: {\"x\": 100, \"y\": 200}")},
-        {QStringLiteral("mouse_click"), QStringLiteral("Mausklick"), QStringLiteral("Maus"),
-         QStringLiteral("json"), QStringLiteral("JSON.\nBeispiel: {\"x\": 100, \"y\": 200, \"button\": \"left\", \"pressed\": true}")},
-        {QStringLiteral("mouse_scroll"), QStringLiteral("Mausrad"), QStringLiteral("Maus"),
-         QStringLiteral("json"), QStringLiteral("JSON mit Scroll-Delta.\nBeispiel: {\"dx\": 0, \"dy\": -2}")},
+        {QStringLiteral("mouse_move"), _t("Maus bewegen"), _t("Maus"),
+         QStringLiteral("json"), _t("JSON mit Zielkoordinaten.\nBeispiel: {\"x\": 100, \"y\": 200}")},
+        {QStringLiteral("mouse_click"), _t("Mausklick"), _t("Maus"),
+         QStringLiteral("json"), _t("JSON.\nBeispiel: {\"x\": 100, \"y\": 200, \"button\": \"left\", \"pressed\": true}")},
+        {QStringLiteral("mouse_scroll"), _t("Mausrad"), _t("Maus"),
+         QStringLiteral("json"), _t("JSON mit Scroll-Delta.\nBeispiel: {\"dx\": 0, \"dy\": -2}")},
         // --- Medien & Audio ---
-        {QStringLiteral("media_play_pause"), QStringLiteral("Wiedergabe/Pause"), QStringLiteral("Medien & Audio"), QStringLiteral("none")},
-        {QStringLiteral("media_next"), QStringLiteral("Nächster Titel"), QStringLiteral("Medien & Audio"), QStringLiteral("none")},
-        {QStringLiteral("media_previous"), QStringLiteral("Vorheriger Titel"), QStringLiteral("Medien & Audio"), QStringLiteral("none")},
-        {QStringLiteral("media_stop"), QStringLiteral("Stopp"), QStringLiteral("Medien & Audio"), QStringLiteral("none")},
-        {QStringLiteral("volume_up"), QStringLiteral("Lauter"), QStringLiteral("Medien & Audio"),
-         QStringLiteral("number"), QStringLiteral("Anzahl der Schritte (leer = 1).\nBeispiel: 2")},
-        {QStringLiteral("volume_down"), QStringLiteral("Leiser"), QStringLiteral("Medien & Audio"),
-         QStringLiteral("number"), QStringLiteral("Anzahl der Schritte (leer = 1).\nBeispiel: 2")},
-        {QStringLiteral("toggle_mute"), QStringLiteral("Stummschalten"), QStringLiteral("Medien & Audio"), QStringLiteral("none")},
-        {QStringLiteral("set_audio_device"), QStringLiteral("Audiogerät wählen"), QStringLiteral("Medien & Audio"),
-         QStringLiteral("text"), QStringLiteral("Name (Teilstring) des Ausgabegeräts.\nBeispiel: Kopfhörer")},
+        {QStringLiteral("media_play_pause"), _t("Wiedergabe/Pause"), _t("Medien & Audio"), QStringLiteral("none")},
+        {QStringLiteral("media_next"), _t("Nächster Titel"), _t("Medien & Audio"), QStringLiteral("none")},
+        {QStringLiteral("media_previous"), _t("Vorheriger Titel"), _t("Medien & Audio"), QStringLiteral("none")},
+        {QStringLiteral("media_stop"), _t("Stopp"), _t("Medien & Audio"), QStringLiteral("none")},
+        {QStringLiteral("volume_up"), _t("Lauter"), _t("Medien & Audio"),
+         QStringLiteral("number"), _t("Anzahl der Schritte (leer = 1).\nBeispiel: 2")},
+        {QStringLiteral("volume_down"), _t("Leiser"), _t("Medien & Audio"),
+         QStringLiteral("number"), _t("Anzahl der Schritte (leer = 1).\nBeispiel: 2")},
+        {QStringLiteral("toggle_mute"), _t("Stummschalten"), _t("Medien & Audio"), QStringLiteral("none")},
+        {QStringLiteral("set_audio_device"), _t("Audiogerät wählen"), _t("Medien & Audio"),
+         QStringLiteral("text"), _t("Name (Teilstring) des Ausgabegeräts.\nBeispiel: Kopfhörer")},
         // --- Fenster ---
-        {QStringLiteral("focus_window"), QStringLiteral("Fenster fokussieren"), QStringLiteral("Fenster"),
+        {QStringLiteral("focus_window"), _t("Fenster fokussieren"), _t("Fenster"),
          QStringLiteral("text"),
-         QStringLiteral("Holt das Fenster mit passendem Titel in den Vordergrund.\nTitel (Teilstring) angeben. Beispiel: Editor")},
-        {QStringLiteral("window_management"), QStringLiteral("Fenster verwalten"), QStringLiteral("Fenster"),
-         QStringLiteral("window"), QStringLiteral("Fenster anordnen.")},
-        {QStringLiteral("cycle_windows"), QStringLiteral("Fenster durchschalten"), QStringLiteral("Fenster"),
+         _t("Holt das Fenster mit passendem Titel in den Vordergrund.\nTitel (Teilstring) angeben. Beispiel: Editor")},
+        {QStringLiteral("window_management"), _t("Fenster verwalten"), _t("Fenster"),
+         QStringLiteral("window"), _t("Fenster anordnen.")},
+        {QStringLiteral("cycle_windows"), _t("Fenster durchschalten"), _t("Fenster"),
          QStringLiteral("text"),
-         QStringLiteral("Fenster einer App nacheinander fokussieren. Namen/Titel mit | oder ,\ntrennen (z. B. chrome | explorer).")},
+         _t("Fenster einer App nacheinander fokussieren. Namen/Titel mit | oder ,\ntrennen (z. B. chrome | explorer).")},
         // --- Layer (vom Fenster behandelt) ---
-        {QStringLiteral("layer"), QStringLiteral("Zu Layer wechseln"), QStringLiteral("Layer"), QStringLiteral("layer"), {}, true},
-        {QStringLiteral("jump_to_layer"), QStringLiteral("Direkt zu Layer"), QStringLiteral("Layer"), QStringLiteral("layer"), {}, true},
-        {QStringLiteral("back"), QStringLiteral("Zurück"), QStringLiteral("Layer"), QStringLiteral("none"), {}, true},
-        {QStringLiteral("back_to_main"), QStringLiteral("Zum Start-Layer"), QStringLiteral("Layer"), QStringLiteral("none"), {}, true},
+        {QStringLiteral("layer"), _t("Zu Layer wechseln"), _t("Layer"), QStringLiteral("layer"), {}, true},
+        {QStringLiteral("jump_to_layer"), _t("Direkt zu Layer"), _t("Layer"), QStringLiteral("layer"), {}, true},
+        {QStringLiteral("back"), _t("Zurück"), _t("Layer"), QStringLiteral("none"), {}, true},
+        {QStringLiteral("back_to_main"), _t("Zum Start-Layer"), _t("Layer"), QStringLiteral("none"), {}, true},
         // --- Netzwerk & SSH ---
-        {QStringLiteral("http_request"), QStringLiteral("HTTP-Anfrage"), QStringLiteral("Netzwerk & SSH"),
-         QStringLiteral("json"), QStringLiteral("JSON mit url/method/json/headers.\nBeispiel: {\"method\": \"GET\", \"url\": \"https://example.com\"}")},
-        {QStringLiteral("ssh_command"), QStringLiteral("Befehl an SSH-Konsole"), QStringLiteral("Netzwerk & SSH"),
-         QStringLiteral("ssh"), QStringLiteral("Sendet den Befehl an die aktive Konsole des SSHIT-Commander.")},
-        {QStringLiteral("ssh_broadcast"), QStringLiteral("Befehl an alle Konsolen"), QStringLiteral("Netzwerk & SSH"),
-         QStringLiteral("ssh"), QStringLiteral("Sendet den Befehl an alle Konsolen des aktiven Tabs.")},
+        {QStringLiteral("http_request"), _t("HTTP-Anfrage"), _t("Netzwerk & SSH"),
+         QStringLiteral("json"), _t("JSON mit url/method/json/headers.\nBeispiel: {\"method\": \"GET\", \"url\": \"https://example.com\"}")},
+        {QStringLiteral("ssh_command"), _t("Befehl an SSH-Konsole"), _t("Netzwerk & SSH"),
+         QStringLiteral("ssh"), _t("Sendet den Befehl an die aktive Konsole des SSHIT-Commander.")},
+        {QStringLiteral("ssh_broadcast"), _t("Befehl an alle Konsolen"), _t("Netzwerk & SSH"),
+         QStringLiteral("ssh"), _t("Sendet den Befehl an alle Konsolen des aktiven Tabs.")},
         // --- Ablauf ---
-        {QStringLiteral("delay"), QStringLiteral("Verzögerung"), QStringLiteral("Ablauf"),
-         QStringLiteral("number"), QStringLiteral("Wartezeit in Sekunden (z. B. 0.5).")},
-        {QStringLiteral("multi_action"), QStringLiteral("Mehrere Aktionen"), QStringLiteral("Ablauf"),
-         QStringLiteral("sequence"), QStringLiteral("Mehrere Aktionen, bei jedem Druck nacheinander ausgeführt.")},
-        {QStringLiteral("sequence"), QStringLiteral("Sequenz (eine pro Druck)"), QStringLiteral("Ablauf"),
-         QStringLiteral("sequence"), QStringLiteral("Bei jedem Druck wird die nächste Aktion der Liste ausgeführt.")},
+        {QStringLiteral("delay"), _t("Verzögerung"), _t("Ablauf"),
+         QStringLiteral("number"), _t("Wartezeit in Sekunden (z. B. 0.5).")},
+        {QStringLiteral("multi_action"), _t("Mehrere Aktionen"), _t("Ablauf"),
+         QStringLiteral("sequence"), _t("Mehrere Aktionen, bei jedem Druck nacheinander ausgeführt.")},
+        {QStringLiteral("sequence"), _t("Sequenz (eine pro Druck)"), _t("Ablauf"),
+         QStringLiteral("sequence"), _t("Bei jedem Druck wird die nächste Aktion der Liste ausgeführt.")},
         // --- Sonstiges ---
-        {QStringLiteral("clipboard_set"), QStringLiteral("In Zwischenablage"), QStringLiteral("Sonstiges"),
-         QStringLiteral("text"), QStringLiteral("Legt den Text in die Zwischenablage.\nBeispiel: Mein Textbaustein")},
-        {QStringLiteral("clipboard_clear"), QStringLiteral("Zwischenablage leeren"), QStringLiteral("Sonstiges"), QStringLiteral("none")},
-        {QStringLiteral("toggle_state"), QStringLiteral("Mehrzustands-Taste"), QStringLiteral("Sonstiges"),
+        {QStringLiteral("clipboard_set"), _t("In Zwischenablage"), _t("Sonstiges"),
+         QStringLiteral("text"), _t("Legt den Text in die Zwischenablage.\nBeispiel: Mein Textbaustein")},
+        {QStringLiteral("clipboard_clear"), _t("Zwischenablage leeren"), _t("Sonstiges"), QStringLiteral("none")},
+        {QStringLiteral("toggle_state"), _t("Mehrzustands-Taste"), _t("Sonstiges"),
          QStringLiteral("json"),
-         QStringLiteral("Liste von Zuständen (JSON). Jeder Druck führt die Aktion des aktuellen Zustands aus und wechselt zum nächsten\n"
-                        "(Beschriftung/Icon ändern sich entsprechend)."), false, true},
-        {QStringLiteral("command_cycle"), QStringLiteral("Befehl auswählen"), QStringLiteral("Sonstiges"),
+         _t("Liste von Zuständen (JSON). Jeder Druck führt die Aktion des aktuellen Zustands aus und wechselt zum nächsten\n"
+            "(Beschriftung/Icon ändern sich entsprechend)."), false, true},
+        {QStringLiteral("command_cycle"), _t("Befehl auswählen"), _t("Sonstiges"),
          QStringLiteral("text"),
-         QStringLiteral("Eine Zeile pro Eintrag. Beim Druck erscheint ein Auswahl-Menü;\nder gewählte Text wird getippt.\nBeispiel:\nls -la\ncd /var/log"), false, true},
-        {QStringLiteral("clipboard_history"), QStringLiteral("Zwischenablage-Verlauf"), QStringLiteral("Sonstiges"),
+         _t("Eine Zeile pro Eintrag. Beim Druck erscheint ein Auswahl-Menü;\nder gewählte Text wird getippt.\nBeispiel:\nls -la\ncd /var/log"), false, true},
+        {QStringLiteral("clipboard_history"), _t("Zwischenablage-Verlauf"), _t("Sonstiges"),
          QStringLiteral("none"),
-         QStringLiteral("Zeigt zuletzt kopierte Texte als Auswahl-Menü; die Auswahl wird in die Zwischenablage gelegt."), false, true},
-        {QStringLiteral("none"), QStringLiteral("Keine Aktion"), QStringLiteral("Sonstiges"), QStringLiteral("none")},
+         _t("Zeigt zuletzt kopierte Texte als Auswahl-Menü; die Auswahl wird in die Zwischenablage gelegt."), false, true},
+        {QStringLiteral("none"), _t("Keine Aktion"), _t("Sonstiges"), QStringLiteral("none")},
     };
     return specs;
 }
@@ -640,7 +641,7 @@ std::optional<QString> executeAction(const QString &actionType, const QJsonValue
     } catch (const std::exception &exc) {
         return QString::fromUtf8(exc.what());
     } catch (...) {
-        return QStringLiteral("Unbekannter Fehler bei Aktion '%1'.").arg(actionType);
+        return _t("Unbekannter Fehler bei Aktion '%1'.").arg(actionType);
     }
 }
 

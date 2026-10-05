@@ -227,6 +227,10 @@ private:
     std::pair<int, int> visibleRows(int buffer = 8) const;   // [erste, letzte)
     void loadVisibleThumbs();
 
+    // --- Git-Status (nur lokal): geaenderte/neue Eintraege farbig markieren ---
+    void loadGitStatus();
+    void applyGitStatus();            // m_gitStatus auf die sichtbaren Zeilen
+
     // --- Kontextmenue-Aktionen ---
     void opExecute();                            // mit dem Standardprogramm oeffnen
     void openWithProgram(const QString &exe);    // mit einem bestimmten Programm
@@ -299,6 +303,8 @@ private:
     QTimer *m_thumbTimer = nullptr;   // Nachladen beim Scrollen entprellen
     quint64 m_thumbToken = 0;         // verwirft Ergebnisse alter Verzeichnisse
     QSet<QString> m_thumbRequested;
+    QHash<QString, QString> m_gitStatus;   // {Name: Badge} des aktuellen Ordners
+    quint64 m_gitToken = 0;           // verwirft Git-Ergebnisse alter Auftraege
     QLabel *m_status = nullptr;
     QString m_baseStatus;             // Zusammenfassung ohne Auswahl-Teil
     QString m_statusFull;             // ungekuerzter Text der Statuszeile

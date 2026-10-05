@@ -3,6 +3,9 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
+#include <QStringList>
+
+#include <optional>
 
 namespace ncssh::core {
 
@@ -32,7 +35,7 @@ static QString badge(QChar x, QChar y)
     return QStringLiteral("M");
 }
 
-QHash<QString, QString> parsePorcelain(const QString &text)
+QHash<QString, QString> parsePorcelain(const QString &text, const QString &prefix)
 {
     QHash<QString, QString> out;
     for (const QString &line : text.split(QLatin1Char('\n'))) {
@@ -46,6 +49,16 @@ QHash<QString, QString> parsePorcelain(const QString &text)
         path = path.trimmed();
         while (path.startsWith(QLatin1Char('"'))) path.remove(0, 1);
         while (path.endsWith(QLatin1Char('"'))) path.chop(1);
+        if (!prefix.isEmpty()) {
+#ifdef Q_OS_WIN
+            // Der Prefix stammt aus dem (evtl. anders geschriebenen) Pfad.
+            if (!path.startsWith(prefix, Qt::CaseInsensitive))
+#else
+            if (!path.startsWith(prefix))
+#endif
+                continue;   // liegt nicht im angezeigten Verzeichnis
+            path.remove(0, prefix.length());
+        }
         if (path.isEmpty())
             continue;
         const QString name = path.section(QLatin1Char('/'), 0, 0);
@@ -56,23 +69,49 @@ QHash<QString, QString> parsePorcelain(const QString &text)
     return out;
 }
 
+// git im Verzeichnis ausfuehren; nullopt bei Start-/Zeit-/Exit-Fehler.
+static std::optional<QString> runGit(const QString &directory, const QStringList &args,
+                                     int timeoutMs)
+{
+    QProcess proc;
+    // quotePath=false: Umlaute nicht als Oktal-Escapes ("\303\244") ausgeben.
+    proc.start(QStringLiteral("git"),
+               QStringList{QStringLiteral("-C"), directory, QStringLiteral("-c"),
+                           QStringLiteral("core.quotePath=false")}
+                   + args);
+    if (!proc.waitForStarted(2000))
+        return std::nullopt;
+    if (!proc.waitForFinished(timeoutMs)) {
+        proc.kill();
+        proc.waitForFinished(1000);
+        return std::nullopt;
+    }
+    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0)
+        return std::nullopt;
+    return QString::fromUtf8(proc.readAllStandardOutput());
+}
+
 QHash<QString, QString> gitStatus(const QString &directory, int timeoutMs)
 {
     if (!inGitRepo(directory))
         return {};  // kein Repo -> gar keinen git-Prozess starten
-    QProcess proc;
-    proc.start(QStringLiteral("git"),
-               {QStringLiteral("-C"), directory, QStringLiteral("status"),
-                QStringLiteral("--porcelain"), QStringLiteral("--untracked-files=normal")});
-    if (!proc.waitForStarted(2000))
+    // Lage des Verzeichnisses im Repo: Porcelain-Pfade sind wurzelrelativ.
+    const auto prefix = runGit(directory, {QStringLiteral("rev-parse"),
+                                           QStringLiteral("--show-prefix")}, timeoutMs);
+    if (!prefix)
+        return {};  // z. B. innerhalb von .git oder "dubious ownership"
+    // Pathspec "." beschraenkt die Ausgabe auf das angezeigte Verzeichnis.
+    const auto status = runGit(directory,
+                               {QStringLiteral("status"), QStringLiteral("--porcelain"),
+                                QStringLiteral("--untracked-files=normal"),
+                                QStringLiteral("--"), QStringLiteral(".")},
+                               timeoutMs);
+    if (!status)
         return {};
-    if (!proc.waitForFinished(timeoutMs)) {
-        proc.kill();
-        return {};
-    }
-    if (proc.exitCode() != 0)
-        return {};
-    return parsePorcelain(QString::fromUtf8(proc.readAllStandardOutput()));
+    QString pre = *prefix;
+    while (pre.endsWith(QLatin1Char('\n')) || pre.endsWith(QLatin1Char('\r')))
+        pre.chop(1);
+    return parsePorcelain(*status, pre);
 }
 
 } // namespace ncssh::core

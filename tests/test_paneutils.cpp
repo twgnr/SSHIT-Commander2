@@ -7,6 +7,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <algorithm>
 
@@ -57,6 +58,57 @@ TEST(paneutils, parse_porcelain)
     CHECK_EQ(st.value(QStringLiteral("neu.py")), QStringLiteral("R"));
     // mehrere Aenderungen im selben Ordner -> gemischt = "M"
     CHECK_EQ(st.value(QStringLiteral("sub")), QStringLiteral("M"));
+}
+
+TEST(paneutils, parse_porcelain_in_subdirectory)
+{
+    // Porcelain-Pfade sind wurzelrelativ — in einem Unterordner muss der
+    // Prefix abgeschnitten und Fremdes ignoriert werden.
+    const QString text = QStringLiteral(
+        " M src/gui/panel.cpp\n"
+        "?? src/gui/neu/\n"
+        " M src/core/x.cpp\n"
+        " M README.md\n"
+        "?? \"src/gui/mit leer.txt\"\n"
+        " M src/gui/Ärger.txt\n");
+    const auto st = parsePorcelain(text, QStringLiteral("src/gui/"));
+    CHECK_EQ(st.size(), qsizetype(4));
+    CHECK_EQ(st.value(QStringLiteral("panel.cpp")), QStringLiteral("M"));
+    CHECK_EQ(st.value(QStringLiteral("neu")), QStringLiteral("?"));
+    CHECK_EQ(st.value(QStringLiteral("mit leer.txt")), QStringLiteral("?"));
+    CHECK_EQ(st.value(QStringLiteral("Ärger.txt")), QStringLiteral("M"));
+    CHECK(!st.contains(QStringLiteral("README.md")));
+    CHECK(!st.contains(QStringLiteral("x.cpp")));
+}
+
+TEST(paneutils, git_status_in_subdirectory)
+{
+    // Echtes Repo: Aenderungen im Unterordner muessen dort ankommen.
+    QTemporaryDir tmp;
+    CHECK(tmp.isValid());
+    auto git = [&](const QStringList &args) {
+        QProcess p;
+        p.start(QStringLiteral("git"), QStringList{QStringLiteral("-C"), tmp.path()} + args);
+        return p.waitForFinished(10000) && p.exitCode() == 0;
+    };
+    if (!git({QStringLiteral("init"), QStringLiteral("-q")}))
+        return;   // kein git installiert
+    QDir(tmp.path()).mkpath(QStringLiteral("sub/inner"));
+    writeBytes(tmp.filePath(QStringLiteral("sub/alt.txt")), QByteArrayLiteral("a"));
+    writeBytes(tmp.filePath(QStringLiteral("top.txt")), QByteArrayLiteral("t"));
+    CHECK(git({QStringLiteral("add"), QStringLiteral(".")}));
+    CHECK(git({QStringLiteral("-c"), QStringLiteral("user.name=t"), QStringLiteral("-c"),
+               QStringLiteral("user.email=t@t"), QStringLiteral("commit"), QStringLiteral("-qm"),
+               QStringLiteral("init")}));
+    writeBytes(tmp.filePath(QStringLiteral("sub/alt.txt")), QByteArrayLiteral("b"));
+    writeBytes(tmp.filePath(QStringLiteral("sub/inner/neu.txt")), QByteArrayLiteral("n"));
+    writeBytes(tmp.filePath(QStringLiteral("top.txt")), QByteArrayLiteral("u"));
+
+    const auto st = gitStatus(tmp.filePath(QStringLiteral("sub")));
+    CHECK_EQ(st.value(QStringLiteral("alt.txt")), QStringLiteral("M"));
+    CHECK_EQ(st.value(QStringLiteral("inner")), QStringLiteral("?"));
+    CHECK(!st.contains(QStringLiteral("top.txt")));
+    CHECK(!st.contains(QStringLiteral("sub")));
 }
 
 TEST(paneutils, hash_file_and_bytes)

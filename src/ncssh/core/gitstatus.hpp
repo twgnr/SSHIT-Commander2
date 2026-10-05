@@ -12,10 +12,12 @@ namespace ncssh::core {
 bool inGitRepo(const QString &directory);
 
 // "git status --porcelain"-Ausgabe -> {direkter_kind_name: badge}.
-// Pfade sind relativ zum Arbeitsverzeichnis; fuer tief liegende Aenderungen
-// erhaelt das oberste Verzeichnis den Badge. Treffen mehrere unterschiedliche
-// Stati auf denselben Namen, gewinnt "M" (gemischt).
-QHash<QString, QString> parsePorcelain(const QString &text);
+// Porcelain-Pfade sind IMMER relativ zur Repo-Wurzel; prefix ist der Pfad des
+// angezeigten Verzeichnisses darin ("git rev-parse --show-prefix", z. B.
+// "src/gui/"). Eintraege ausserhalb des Prefix werden ignoriert. Fuer tief
+// liegende Aenderungen erhaelt das oberste Verzeichnis den Badge. Treffen
+// mehrere unterschiedliche Stati auf denselben Namen, gewinnt "M" (gemischt).
+QHash<QString, QString> parsePorcelain(const QString &text, const QString &prefix = {});
 
 // Fuehrt git status im Verzeichnis aus (leeres Dict, wenn kein Repo).
 QHash<QString, QString> gitStatus(const QString &directory, int timeoutMs = 4000);
