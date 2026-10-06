@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 #include <optional>
 #include <vector>
@@ -49,6 +50,28 @@ struct TunnelSpec {
     QString label() const;
 };
 
+// Umgebungsvariable, die pro Session an den Server geht (SSH "env"-Request,
+// wie PuTTY "Connection > Data > Environment variables").
+struct EnvVar {
+    QString name;
+    QString value;
+    bool operator==(const EnvVar &other) const = default;
+};
+
+// Gueltiger Variablenname: [A-Za-z_][A-Za-z0-9_]*
+bool isValidEnvName(const QString &name);
+
+// Eingabeformat des Profil-Dialogs: eine Variable je Zeile, "NAME=wert".
+// Leere Zeilen und #-Kommentare werden uebersprungen, der Wert bleibt
+// woertlich (auch Leerzeichen und weitere '='). `errors` nennt ungueltige
+// Zeilen (1-basiert, mit Inhalt); doppelte Namen: der letzte gewinnt.
+struct EnvParseResult {
+    std::vector<EnvVar> vars;
+    QStringList errors;
+};
+EnvParseResult parseEnvironment(const QString &text);
+QString formatEnvironment(const std::vector<EnvVar> &vars);
+
 // Gespeicherte Server-Verbindung. Wird als JSON persistiert.
 // Sicherheit: Passwort/Passphrase werden NIE im Klartext gespeichert, sondern
 // bei savePassword im OS-Keyring (siehe core/secrets).
@@ -75,6 +98,9 @@ struct ServerProfile {
     QString ciphers;                             // bevorzugte Chiffren (kommagetrennt)
     QString kexAlgorithms;                        // bevorzugte Schluesseltausch-Verfahren
     bool agentForwarding = false;                // SSH-Agent an den Server weiterreichen
+    // Umgebungsvariablen fuer Terminal- und Konsolenkanaele. Der Server nimmt
+    // nur an, was seine AcceptEnv-Liste erlaubt (OpenSSH: LANG LC_*).
+    std::vector<EnvVar> environment;
 
     QJsonObject toJson() const;
     static ServerProfile fromJson(const QJsonObject &data);

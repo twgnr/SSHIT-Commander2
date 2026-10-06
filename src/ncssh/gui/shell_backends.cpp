@@ -1,5 +1,6 @@
 #include "ncssh/gui/shell_backends.hpp"
 
+#include "ncssh/core/i18n.hpp"
 #include "ncssh/core/settings.hpp"
 
 #include <QDir>
@@ -297,6 +298,14 @@ void RemoteShellBackend::start(const net::SSHSessionPtr &session, int cols, int 
         emit closed();
         return;
     }
+    // Abgelehnte Umgebungsvariablen sichtbar machen — sonst wundert man sich,
+    // warum LANG & Co. in der Shell fehlen. Steht vor dem Prompt (Gelb = Hinweis).
+    if (!m_shell->rejectedEnvironment().isEmpty())
+        emit dataReceived(
+            QStringLiteral("\x1b[33m[%1]\x1b[0m\r\n")
+                .arg(core::_t("Server lehnt Umgebungsvariablen ab: %1 — freigeben per "
+                              "AcceptEnv in der sshd_config des Servers")
+                         .arg(m_shell->rejectedEnvironment().join(QStringLiteral(", ")))));
     m_alive = true;
     m_thread = std::thread([this] {
         // Zustandsbehafteter Dekoder fuer den ganzen Strom: ein UTF-8-Zeichen,

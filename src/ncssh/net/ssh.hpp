@@ -22,6 +22,7 @@
 
 typedef struct _LIBSSH2_SESSION LIBSSH2_SESSION;
 typedef struct _LIBSSH2_SFTP LIBSSH2_SFTP;
+typedef struct _LIBSSH2_CHANNEL LIBSSH2_CHANNEL;
 
 namespace ncssh::net {
 
@@ -80,6 +81,15 @@ public:
     std::optional<QString> sudoPassword;  // nur im RAM; leer = NOPASSWD/unbekannt
     // su-Passwoerter je Ziel-Benutzer (Pane als anderer Benutzer) — nur im RAM.
     std::map<QString, QString> userPasswords;
+    // Vom Server abgelehnte Umgebungsvariablen (nicht in AcceptEnv). Werden
+    // auf weiteren Kanaelen nicht erneut angefragt — jede Anfrage kostet eine
+    // Rundreise. Nur unter mutex() lesen/schreiben.
+    QStringList rejectedEnv;
+
+    // Setzt profile.environment auf einem frisch geoeffneten Kanal (vor
+    // shell/exec; Aufrufer haelt mutex(), Session blockierend). Liefert die
+    // Namen, die der Server bei DIESEM Aufruf abgelehnt hat.
+    QStringList applyEnvironment(LIBSSH2_CHANNEL *channel);
 
     QString label() const { return profile.display(); }
 
@@ -219,6 +229,8 @@ public:
     ~RemoteShell();
 
     void write(const QByteArray &data);
+    // Umgebungsvariablen, die der Server beim Oeffnen abgelehnt hat.
+    const QStringList &rejectedEnvironment() const { return m_rejectedEnv; }
     // Liest bis maxBytes (stdout, sonst stderr); wartet hoechstens timeoutMs
     // (leer bei Timeout). Kehrt nie ohne Wartezeit leer zurueck. Wirft bei
     // echten Kanal-/Transportfehlern und wenn die Session schliesst. Nach dem
@@ -236,6 +248,7 @@ private:
     void *m_channel = nullptr;  // LIBSSH2_CHANNEL*; nur unter dem Session-Mutex aendern
     bool m_closed = false;      // nur unter dem Session-Mutex
     bool m_eof = false;         // nur im Lesethread (read/atEof)
+    QStringList m_rejectedEnv;  // nur in open() gesetzt
 };
 
 } // namespace ncssh::net

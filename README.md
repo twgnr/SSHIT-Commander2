@@ -5,7 +5,7 @@
 Two panes for local and remote directories, paired with a full SSH console and a
 real terminal. Written in C++20 with Qt 6 and libssh2.
 
-> **Version 1.0.6.** The application is covered by 313 automated tests, and the
+> **Version 1.0.7.** The application is covered by 371 automated tests, and the
 > SSH layer has been validated against a real OpenSSH server. Testing across a
 > wider range of servers is still outstanding — see
 > [Known limitations](#known-limitations).
@@ -17,21 +17,25 @@ real terminal. Written in C++20 with Qt 6 and libssh2.
 - **File management**: two panes (local ⇄ remote), copy/move with a progress
   queue, bandwidth limit, pause/resume, drag & drop, bulk rename, directory and
   file comparison, checksums, ZIP, symlinks, permission editor (chmod), file
-  preview, tile and list view, per-server bookmarks (with import/export),
+  preview, tile and list view, per-pane filter and sorting (name with wildcards
+  or regex, date, size, extension), per-server bookmarks (with import/export),
   Git status colouring of changed/new/untracked entries in local repositories
   (for repos with an active GitHub alarm also on every parent folder up to the
   drive).
 - **SSH/SFTP**: profile management, authentication by password, key or agent,
   PuTTY PPK import, host key checking (TOFU) with OpenSSH `known_hosts`
   interoperability and a known-hosts manager, ProxyJump/bastion, port forwarding
-  (`-L`/`-R`/`-D` with SOCKS5), sudo filesystem, key generation
+  (`-L`/`-R`/`-D` with SOCKS5), sudo filesystem and panes running as another
+  user (sudo/su), environment variables per session, key generation
   (Ed25519/RSA/ECDSA) and OpenSSH ↔ PPK conversion.
 - **Terminal & console**: a real PTY (local via ConPTY, remote via SSH) with a
-  full VT100/xterm emulator — `vim`, `htop`, `tmux` and `less` all work.
+  full VT100/xterm emulator — `vim`, `htop`, `tmux`, `mc` and `less` all work,
+  including mouse support, bracketed paste, DEC line drawing and wide
+  (CJK/emoji) characters, with a selectable monospace font.
   Switchable between command and terminal mode, history, scrollback search,
   session logging, and broadcasting a command to both consoles at once.
-- **Automation**: **macro manager** with a key grid, layers and a sequence
-  editor · **SFTP batch** with script editor, live log and scheduling ·
+- **Automation**: **macro manager** with a key grid, layers, a sequence
+  editor and system-wide hotkeys · **SFTP batch** with script editor, live log and scheduling ·
   **alarm triggers** for directories (local and remote) with glob filters,
   command execution and desktop notifications · **GitHub repo alarm**
   (reports new pushes; token stored in Windows Credential Manager) ·
@@ -168,7 +172,6 @@ go into the **Windows Credential Manager**, not into the configuration files.
 - **Agent forwarding** is not possible: libssh2 cannot accept the agent channels
   the server opens back. The option is therefore deliberately disabled rather
   than appearing to work.
-- No system-wide macro hotkeys (macro keys are triggered by clicking).
 - Not broadly tested: unusual auth/SFTP/tunnel combinations, ProxyJump and
   ed25519 handshakes, for lack of suitable test servers.
 

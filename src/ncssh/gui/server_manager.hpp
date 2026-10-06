@@ -10,6 +10,7 @@
 
 class QListWidget;
 class QLineEdit;
+class QPlainTextEdit;
 class QComboBox;
 class QSpinBox;
 class QCheckBox;
@@ -33,6 +34,8 @@ private:
     void onSave();
     void onDelete();
     void onConnect();
+    // Prueft das Feld Umgebungsvariablen; meldet ungueltige Zeilen.
+    bool environmentValid();
     void onImport();
     // Reiner TCP-Test auf Host/Port — ohne SSH-Handshake.
     void testReachability();
@@ -66,6 +69,7 @@ private:
     QCheckBox *m_agentFwd = nullptr;
     QLineEdit *m_ciphers = nullptr;
     QLineEdit *m_kex = nullptr;
+    QPlainTextEdit *m_environment = nullptr;   // NAME=Wert je Zeile
     QPushButton *m_colorButton = nullptr;
     QString m_tabColor;
     QLabel *m_lastConnected = nullptr;

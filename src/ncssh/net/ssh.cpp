@@ -1629,6 +1629,7 @@ void RemoteCommandRunner::stream(const QString &command, const QString &cwd,
         channel = libssh2_channel_open_session(sess);
         if (!channel)
             fail(QStringLiteral("Kanal konnte nicht geöffnet werden: %1").arg(lastSshError(sess)));
+        m_session->applyEnvironment(channel);   // Konsolenbefehle sehen dieselben Variablen
         if (libssh2_channel_exec(channel, full.toUtf8().constData()) != 0) {
             libssh2_channel_free(channel);
             fail(QStringLiteral("Befehl fehlgeschlagen: %1").arg(lastSshError(sess)));
@@ -1766,6 +1767,7 @@ void RemoteCommandRunner::runTerminal(const QString &command, const QString &cwd
         channel = libssh2_channel_open_session(sess);
         if (!channel)
             fail(QStringLiteral("Kanal konnte nicht geöffnet werden: %1").arg(lastSshError(sess)));
+        m_session->applyEnvironment(channel);
         libssh2_channel_request_pty_ex(channel, "xterm-256color", 14, nullptr, 0, cols, rows, 0, 0);
         if (libssh2_channel_exec(channel, full.toUtf8().constData()) != 0) {
             libssh2_channel_free(channel);
@@ -1834,6 +1836,34 @@ void RemoteCommandRunner::runTerminal(const QString &command, const QString &cwd
 }
 
 // ---------------------------------------------------------------------------
+// Umgebungsvariablen pro Session
+// ---------------------------------------------------------------------------
+
+QStringList SSHSession::applyEnvironment(LIBSSH2_CHANNEL *channel)
+{
+    QStringList rejected;
+    if (!channel)
+        return rejected;
+    for (const core::EnvVar &var : profile.environment) {
+        if (rejectedEnv.contains(var.name))
+            continue;   // schon einmal abgelehnt — keine weitere Rundreise
+        const QByteArray name = var.name.toUtf8();
+        const QByteArray value = var.value.toUtf8();
+        const int rc = libssh2_channel_setenv_ex(channel, name.constData(),
+                                                 static_cast<unsigned int>(name.size()),
+                                                 value.constData(),
+                                                 static_cast<unsigned int>(value.size()));
+        // Abgelehnt = nicht in AcceptEnv (sshd_config). Kein Fehler fuer den
+        // Kanal: Shell/Befehl laufen trotzdem, nur ohne diese Variable.
+        if (rc == LIBSSH2_ERROR_CHANNEL_REQUEST_DENIED) {
+            rejectedEnv << var.name;
+            rejected << var.name;
+        }
+    }
+    return rejected;
+}
+
+// ---------------------------------------------------------------------------
 // RemoteShell (interaktives PTY)
 // ---------------------------------------------------------------------------
 
@@ -1847,6 +1877,8 @@ std::unique_ptr<RemoteShell> RemoteShell::open(SSHSessionPtr session, int cols, 
     LIBSSH2_CHANNEL *channel = libssh2_channel_open_session(sess);
     if (!channel)
         fail(QStringLiteral("Shell-Kanal konnte nicht geöffnet werden: %1").arg(lastSshError(sess)));
+    // env-Requests muessen VOR dem Shell-Start kommen (RFC 4254, 6.4).
+    const QStringList rejected = session->applyEnvironment(channel);
     libssh2_channel_request_pty_ex(channel, "xterm-256color", 14, nullptr, 0, cols, rows, 0, 0);
     if (libssh2_channel_shell(channel) != 0) {
         libssh2_channel_free(channel);
@@ -1854,6 +1886,7 @@ std::unique_ptr<RemoteShell> RemoteShell::open(SSHSessionPtr session, int cols, 
     }
     auto shell = std::unique_ptr<RemoteShell>(new RemoteShell(std::move(session)));
     shell->m_channel = channel;
+    shell->m_rejectedEnv = rejected;
     return shell;
 }
 

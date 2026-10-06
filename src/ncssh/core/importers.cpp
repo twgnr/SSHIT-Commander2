@@ -15,6 +15,69 @@ static QString unquote(const QString &s)
     return QUrl::fromPercentEncoding(s.toUtf8());
 }
 
+// PuTTY speichert Umgebungsvariablen als "NAME=wert,NAME2=wert2"; '\'
+// maskiert ',', '=' und '\'. Aeltere Fassungen trennten Name und Wert per Tab.
+std::vector<EnvVar> parsePuttyEnvironment(const QString &raw)
+{
+    std::vector<EnvVar> vars;
+    QString name, value;
+    bool inValue = false;
+    const auto finish = [&] {
+        if (inValue && isValidEnvName(name))
+            vars.push_back({name, value});
+        name.clear();
+        value.clear();
+        inValue = false;
+    };
+    for (int i = 0; i < raw.size(); ++i) {
+        QChar c = raw.at(i);
+        if (c == QLatin1Char('\\') && i + 1 < raw.size()) {
+            c = raw.at(++i);   // maskiertes Zeichen woertlich
+        } else if (c == QLatin1Char(',')) {
+            finish();
+            continue;
+        } else if (!inValue && (c == QLatin1Char('=') || c == QLatin1Char('\t'))) {
+            inValue = true;
+            continue;
+        }
+        (inValue ? value : name) += c;
+    }
+    finish();
+    return vars;
+}
+
+// ssh_config "SetEnv NAME=wert NAME2=\"mit Leerzeichen\"" — Argumente durch
+// Leerraum getrennt, doppelte Anfuehrungszeichen fassen zusammen.
+std::vector<EnvVar> parseSshSetEnv(const QString &args)
+{
+    std::vector<EnvVar> vars;
+    QStringList tokens;
+    QString cur;
+    bool quoted = false, any = false;
+    for (const QChar c : args) {
+        if (c == QLatin1Char('"')) {
+            quoted = !quoted;
+            any = true;
+        } else if (c.isSpace() && !quoted) {
+            if (any)
+                tokens << cur;
+            cur.clear();
+            any = false;
+        } else {
+            cur += c;
+            any = true;
+        }
+    }
+    if (any)
+        tokens << cur;
+    for (const QString &t : tokens) {
+        const int eq = t.indexOf(QLatin1Char('='));
+        if (eq > 0 && isValidEnvName(t.left(eq)))
+            vars.push_back({t.left(eq), t.mid(eq + 1)});
+    }
+    return vars;
+}
+
 #ifdef Q_OS_WIN
 
 static std::vector<ServerProfile> importRegistrySessions(const QString &basePath,
@@ -39,6 +102,9 @@ static std::vector<ServerProfile> importRegistrySessions(const QString &basePath
                 p.username = reg.value(QStringLiteral("UserName")).toString();
                 p.authMethod = keyfile.isEmpty() ? QStringLiteral("password") : QStringLiteral("key");
                 p.keyPath = keyfile;
+                if (sourceLabel == QLatin1String("PuTTY"))
+                    p.environment =
+                        parsePuttyEnvironment(reg.value(QStringLiteral("Environment")).toString());
                 profiles.push_back(p);
             }
         }
@@ -93,6 +159,7 @@ std::vector<ServerProfile> importSshConfig()
 
     std::vector<ServerProfile> profiles;
     QHash<QString, QString> block;
+    std::vector<EnvVar> blockEnv;   // SetEnv darf mehrfach vorkommen
     bool haveBlock = false;
 
     const auto flush = [&]() {
@@ -116,6 +183,7 @@ std::vector<ServerProfile> importSshConfig()
                 kf = QDir::homePath() + kf.mid(1);
             p.keyPath = kf;
         }
+        p.environment = blockEnv;
         profiles.push_back(p);
     };
 
@@ -129,8 +197,12 @@ std::vector<ServerProfile> importSshConfig()
         if (key == QLatin1String("host")) {
             flush();
             block.clear();
+            blockEnv.clear();
             block.insert(QStringLiteral("alias"), val.split(QRegularExpression(QStringLiteral("\\s+"))).value(0));
             haveBlock = true;
+        } else if (haveBlock && key == QLatin1String("setenv")) {
+            for (EnvVar &var : parseSshSetEnv(val))
+                blockEnv.push_back(std::move(var));
         } else if (haveBlock) {
             block.insert(key, val);
         }
@@ -174,6 +246,8 @@ static std::optional<ServerProfile> profileFromFields(const QString &name, const
     p.username = fields.value(QStringLiteral("username"));
     p.authMethod = keyfile.isEmpty() ? QStringLiteral("password") : QStringLiteral("key");
     p.keyPath = keyfile;
+    if (source == QLatin1String("PuTTY"))
+        p.environment = parsePuttyEnvironment(fields.value(QStringLiteral("environment")));
     return p;
 }
 
@@ -252,8 +326,11 @@ static std::vector<ServerProfile> importRegFile(const QString &path)
         }
         if (currentName.isEmpty() || !line.contains(QLatin1Char('=')))
             continue;
-        QString namePart = line.section(QLatin1Char('='), 0, 0).trimmed();
-        const QString valPart = line.section(QLatin1Char('='), 1);
+        // Am ERSTEN '=' trennen: section(…, 1) lieferte nur das Stueck bis zum
+        // naechsten '=' — "Environment"="LANG=de" wurde so zu "\"LANG".
+        const int eq = line.indexOf(QLatin1Char('='));
+        QString namePart = line.left(eq).trimmed();
+        const QString valPart = line.mid(eq + 1);
         if (namePart.startsWith(QLatin1Char('"')) && namePart.endsWith(QLatin1Char('"')))
             namePart = namePart.mid(1, namePart.length() - 2);
         fields.insert(namePart.toLower(), parseRegValue(valPart));

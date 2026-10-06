@@ -9,6 +9,7 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QFontMetrics>
 #include "ncssh/gui/file_dialogs.hpp"
 #include <QFormLayout>
 #include <QTcpSocket>
@@ -18,6 +19,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSet>
 #include <QSpinBox>
@@ -172,6 +174,15 @@ ServerManagerDialog::ServerManagerDialog(AsyncBridge *bridge, QWidget *parent)
     m_kex = new QLineEdit(this);
     m_kex->setPlaceholderText(_t("Standard — z. B. ecdh-sha2-nistp256"));
     form->addRow(_t("Schlüsseltausch"), m_kex);
+    m_environment = new QPlainTextEdit(this);
+    m_environment->setPlaceholderText(QStringLiteral("LANG=de_DE.UTF-8\nLC_ALL=de_DE.UTF-8"));
+    m_environment->setToolTip(
+        _t("Eine Variable je Zeile (NAME=Wert). Gilt für Terminal und Konsole.\n"
+           "Der Server übernimmt nur, was AcceptEnv in seiner sshd_config erlaubt\n"
+           "(OpenSSH-Standard: LANG und LC_*). Abgelehnte Variablen meldet das Terminal."));
+    m_environment->setTabChangesFocus(true);
+    m_environment->setFixedHeight(QFontMetrics(m_environment->font()).lineSpacing() * 3 + 18);
+    form->addRow(_t("Umgebungsvariablen"), m_environment);
 
     m_lastConnected = new QLabel(this);
     m_lastConnected->setObjectName(QStringLiteral("Muted"));
@@ -289,6 +300,7 @@ void ServerManagerDialog::loadIntoForm(const ServerProfile &p)
     m_agentFwd->setChecked(p.agentForwarding);
     m_ciphers->setText(p.ciphers);
     m_kex->setText(p.kexAlgorithms);
+    m_environment->setPlainText(core::formatEnvironment(p.environment));
     m_startPath->setText(p.startPath);
     m_savePassword->setChecked(p.savePassword);
     m_tabColor = p.color;
@@ -319,6 +331,7 @@ ServerProfile ServerManagerDialog::formToProfile() const
     p.agentForwarding = m_agentFwd->isChecked();
     p.ciphers = m_ciphers->text().trimmed();
     p.kexAlgorithms = m_kex->text().trimmed();
+    p.environment = core::parseEnvironment(m_environment->toPlainText()).vars;
     p.color = m_tabColor;
     p.startPath = m_startPath->text().trimmed().isEmpty() ? QStringLiteral(".")
                                                           : m_startPath->text().trimmed();
@@ -336,6 +349,22 @@ ServerProfile ServerManagerDialog::formToProfile() const
     return p;
 }
 
+bool ServerManagerDialog::environmentValid()
+{
+    // Ungueltige Zeilen nicht still verwerfen: der Nutzer erwartet sonst eine
+    // Variable, die nie ankommt.
+    const core::EnvParseResult parsed = core::parseEnvironment(m_environment->toPlainText());
+    if (parsed.errors.isEmpty())
+        return true;
+    QMessageBox::warning(
+        this, _t("Umgebungsvariablen"),
+        _t("Diese Zeilen sind keine gültige Zuweisung NAME=Wert (Name: Buchstaben, Ziffern, "
+           "_; nicht mit einer Ziffer beginnend):\n\n%1")
+            .arg(parsed.errors.join(QLatin1Char('\n'))));
+    m_environment->setFocus();
+    return false;
+}
+
 void ServerManagerDialog::onSave()
 {
     ServerProfile p = formToProfile();
@@ -343,6 +372,8 @@ void ServerManagerDialog::onSave()
         QMessageBox::warning(this, _t("Fehlende Angaben"), _t("Name und Host sind Pflicht."));
         return;
     }
+    if (!environmentValid())
+        return;
     if (!m_loadedName.isEmpty() && p.name != m_loadedName) {
         // Umbenennen: altes Profil ersetzen und Keyring-Secrets mitnehmen —
         // upsert legte ein Duplikat an und liess die Secrets unter dem alten
@@ -387,6 +418,8 @@ void ServerManagerDialog::onConnect()
         QMessageBox::warning(this, _t("Fehler"), _t("Kein Host angegeben."));
         return;
     }
+    if (!environmentValid())
+        return;
     // Gespeichertes Passwort/Passphrase aus dem Keyring nachladen (falls leer).
     if (p.authMethod == QLatin1String("password") && p.password.isEmpty()) {
         const auto pw = core::getSecret(p.name, QStringLiteral("password"));
