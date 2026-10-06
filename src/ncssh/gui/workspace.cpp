@@ -20,6 +20,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QInputDialog>
+#include <QMenu>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QAbstractButton>
@@ -219,6 +220,7 @@ Workspace::Workspace(AsyncBridge *bridge, net::SessionManager *sessions,
     // sudo-/Trennen-Chip beider Panes: wirkt auf die Pane mit der Verbindung.
     for (FilePanel *p : {m_leftPanel, m_rightPanel}) {
         connect(p, &FilePanel::sudoToggled, this, &Workspace::setSudoMode);
+        connect(p, &FilePanel::userMenuRequested, this, &Workspace::showUserMenu);
         connect(p, &FilePanel::sudoFrameChanged, this, [this] { highlightActive(); });
         connect(p, &FilePanel::disconnectRequested, this, [this] {
             if (m_session)
@@ -746,6 +748,7 @@ void Workspace::swapPanes()
         to->setConnected(true);
         to->setSudoAvailable(m_session->osType == QLatin1String("posix"));
         to->setSudoActive(from->sudoActive());
+        to->setSudoLabel(from->sudoLabel());
         to->setBookmarkKey(bookmarkKeyFor(m_session));
         from->setHeaderTitle(_t("Lokal"));
         from->setConnected(false);
@@ -924,93 +927,264 @@ bool Workspace::eventFilter(QObject *obj, QEvent *event)
 void Workspace::setSudoMode(bool on)
 {
     // Ohne Verbindung gibt es keine verbundene Pane (m_connectedPanel ist dann
-    // nullptr) — die Rueckmeldungen unten laufen asynchron und koennen eine
+    // nullptr) — die Rueckmeldungen laufen asynchron und koennen eine
     // zwischenzeitliche Trennung erleben.
     if (!m_session || !m_remoteFs || !m_connectedPanel)
         return;
+    if (on) {
+        switchUser(QString());   // Chip-Klick: als root
+        return;
+    }
     FilePanel *const panel = m_connectedPanel;  // Pane mit der Verbindung
     const QString keepPath = panel->currentPath();
     // Jede Umschaltung macht fruehere, noch laufende Einschaltungen ungueltig:
     // sonst haengt eine verspaetete Antwort sudo ein, obwohl der Chip aus ist.
-    const quint64 seq = ++m_sudoSeq;
-    if (!on) {
-        // Erst die Panes zurueck auf das normale Remote-Dateisystem stellen
-        // (auch eine zweite Pane, die das sudo-Dateisystem zeigt), dann das
-        // sudo-Dateisystem stilllegen — NICHT freigeben: Transfers, Listings
-        // und Vorschauen koennen es noch benutzen.
-        for (FilePanel *p : {m_leftPanel, m_rightPanel}) {
-            if (p == panel || (m_sudoFs && p->provider() == m_sudoFs.get()))
-                p->setProvider(m_remoteFs.get(), p == panel ? keepPath : p->currentPath());
-        }
-        retireSudoFs();
-        emit statusMessage(_t("sudo-Modus aus."));
-        return;
+    ++m_sudoSeq;
+    // Erst die Panes zurueck auf das normale Remote-Dateisystem stellen (auch
+    // eine zweite Pane, die das sudo-Dateisystem zeigt), dann das sudo-
+    // Dateisystem stilllegen — NICHT freigeben: Transfers, Listings und
+    // Vorschauen koennen es noch benutzen.
+    for (FilePanel *p : {m_leftPanel, m_rightPanel}) {
+        if (p == panel || (m_sudoFs && p->provider() == m_sudoFs.get()))
+            p->setProvider(m_remoteFs.get(), p == panel ? keepPath : p->currentPath());
     }
+    panel->setSudoActive(false);
+    retireSudoFs();
+    emit statusMessage(_t("sudo-Modus aus."));
+}
 
-    // NOPASSWD pruefen; sonst das Passwort einmal erfragen (nur im RAM halten).
+void Workspace::switchUser(const QString &user)
+{
+    if (!m_session || !m_remoteFs || !m_connectedPanel)
+        return;
+    const QString keepPath = m_connectedPanel->currentPath();
+    const quint64 seq = ++m_sudoSeq;
     net::SSHSessionPtr session = m_session;
     const QString host = session->label();
+    const QString target = user.isEmpty() ? QStringLiteral("root") : user;
     // Gilt die Antwort noch? Weder getrennt/anderer Server noch inzwischen
-    // wieder ausgeschaltet bzw. neu angefordert.
+    // ausgeschaltet bzw. ein anderer Wechsel angefordert.
     const auto stillWanted = [this, session, seq] {
         return m_session == session && seq == m_sudoSeq;
     };
-    m_bridge->run<bool>(
-        [session] { return net::sudoNeedsPassword(session); },
-        [this, session, keepPath, host, stillWanted](bool needsPassword) {
+    // Fehlschlag: Hinweis zeigen (leer = still) und den Chip auf den
+    // tatsaechlichen Stand zuruecksetzen.
+    const auto failWith = [this, stillWanted](const QString &message) {
+        if (!stillWanted())
+            return;
+        if (!message.isEmpty())
+            QMessageBox::warning(this, _t("Benutzer wechseln"), message);
+        restoreSudoChip();
+    };
+
+    // su mit dem Passwort des ZIEL-Benutzers (als root ohne Passwort). Vorab
+    // per "true" pruefen, damit ein falsches Passwort sofort auffaellt.
+    const std::function<void(bool)> viaSu = [this, session, user, target, keepPath,
+                                             stillWanted, failWith](bool loginIsRoot) {
+        QString password;
+        if (!loginIsRoot) {
+            const auto it = session->userPasswords.find(target);
+            if (it != session->userPasswords.end()) {
+                password = it->second;
+            } else {
+                bool ok = false;
+                password = QInputDialog::getText(
+                    this, _t("Benutzer wechseln (su)"),
+                    _t("Passwort von %1 auf %2:").arg(target, session->label()),
+                    QLineEdit::Password, QString(), &ok);
+                if (!stillWanted())
+                    return;
+                if (!ok) {
+                    failWith(QString());
+                    return;
+                }
+            }
+        }
+        const net::RunAs runAs{user, net::RunAs::Method::Su, loginIsRoot};
+        m_bridge->run<net::ExecResult>(
+            [session, target, password, loginIsRoot] {
+                const net::PtyExecFn pty = [session](const QString &command,
+                                                     const net::SSHSession::PtyStep &step) {
+                    return session->execPty(command, step);
+                };
+                return net::suExec(pty, target, password, QStringLiteral("true"), {},
+                                   loginIsRoot);
+            },
+            [this, session, target, password, runAs, keepPath, stillWanted,
+             failWith](const net::ExecResult &r) {
+                if (!stillWanted())
+                    return;
+                if (r.exitStatus != 0) {
+                    session->userPasswords.erase(target);
+                    failWith(_t("Wechsel zu %1 per su fehlgeschlagen: %2")
+                                 .arg(target, QString::fromUtf8(r.err).trimmed()));
+                    return;
+                }
+                if (!runAs.loginIsRoot)
+                    session->userPasswords[target] = password;
+                enableSudoFilesystem(keepPath, runAs);
+            },
+            [failWith](const QString &err) {
+                if (err != QLatin1String("cancelled"))
+                    failWith(err);
+            },
+            // owner: der Tab kann bis zur Antwort geschlossen sein.
+            this);
+    };
+
+    // sudo -u mit dem EIGENEN Passwort. Verbietet sudoers den Wechsel (oder
+    // fehlt sudo), bleibt su mit dem Passwort des Ziel-Benutzers.
+    const auto viaSudo = [this, session, user, keepPath, stillWanted, failWith,
+                          viaSu](const QString &password) {
+        m_bridge->run<int>(
+            [session, user, password] { return int(net::checkSudoAs(session, user, password)); },
+            [this, session, user, password, keepPath, stillWanted, failWith,
+             viaSu](int result) {
+                if (!stillWanted())
+                    return;
+                if (result == int(net::SudoCheck::Ok)) {
+                    session->sudoPassword = password;
+                    enableSudoFilesystem(keepPath, net::RunAs{user, net::RunAs::Method::Sudo});
+                    return;
+                }
+                if (result == int(net::SudoCheck::NotAllowed)) {
+                    viaSu(false);
+                    return;
+                }
+                session->sudoPassword.reset();   // gemerktes Passwort gilt nicht (mehr)
+                failWith(_t("sudo-Authentifizierung fehlgeschlagen."));
+            },
+            [failWith](const QString &err) {
+                if (err != QLatin1String("cancelled"))
+                    failWith(err);
+            },
+            this);
+    };
+
+    // Vorpruefung ohne Passwort: root? NOPASSWD? Mitglied in sudo/wheel/admin?
+    m_bridge->run<net::SwitchProbe>(
+        [session, user] { return net::probeSwitch(session, user); },
+        [this, session, user, host, keepPath, stillWanted, failWith, viaSu,
+         viaSudo](const net::SwitchProbe &probe) {
             if (!stillWanted())
                 return;
-            if (!needsPassword || session->sudoPassword) {
-                enableSudoFilesystem(keepPath);
+            if (probe.loginIsRoot) {
+                viaSu(true);   // root braucht weder sudo noch ein Passwort
+                return;
+            }
+            if (probe.sudoWithoutPassword) {
+                enableSudoFilesystem(keepPath, net::RunAs{user, net::RunAs::Method::Sudo});
+                return;
+            }
+            if (!probe.sudoGroup && !session->sudoPassword) {
+                viaSu(false);   // keine Admin-Rechte erkennbar -> su
+                return;
+            }
+            if (session->sudoPassword) {
+                viaSudo(*session->sudoPassword);
                 return;
             }
             bool ok = false;
             const QString password = QInputDialog::getText(
-                this, _t("sudo-Passwort"), _t("sudo-Passwort für %1:").arg(host),
+                this, _t("sudo-Passwort"),
+                _t("Dein sudo-Passwort (%1 auf %2):").arg(probe.loginUser, host),
                 QLineEdit::Password, QString(), &ok);
-            // Waehrend der Abfrage kann sich der Zustand geaendert haben.
             if (!stillWanted())
                 return;
             if (!ok || password.isEmpty()) {
-                if (m_connectedPanel) m_connectedPanel->setSudoActive(false);   // Chip zurueckstellen
+                failWith(QString());
                 return;
             }
-            // Pruefung geht ueber SSH — nicht im GUI-Thread, sonst haengt das
-            // Fenster fuer die Dauer der Runde.
-            m_bridge->run<bool>(
-                [session, password] { return net::verifySudoPassword(session, password); },
-                [this, session, password, keepPath, stillWanted](bool accepted) {
-                    if (!stillWanted())
-                        return;
-                    if (!accepted) {
-                        QMessageBox::warning(this, _t("sudo"),
-                                             _t("sudo-Authentifizierung fehlgeschlagen."));
-                        if (m_connectedPanel) m_connectedPanel->setSudoActive(false);
-                        return;
-                    }
-                    session->sudoPassword = password;
-                    enableSudoFilesystem(keepPath);
-                },
-                [this, stillWanted](const QString &err) {
-                    if (!stillWanted())
-                        return;
-                    QMessageBox::warning(this, _t("sudo"), err);
-                    if (m_connectedPanel) m_connectedPanel->setSudoActive(false);
-                },
-                // owner: der Tab kann bis zur Antwort geschlossen sein.
-                this);
+            viaSudo(password);
         },
-        [this, stillWanted](const QString &err) {
-            if (!stillWanted())
-                return;
-            QMessageBox::warning(this, _t("sudo"), err);
-            if (m_connectedPanel) m_connectedPanel->setSudoActive(false);
-        }, this);
+        [failWith](const QString &err) {
+            if (err != QLatin1String("cancelled"))
+                failWith(err);
+        },
+        this);
 }
 
-void Workspace::enableSudoFilesystem(const QString &keepPath)
+void Workspace::restoreSudoChip()
 {
-    // Der Weg hierher fuehrt ueber mehrere asynchrone Schritte (NOPASSWD-Test,
+    if (!m_connectedPanel)
+        return;
+    const bool active = m_sudoFs && m_connectedPanel->provider() == m_sudoFs.get();
+    m_connectedPanel->setSudoActive(active);
+    if (active)
+        m_connectedPanel->setSudoLabel(m_sudoFs->runAs().display());
+}
+
+void Workspace::showUserMenu(const QPoint &globalPos)
+{
+    if (!m_session || !m_remoteFs || !m_connectedPanel)
+        return;
+    // Benutzerliste je Sitzung einmal laden, dann das Menue zeigen.
+    if (m_usersSession.lock() != m_session || m_users.empty()) {
+        net::SSHSessionPtr session = m_session;
+        using UserList = std::pair<QString, std::vector<net::UserAccount>>;
+        m_bridge->run<UserList>(
+            [session] {
+                const QString login = QString::fromUtf8(session->exec(QStringLiteral("id -un")).out)
+                                          .trimmed();
+                return UserList(login, net::listUsers(session));
+            },
+            [this, session, globalPos](const UserList &result) {
+                if (m_session != session)
+                    return;
+                m_loginUser = result.first;
+                m_users = result.second;
+                m_usersSession = session;
+                if (!m_users.empty())
+                    showUserMenu(globalPos);
+            },
+            [this](const QString &err) {
+                if (err != QLatin1String("cancelled"))
+                    emit statusMessage(err);
+            },
+            this);
+        return;
+    }
+
+    const bool active = m_sudoFs && m_connectedPanel->provider() == m_sudoFs.get();
+    const QString current = active ? m_sudoFs->runAs().targetUser() : m_loginUser;
+    QMenu menu(this);
+    QAction *title = menu.addAction(_t("Pane ausführen als …"));
+    title->setEnabled(false);
+    menu.addSeparator();
+    QMenu *system = nullptr;
+    for (const net::UserAccount &account : m_users) {
+        QMenu *into = &menu;
+        if (account.system()) {
+            if (!system)
+                system = new QMenu(_t("Systemkonten"), &menu);
+            into = system;
+        }
+        const QString name = account.name;
+        QAction *action = into->addAction(
+            name == m_loginUser ? _t("%1 (angemeldet)").arg(name) : name);
+        action->setCheckable(true);
+        action->setChecked(name == current);
+        action->setToolTip(QStringLiteral("uid %1 · %2 · %3")
+                               .arg(account.uid)
+                               .arg(account.home, account.shell));
+        connect(action, &QAction::triggered, this, [this, name] {
+            if (name == m_loginUser)
+                setSudoMode(false);   // zurueck zum angemeldeten Benutzer
+            else
+                switchUser(name == QLatin1String("root") ? QString() : name);
+        });
+    }
+    if (system) {
+        menu.addSeparator();
+        menu.addMenu(system);
+    }
+    menu.setToolTipsVisible(true);
+    menu.exec(globalPos);
+}
+
+void Workspace::enableSudoFilesystem(const QString &keepPath, const net::RunAs &runAs)
+{
+    // Der Weg hierher fuehrt ueber mehrere asynchrone Schritte (Vorpruefung,
     // Passwortabfrage, Verifikation). In dieser Zeit kann der Nutzer getrennt
     // oder den Server gewechselt haben — dann gibt es keine verbundene Pane
     // und kein Remote-Dateisystem mehr.
@@ -1019,9 +1193,18 @@ void Workspace::enableSudoFilesystem(const QString &keepPath)
     // Ein vorhandenes sudo-Dateisystem nicht per Zuweisung zerstoeren — es
     // kann noch in Benutzung sein.
     retireSudoFs();
-    m_sudoFs = std::make_unique<net::SudoFileSystem>(m_remoteFs.get(), m_session);
+    m_sudoFs = std::make_unique<net::SudoFileSystem>(m_remoteFs.get(), m_session, runAs);
     m_connectedPanel->setProvider(m_sudoFs.get(), keepPath);
-    emit statusMessage(_t("sudo-Modus aktiv — Operationen laufen als root."));
+    m_connectedPanel->setSudoActive(true);
+    m_connectedPanel->setSudoLabel(runAs.display());
+    if (runAs.user.isEmpty() && runAs.method == net::RunAs::Method::Sudo)
+        emit statusMessage(_t("sudo-Modus aktiv — Operationen laufen als root."));
+    else
+        emit statusMessage(_t("Pane läuft als %1 (%2).")
+                               .arg(runAs.targetUser(),
+                                    runAs.method == net::RunAs::Method::Su
+                                        ? QStringLiteral("su")
+                                        : QStringLiteral("sudo -u")));
 }
 
 QJsonObject Workspace::toJson() const

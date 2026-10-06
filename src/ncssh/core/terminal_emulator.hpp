@@ -9,8 +9,10 @@
 // wechselt (DECSET 1049/1047/47).
 #pragma once
 
+#include <QByteArray>
 #include <QColor>
 #include <QString>
+#include <qnamespace.h>
 #include <cstdint>
 #include <vector>
 
@@ -31,7 +33,51 @@ enum TermAttr : quint8 {
     AttrUnderline = 4,
     AttrInverse = 8,
     AttrDim = 16,
+    AttrWide = 32,     // Zeichen belegt diese UND die rechte Nachbarzelle
 };
+
+// Rechte Haelfte eines breiten Zeichens (CJK, Emoji): die Zelle zeigt nichts,
+// ihr Inhalt steht in der linken Nachbarzelle (mit AttrWide).
+constexpr char32_t kWideTail = 0;
+
+// Anzeigebreite in Terminalspalten (wie wcwidth): 0 fuer kombinierende und
+// unsichtbare Zeichen, 2 fuer ostasiatische Vollbreite und Emoji, sonst 1.
+int charWidth(char32_t c);
+// Summe der Anzeigebreiten eines UTF-16-Textes (Surrogatpaare korrekt).
+int textWidth(const QString &text);
+
+// DEC Special Graphics (Zeichensatz "0", ESC ( 0): ncurses zeichnet damit
+// Rahmen — 'q' wird zu '─', 'x' zu '│' usw. Andere Zeichen bleiben.
+char32_t decSpecialGraphics(char32_t c);
+
+// Maus-Reporting (DECSET 9/1000/1002/1003) und Bracketed Paste (2004).
+// Diese Modi setzen Programme auf beiden Schirmen (bash schaltet 2004 schon am
+// Prompt ein) — das Terminal-Widget verfolgt sie deshalb ueber den gesamten
+// Ausgabestrom, nicht nur im Zellengitter.
+enum class MouseTracking { Off, X10, Normal, ButtonEvent, AnyEvent };
+
+struct TerminalModes {
+    MouseTracking mouse = MouseTracking::Off;
+    bool sgrMouse = false;         // 1006: Koordinaten als Dezimalzahlen
+    bool bracketedPaste = false;   // 2004
+
+    // Wendet einen privaten Modus (CSI ? code h/l) an; false = nicht unserer.
+    bool apply(int code, bool set);
+};
+
+enum class MouseAction { Press, Release, Move, WheelUp, WheelDown };
+
+// Kodiert ein Mausereignis fuer die Anwendung. button: 0 links, 1 Mitte,
+// 2 rechts, 3 = keine Taste (Bewegung ohne Taste). col/row sind 0-basiert.
+// Leer, wenn der aktuelle Modus das Ereignis nicht meldet.
+QByteArray encodeMouse(const TerminalModes &modes, MouseAction action, int button,
+                       int col, int row, Qt::KeyboardModifiers mods);
+
+// Bereitet eingefuegten Text fuer die Shell vor: Zeilenenden werden zu CR
+// (wie getippt); bei Bracketed Paste kommt er zwischen ESC[200~ und ESC[201~,
+// ein eingeschmuggeltes Endkennzeichen im Text wird entfernt (sonst liefe der
+// Rest als getippte Befehle).
+QString preparePaste(QString text, bool bracketed);
 
 class TerminalEmulator {
 public:
@@ -79,6 +125,12 @@ private:
     void saveCursor();
     void restoreCursor();
     void switchAltScreen(bool alt);
+    // Kombinierendes Zeichen (Breite 0) mit dem zuletzt geschriebenen Zeichen
+    // verschmelzen (a + U+0308 -> ä); ohne Vorkomposition wird es verworfen.
+    void combineWithPrevious(char32_t mark);
+    // Halbe breite Zeichen in einer Zeile beseitigen (nach Einfuegen/Loeschen/
+    // Ueberschreiben einzelner Zellen): verwaiste Haelften werden zu Leerzellen.
+    void repairWide(int row);
 
     TermCell blankCell() const;  // Leerzelle mit aktueller Hintergrundfarbe
     void clampCursor();
@@ -100,10 +152,17 @@ private:
     QColor m_fg;
     QColor m_bg;
 
-    // Gesicherter Cursor + Stift (DECSC/DECRC).
+    // Zeichensaetze: G0/G1 jeweils ASCII oder DEC Special Graphics; SO/SI
+    // schalten zwischen G0 und G1 um.
+    bool m_g0Graphics = false;
+    bool m_g1Graphics = false;
+    bool m_shiftOut = false;       // SO aktiv -> G1 gilt
+
+    // Gesicherter Cursor + Stift + Zeichensaetze (DECSC/DECRC).
     int m_savedCx = 0, m_savedCy = 0;
     quint8 m_savedAttrs = 0;
     QColor m_savedFg, m_savedBg;
+    bool m_savedG0 = false, m_savedG1 = false, m_savedShift = false;
 
     // Modi.
     bool m_wrap = true;            // DECAWM

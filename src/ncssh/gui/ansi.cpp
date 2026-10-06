@@ -1,5 +1,6 @@
 #include "ncssh/gui/ansi.hpp"
 
+#include "ncssh/core/terminal_emulator.hpp"
 #include "ncssh/gui/style.hpp"
 
 #include <QFont>
@@ -111,6 +112,7 @@ void AnsiRenderer::reset()
     m_inString = false;
     m_stringLen = 0;
     m_col = 0;
+    m_g0Graphics = m_g1Graphics = m_shiftOut = false;
 }
 
 QTextCharFormat AnsiRenderer::format() const
@@ -200,28 +202,71 @@ void AnsiRenderer::applySgr(const QString &params)
 // EINGEFUEGT: Shells, die beim Bearbeiten mitten in der Zeile mit Rueckschritt
 // bzw. Cursor-Sequenzen zurueckgehen und den Rest neu schreiben (bash/readline,
 // PowerShell/PSReadLine via ConPTY), erzeugten so doppelte Zeichen.
+//
+// Spalten sind Anzeigespalten: ein CJK-Zeichen ist EIN Zeichen im Dokument,
+// belegt aber ZWEI Spalten (die Shell schickt dafuer zwei Rueckschritte).
+// posForCol rechnet deshalb jede Spalte in eine Dokumentposition um.
+
+namespace {
+// Zeichenindex in `line`, an dem Spalte `col` beginnt. Kombinierende Zeichen
+// direkt dahinter gehoeren noch zum vorigen Zeichen und werden uebersprungen.
+// Hinter dem Zeilenende: line.size().
+int posForCol(const QString &line, int col)
+{
+    const int n = int(line.size());
+    int i = 0;
+    int w = 0;
+    const auto next = [&](int at, int &len) {
+        char32_t c = line.at(at).unicode();
+        len = 1;
+        if (QChar::isHighSurrogate(c) && at + 1 < n && line.at(at + 1).isLowSurrogate()) {
+            c = QChar::surrogateToUcs4(line.at(at), line.at(at + 1));
+            len = 2;
+        }
+        return core::charWidth(c);
+    };
+    int len = 1;
+    while (i < n && w < col) {
+        w += next(i, len);
+        i += len;
+    }
+    while (i < n && next(i, len) == 0)
+        i += len;
+    return i;
+}
+}  // namespace
 
 void AnsiRenderer::placeCursor(QTextCursor &cur, bool pad)
 {
-    const QTextBlock block = cur.document()->lastBlock();
-    const int len = block.length() - 1;
+    QTextBlock block = cur.document()->lastBlock();
+    const int len = core::textWidth(block.text());
     if (pad && m_col > len) {
-        cur.setPosition(block.position() + len);
+        cur.setPosition(block.position() + block.length() - 1);
         cur.insertText(QString(m_col - len, QLatin1Char(' ')), format());
+        block = cur.document()->lastBlock();
     }
-    cur.setPosition(block.position() + std::min(m_col, std::max(0, block.length() - 1)));
+    cur.setPosition(block.position() + posForCol(block.text(), m_col));
 }
 
-void AnsiRenderer::writeText(QTextCursor &cur, const QString &text)
+void AnsiRenderer::writeText(QTextCursor &cur, const QString &textIn)
 {
+    QString text = textIn;
+    if (m_shiftOut ? m_g1Graphics : m_g0Graphics) {
+        // DEC-Liniengrafik: 'q' -> '─' usw. (alle Ziele liegen in der BMP).
+        for (QChar &ch : text)
+            ch = QChar(static_cast<char16_t>(core::decSpecialGraphics(ch.unicode())));
+    }
     placeCursor(cur, /*pad=*/true);
     const QTextBlock block = cur.document()->lastBlock();
-    const int len = block.length() - 1;
-    const int over = std::min<int>(int(text.size()), std::max(0, len - m_col));
-    if (over > 0)
-        cur.setPosition(block.position() + m_col + over, QTextCursor::KeepAnchor);
+    const QString line = block.text();
+    const int width = core::textWidth(text);
+    const int start = posForCol(line, m_col);
+    const int end = posForCol(line, m_col + width);
+    cur.setPosition(block.position() + start);
+    if (end > start)
+        cur.setPosition(block.position() + end, QTextCursor::KeepAnchor);
     cur.insertText(text, format());   // ersetzt die markierten (alten) Zeichen
-    m_col += int(text.size());
+    m_col += width;
 }
 
 void AnsiRenderer::newline(QTextCursor &cur)
@@ -240,7 +285,10 @@ void AnsiRenderer::handleCsi(QTextCursor &cur, const QString &params, QChar fina
         return (!ok || v <= 0) ? def : std::min(v, 9999);
     };
     const QTextBlock block = cur.document()->lastBlock();
-    const int len = block.length() - 1;
+    const QString line = block.text();
+    const int len = core::textWidth(line);   // Zeilenlaenge in Spalten
+    // Dokumentposition einer Spalte der letzten Zeile.
+    const auto at = [&](int col) { return block.position() + posForCol(line, col); };
     const ushort f = final.unicode();
     if (f == 'm') {
         applySgr(params);
@@ -248,18 +296,18 @@ void AnsiRenderer::handleCsi(QTextCursor &cur, const QString &params, QChar fina
         const int mode = params.isEmpty() ? 0 : params.toInt();
         if (mode == 2) {
             cur.setPosition(block.position());
-            cur.setPosition(block.position() + len, QTextCursor::KeepAnchor);
+            cur.setPosition(block.position() + int(line.size()), QTextCursor::KeepAnchor);
             cur.removeSelectedText();
         } else if (mode == 1) {
             const int n = std::min(m_col + 1, len);
             if (n > 0) {
                 cur.setPosition(block.position());
-                cur.setPosition(block.position() + n, QTextCursor::KeepAnchor);
+                cur.setPosition(at(n), QTextCursor::KeepAnchor);
                 cur.insertText(QString(n, QLatin1Char(' ')), format());
             }
         } else if (m_col < len) {
-            cur.setPosition(block.position() + m_col);
-            cur.setPosition(block.position() + len, QTextCursor::KeepAnchor);
+            cur.setPosition(at(m_col));
+            cur.setPosition(block.position() + int(line.size()), QTextCursor::KeepAnchor);
             cur.removeSelectedText();
         }
     } else if (f == 'C') {          // Cursor rechts
@@ -270,21 +318,20 @@ void AnsiRenderer::handleCsi(QTextCursor &cur, const QString &params, QChar fina
         m_col = num(1) - 1;
     } else if (f == 'P') {          // Zeichen ab Cursor loeschen (Rest rueckt nach)
         if (m_col < len) {
-            cur.setPosition(block.position() + m_col);
-            cur.setPosition(block.position() + std::min(len, m_col + num(1)),
-                            QTextCursor::KeepAnchor);
+            cur.setPosition(at(m_col));
+            cur.setPosition(at(std::min(len, m_col + num(1))), QTextCursor::KeepAnchor);
             cur.removeSelectedText();
         }
     } else if (f == '@') {          // Leerzeichen am Cursor einfuegen
         if (m_col <= len) {
-            cur.setPosition(block.position() + m_col);
+            cur.setPosition(at(m_col));
             cur.insertText(QString(num(1), QLatin1Char(' ')), format());
         }
     } else if (f == 'X') {          // Zeichen ab Cursor durch Leerzeichen ersetzen
         const int n = std::min(num(1), std::max(0, len - m_col));
         if (n > 0) {
-            cur.setPosition(block.position() + m_col);
-            cur.setPosition(block.position() + m_col + n, QTextCursor::KeepAnchor);
+            cur.setPosition(at(m_col));
+            cur.setPosition(at(m_col + n), QTextCursor::KeepAnchor);
             cur.insertText(QString(n, QLatin1Char(' ')), format());
         }
     }
@@ -388,6 +435,11 @@ void AnsiRenderer::feed(const QString &textIn)
                         m_carry = text.mid(i);
                     break;
                 }
+                // Zeichensatz fuer G0 bzw. G1: "0" = DEC-Liniengrafik, sonst ASCII.
+                if (j == i + 2 && nu == '(')
+                    m_g0Graphics = text.at(j) == QLatin1Char('0');
+                else if (j == i + 2 && nu == ')')
+                    m_g1Graphics = text.at(j) == QLatin1Char('0');
                 i = j + 1;
                 continue;
             }
@@ -412,11 +464,17 @@ void AnsiRenderer::feed(const QString &textIn)
             ++i;
             continue;
         }
+        if (ch == QChar(0x0e) || ch == QChar(0x0f)) {  // SO/SI: G1 bzw. G0 waehlen
+            m_shiftOut = ch == QChar(0x0e);
+            ++i;
+            continue;
+        }
         int j = i;
         while (j < n) {
             const QChar c = text.at(j);
             if (c == QChar(0x1b) || c == QLatin1Char('\r') || c == QLatin1Char('\n')
-                || c == QChar(0x08) || c == QChar(0x07))
+                || c == QChar(0x08) || c == QChar(0x07) || c == QChar(0x0e)
+                || c == QChar(0x0f))
                 break;
             ++j;
         }

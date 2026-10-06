@@ -25,7 +25,10 @@ public:
     explicit ShellBackend(QObject *parent = nullptr) : QObject(parent) {}
     ~ShellBackend() override = default;
 
-    virtual void write(const QString &text) = 0;
+    void write(const QString &text) { writeBytes(text.toUtf8()); }
+    // Rohe Bytes — klassische Maus-Meldungen (ESC [ M b x y) enthalten Werte
+    // ueber 127, die nicht als UTF-8 kodiert werden duerfen.
+    virtual void writeBytes(const QByteArray &data) = 0;
     virtual void resize(int cols, int rows) = 0;
     virtual void close() = 0;
 
@@ -55,7 +58,7 @@ public:
     // Startet die lokale Shell (COMSPEC bzw. $SHELL) mit der Groesse cols x rows.
     void start(int cols, int rows);
 
-    void write(const QString &text) override;
+    void writeBytes(const QByteArray &data) override;
     void resize(int cols, int rows) override;
     void close() override;
 
@@ -80,7 +83,7 @@ public:
 
     void start(const net::SSHSessionPtr &session, int cols, int rows);
 
-    void write(const QString &text) override;
+    void writeBytes(const QByteArray &data) override;
     void resize(int cols, int rows) override;
     void close() override;
 

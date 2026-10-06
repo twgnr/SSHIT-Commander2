@@ -189,17 +189,16 @@ void LocalShellBackend::readLoop()
 #endif
 }
 
-void LocalShellBackend::write(const QString &text)
+void LocalShellBackend::writeBytes(const QByteArray &data)
 {
 #ifdef Q_OS_WIN
     if (!m_alive.load() || !m_impl->inWrite)
         return;
-    const QByteArray data = text.toUtf8();
     DWORD written = 0;
     WriteFile(m_impl->inWrite, data.constData(), static_cast<DWORD>(data.size()),
               &written, nullptr);
 #else
-    Q_UNUSED(text);
+    Q_UNUSED(data);
 #endif
 }
 
@@ -338,10 +337,10 @@ void RemoteShellBackend::start(const net::SSHSessionPtr &session, int cols, int 
     });
 }
 
-void RemoteShellBackend::write(const QString &text)
+void RemoteShellBackend::writeBytes(const QByteArray &data)
 {
     if (m_alive.load() && m_shell)
-        m_shell->write(text.toUtf8());
+        m_shell->write(data);
 }
 
 void RemoteShellBackend::resize(int cols, int rows)

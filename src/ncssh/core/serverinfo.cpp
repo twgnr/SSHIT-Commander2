@@ -29,7 +29,8 @@ echo '##SECTION files'
 chk() { for f in "$@"; do [ -f "$f" ] || continue; r=-; w=-; [ -r "$f" ] && r=r; [ -w "$f" ] && w=w; printf '%s%s\t%s\n' "$r" "$w" "$f"; done; }
 chk /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf /etc/ssh/ssh_config \
     /etc/hosts /etc/hostname /etc/resolv.conf /etc/fstab /etc/environment \
-    /etc/profile /etc/bash.bashrc /etc/sudoers /etc/sudoers.d/* \
+    /etc/default/locale /etc/security/pam_env.conf \
+    /etc/profile /etc/profile.d/*.sh /etc/bash.bashrc /etc/sudoers /etc/sudoers.d/* \
     /etc/crontab /etc/cron.d/* /etc/logrotate.conf \
     /etc/netplan/*.yaml /etc/network/interfaces /etc/sysctl.conf \
     /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf \
@@ -41,7 +42,7 @@ chk /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf /etc/ssh/ssh_config \
     /etc/php/*/fpm/php.ini /etc/php/*/cli/php.ini /etc/php/*/fpm/pool.d/*.conf \
     /etc/docker/daemon.json /etc/systemd/system/*.service \
     /etc/fail2ban/jail.local /etc/fail2ban/jail.conf /etc/ufw/ufw.conf \
-    "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.zshrc" \
+    "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.pam_environment" \
     "$HOME/.ssh/authorized_keys" "$HOME/.ssh/config"
 for d in /home /root /var/www /srv /opt; do
   [ -d "$d" ] || continue
@@ -64,7 +65,9 @@ QString configCategory(const QString &path)
     const auto has = [&](const char *part) { return path.contains(QLatin1String(part)); };
     const QString name = path.section(QLatin1Char('/'), -1);
     if (name == QLatin1String(".env") || name.startsWith(QLatin1String(".env."))
-        || name.endsWith(QLatin1String(".env")) || path == QLatin1String("/etc/environment"))
+        || name.endsWith(QLatin1String(".env")) || path == QLatin1String("/etc/environment")
+        || path == QLatin1String("/etc/default/locale") || name == QLatin1String("pam_env.conf")
+        || name == QLatin1String(".pam_environment"))
         return _t("Umgebung (.env)");
     if (name.startsWith(QLatin1String("docker-compose")) || name.startsWith(QLatin1String("compose."))
         || has("/etc/docker/"))

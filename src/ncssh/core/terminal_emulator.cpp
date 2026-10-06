@@ -2,6 +2,7 @@
 
 #include <QChar>
 #include <algorithm>
+#include <iterator>
 
 namespace ncssh::core {
 
@@ -49,6 +50,191 @@ static QColor ansi256(int n)
     return QColor(v, v, v);
 }
 
+// --- Zeichenbreite / Zeichensaetze --------------------------------------------
+
+namespace {
+struct Range {
+    char32_t first;
+    char32_t last;
+};
+
+// Ostasiatische Vollbreite (Unicode EastAsianWidth W/F) und Emoji mit
+// Emoji_Presentation — sortiert, fuer die binaere Suche.
+constexpr Range kWide[] = {
+    {0x1100, 0x115F},   {0x231A, 0x231B},   {0x2329, 0x232A},   {0x23E9, 0x23EC},
+    {0x23F0, 0x23F0},   {0x23F3, 0x23F3},   {0x25FD, 0x25FE},   {0x2614, 0x2615},
+    {0x2648, 0x2653},   {0x267F, 0x267F},   {0x2693, 0x2693},   {0x26A1, 0x26A1},
+    {0x26AA, 0x26AB},   {0x26BD, 0x26BE},   {0x26C4, 0x26C5},   {0x26CE, 0x26CE},
+    {0x26D4, 0x26D4},   {0x26EA, 0x26EA},   {0x26F2, 0x26F3},   {0x26F5, 0x26F5},
+    {0x26FA, 0x26FA},   {0x26FD, 0x26FD},   {0x2705, 0x2705},   {0x270A, 0x270B},
+    {0x2728, 0x2728},   {0x274C, 0x274C},   {0x274E, 0x274E},   {0x2753, 0x2755},
+    {0x2757, 0x2757},   {0x2795, 0x2797},   {0x27B0, 0x27B0},   {0x27BF, 0x27BF},
+    {0x2B1B, 0x2B1C},   {0x2B50, 0x2B50},   {0x2B55, 0x2B55},   {0x2E80, 0x303E},
+    {0x3041, 0x33FF},   {0x3400, 0x4DBF},   {0x4E00, 0x9FFF},   {0xA000, 0xA4CF},
+    {0xA960, 0xA97F},   {0xAC00, 0xD7A3},   {0xF900, 0xFAFF},   {0xFE10, 0xFE19},
+    {0xFE30, 0xFE6F},   {0xFF00, 0xFF60},   {0xFFE0, 0xFFE6},   {0x16FE0, 0x16FE4},
+    {0x17000, 0x18CFF}, {0x1B000, 0x1B2FF}, {0x1F004, 0x1F004}, {0x1F0CF, 0x1F0CF},
+    {0x1F18E, 0x1F18E}, {0x1F191, 0x1F19A}, {0x1F200, 0x1F202}, {0x1F210, 0x1F23B},
+    {0x1F240, 0x1F248}, {0x1F250, 0x1F251}, {0x1F260, 0x1F265}, {0x1F300, 0x1F320},
+    {0x1F32D, 0x1F335}, {0x1F337, 0x1F37C}, {0x1F37E, 0x1F393}, {0x1F3A0, 0x1F3CA},
+    {0x1F3CF, 0x1F3D3}, {0x1F3E0, 0x1F3F0}, {0x1F3F4, 0x1F3F4}, {0x1F3F8, 0x1F43E},
+    {0x1F440, 0x1F440}, {0x1F442, 0x1F4FC}, {0x1F4FF, 0x1F53D}, {0x1F54B, 0x1F54E},
+    {0x1F550, 0x1F567}, {0x1F57A, 0x1F57A}, {0x1F595, 0x1F596}, {0x1F5A4, 0x1F5A4},
+    {0x1F5FB, 0x1F64F}, {0x1F680, 0x1F6C5}, {0x1F6CC, 0x1F6CC}, {0x1F6D0, 0x1F6D2},
+    {0x1F6D5, 0x1F6D7}, {0x1F6DC, 0x1F6DF}, {0x1F6EB, 0x1F6EC}, {0x1F6F4, 0x1F6FC},
+    {0x1F7E0, 0x1F7EB}, {0x1F7F0, 0x1F7F0}, {0x1F90C, 0x1F93A}, {0x1F93C, 0x1F945},
+    {0x1F947, 0x1F9FF}, {0x1FA70, 0x1FAFF}, {0x20000, 0x2FFFD}, {0x30000, 0x3FFFD},
+};
+}  // namespace
+
+int charWidth(char32_t c)
+{
+    if (c < 0x20 || (c >= 0x7f && c < 0xa0))
+        return 0;  // Steuerzeichen belegen keine Zelle
+    if (c < 0x300)
+        return 1;  // Latin — der haeufigste Fall ohne Nachschlagen
+    if (c == 0x200B || (c >= 0x1160 && c <= 0x11FF))
+        return 0;  // Nullbreite-Leerzeichen, Hangul-Jamo-Vokale (verbinden sich)
+    switch (QChar::category(c)) {
+    case QChar::Mark_NonSpacing:
+    case QChar::Mark_Enclosing:
+    case QChar::Other_Format:
+        return 0;
+    default:
+        break;
+    }
+    const auto it = std::upper_bound(std::begin(kWide), std::end(kWide), c,
+                                     [](char32_t v, const Range &r) { return v < r.first; });
+    if (it != std::begin(kWide) && c <= std::prev(it)->last)
+        return 2;
+    return 1;
+}
+
+int textWidth(const QString &text)
+{
+    int w = 0;
+    for (int i = 0; i < text.size(); ++i) {
+        char32_t c = text.at(i).unicode();
+        if (QChar::isHighSurrogate(c) && i + 1 < text.size()
+            && text.at(i + 1).isLowSurrogate()) {
+            c = QChar::surrogateToUcs4(text.at(i), text.at(i + 1));
+            ++i;
+        }
+        w += charWidth(c);
+    }
+    return w;
+}
+
+char32_t decSpecialGraphics(char32_t c)
+{
+    // VT100-Tabelle fuer 0x5F..0x7E.
+    static constexpr char32_t kMap[] = {
+        0x00A0,                                          // _  geschuetztes Leerzeichen
+        0x25C6, 0x2592, 0x2409, 0x240C, 0x240D, 0x240A,  // ` a b c d e
+        0x00B0, 0x00B1, 0x2424, 0x240B, 0x2518, 0x2510,  // f g h i j k
+        0x250C, 0x2514, 0x253C, 0x23BA, 0x23BB, 0x2500,  // l m n o p q
+        0x23BC, 0x23BD, 0x251C, 0x2524, 0x2534, 0x252C,  // r s t u v w
+        0x2502, 0x2264, 0x2265, 0x03C0, 0x2260, 0x00A3,  // x y z { | }
+        0x00B7,                                          // ~
+    };
+    if (c >= 0x5F && c <= 0x7E)
+        return kMap[c - 0x5F];
+    return c;
+}
+
+bool TerminalModes::apply(int code, bool set)
+{
+    switch (code) {
+    case 9:
+        mouse = set ? MouseTracking::X10 : MouseTracking::Off;
+        return true;
+    case 1000:
+        mouse = set ? MouseTracking::Normal : MouseTracking::Off;
+        return true;
+    case 1002:
+        mouse = set ? MouseTracking::ButtonEvent : MouseTracking::Off;
+        return true;
+    case 1003:
+        mouse = set ? MouseTracking::AnyEvent : MouseTracking::Off;
+        return true;
+    case 1006:
+        sgrMouse = set;
+        return true;
+    case 2004:
+        bracketedPaste = set;
+        return true;
+    default:
+        return false;
+    }
+}
+
+QByteArray encodeMouse(const TerminalModes &modes, MouseAction action, int button, int col,
+                       int row, Qt::KeyboardModifiers mods)
+{
+    const MouseTracking m = modes.mouse;
+    if (m == MouseTracking::Off)
+        return {};
+    const bool wheel = action == MouseAction::WheelUp || action == MouseAction::WheelDown;
+    // Was der Modus ueberhaupt meldet (xterm-Semantik).
+    if (m == MouseTracking::X10 && action != MouseAction::Press)
+        return {};
+    if (action == MouseAction::Move) {
+        if (m == MouseTracking::Normal)
+            return {};
+        if (m == MouseTracking::ButtonEvent && (button < 0 || button > 2))
+            return {};  // 1002: Bewegung nur mit gedrueckter Taste
+    }
+    if (!wheel && (button < 0 || button > 3))
+        return {};
+
+    int code = wheel ? (action == MouseAction::WheelUp ? 64 : 65) : button;
+    if (action == MouseAction::Move)
+        code += 32;
+    if (m != MouseTracking::X10) {  // X10 kennt keine Modifikatoren
+        if (mods & Qt::ShiftModifier)
+            code += 4;
+        if (mods & Qt::AltModifier)
+            code += 8;
+        if (mods & Qt::ControlModifier)
+            code += 16;
+    }
+    col = std::max(0, col);
+    row = std::max(0, row);
+
+    if (modes.sgrMouse) {
+        // SGR: Loslassen mit 'm' und der echten Taste — eindeutig, kein Limit.
+        const char fin = action == MouseAction::Release ? 'm' : 'M';
+        return QByteArrayLiteral("\x1b[<") + QByteArray::number(code) + ';'
+               + QByteArray::number(col + 1) + ';' + QByteArray::number(row + 1) + fin;
+    }
+    // Klassisch: jede Zahl als ein Byte (32 + Wert). Loslassen meldet Taste 3.
+    if (action == MouseAction::Release)
+        code = (code & ~3) | 3;
+    QByteArray out = QByteArrayLiteral("\x1b[M");
+    out += static_cast<char>(32 + code);
+    out += static_cast<char>(std::min(255, 32 + col + 1));  // mehr als 223 Spalten geht nicht
+    out += static_cast<char>(std::min(255, 32 + row + 1));
+    return out;
+}
+
+QString preparePaste(QString text, bool bracketed)
+{
+    // Getippte Eingabe endet mit CR — LF bzw. CRLF aus der Zwischenablage
+    // sonst als doppelte bzw. fremde Zeilenenden.
+    text.replace(QStringLiteral("\r\n"), QStringLiteral("\r"));
+    text.replace(QLatin1Char('\n'), QLatin1Char('\r'));
+    if (!bracketed)
+        return text;
+    // Wiederholt: "ESC[20" + Marke + "1~" ergaebe nach einmaligem Entfernen
+    // wieder eine Marke.
+    const QString endMark = QStringLiteral("\x1b[201~");
+    while (text.contains(endMark))
+        text.remove(endMark);
+    return QStringLiteral("\x1b[200~") + text + QStringLiteral("\x1b[201~");
+}
+
+// --- Emulator -----------------------------------------------------------------
+
 TerminalEmulator::TerminalEmulator(int cols, int rows)
     : m_cols(std::max(1, cols)), m_rows(std::max(1, rows))
 {
@@ -68,6 +254,8 @@ void TerminalEmulator::reset()
     m_savedCx = m_savedCy = 0;
     m_savedAttrs = 0;
     m_savedFg = m_savedBg = QColor();
+    m_g0Graphics = m_g1Graphics = m_shiftOut = false;
+    m_savedG0 = m_savedG1 = m_savedShift = false;
     m_wrap = true;
     m_originMode = false;
     m_cursorVisible = true;
@@ -105,6 +293,9 @@ void TerminalEmulator::resize(int cols, int rows)
     m_bottom = m_rows - 1;
     m_wrapPending = false;
     clampCursor();
+    // Am neuen rechten Rand abgeschnittene breite Zeichen beseitigen.
+    for (int r = 0; r < m_rows; ++r)
+        repairWide(r);
 }
 
 const TermCell &TerminalEmulator::cell(int row, int col) const
@@ -168,7 +359,13 @@ void TerminalEmulator::feed(const QString &data)
             break;
 
         case State::EscInter:
-            // Zweites Byte einer ESC-(-/#-Sequenz (Charset/DECALN) — verworfen.
+            // Zweites Byte einer ESC-(-/)-Sequenz: Zeichensatz fuer G0/G1
+            // ('0' = DEC-Liniengrafik, alles andere = ASCII). ESC # (DECALN)
+            // und die G2/G3-Zuweisungen werden verworfen.
+            if (m_escInter == QLatin1Char('('))
+                m_g0Graphics = (u == '0');
+            else if (m_escInter == QLatin1Char(')'))
+                m_g1Graphics = (u == '0');
             m_state = State::Ground;
             break;
 
@@ -231,6 +428,12 @@ void TerminalEmulator::execC0(char c)
     case '\r':  // CR
         m_cx = 0;
         m_wrapPending = false;
+        break;
+    case 0x0e:  // SO: G1 aktiv
+        m_shiftOut = true;
+        break;
+    case 0x0f:  // SI: G0 aktiv
+        m_shiftOut = false;
         break;
     default:
         break;
@@ -433,21 +636,102 @@ void TerminalEmulator::csiDispatch(QChar final)
 
 void TerminalEmulator::putCodepoint(char32_t c)
 {
+    if (m_shiftOut ? m_g1Graphics : m_g0Graphics)
+        c = decSpecialGraphics(c);
+    int w = charWidth(c);
+    if (w == 0) {
+        combineWithPrevious(c);
+        return;
+    }
+    if (m_cols < 2)
+        w = 1;  // ein breites Zeichen passt nie — dann wenigstens halb zeigen
     if (m_wrapPending) {
         m_cx = 0;
         newLine();
         m_wrapPending = false;
     }
     clampCursor();
-    TermCell &cell = m_grid[m_cy][m_cx];
+    if (w == 2 && m_cx == m_cols - 1) {
+        // Passt nicht mehr in die Zeile: wie xterm vorher umbrechen (die
+        // letzte Zelle bleibt leer) bzw. ohne Autowrap die letzten zwei
+        // Zellen ueberschreiben.
+        if (m_wrap) {
+            m_grid[m_cy][m_cx] = blankCell();
+            m_cx = 0;
+            newLine();
+        } else {
+            m_cx = m_cols - 2;
+        }
+    }
+    auto &line = m_grid[m_cy];
+    // Ueberschriebene Haelften frueherer breiter Zeichen beseitigen: links ein
+    // breites Zeichen, dessen rechte Haelfte hier lag, rechts eine rechte
+    // Haelfte, deren linke wir gleich ueberschreiben.
+    if (m_cx > 0 && (line[m_cx - 1].attrs & AttrWide)) {
+        line[m_cx - 1].ch = U' ';
+        line[m_cx - 1].attrs &= ~AttrWide;
+    }
+    if (m_cx + w < m_cols && line[m_cx + w].ch == kWideTail)
+        line[m_cx + w].ch = U' ';
+    TermCell &cell = line[m_cx];
     cell.ch = c;
-    cell.attrs = m_attrs;
+    cell.attrs = static_cast<quint8>((m_attrs & ~AttrWide) | (w == 2 ? AttrWide : 0));
     cell.fg = m_fg;
     cell.bg = m_bg;
-    if (m_cx + 1 < m_cols) {
-        ++m_cx;
-    } else if (m_wrap) {
-        m_wrapPending = true;  // verzoegerter Umbruch
+    if (w == 2) {
+        TermCell &tail = line[m_cx + 1];
+        tail.ch = kWideTail;
+        tail.attrs = static_cast<quint8>(m_attrs & ~AttrWide);
+        tail.fg = m_fg;
+        tail.bg = m_bg;
+    }
+    if (m_cx + w < m_cols) {
+        m_cx += w;
+    } else {
+        m_cx = m_cols - 1;
+        if (m_wrap)
+            m_wrapPending = true;  // verzoegerter Umbruch
+    }
+}
+
+void TerminalEmulator::combineWithPrevious(char32_t mark)
+{
+    // Das zuletzt geschriebene Zeichen steht links vom Cursor — bzw. unter ihm,
+    // wenn am rechten Rand der Umbruch noch aussteht.
+    clampCursor();
+    int col = m_wrapPending ? m_cx : m_cx - 1;
+    if (col > 0 && m_grid[m_cy][col].ch == kWideTail)
+        --col;
+    if (col < 0)
+        return;
+    TermCell &cell = m_grid[m_cy][col];
+    if (cell.ch == kWideTail || cell.ch == U' ')
+        return;
+    const char32_t pair[2] = {cell.ch, mark};
+    const QList<uint> composed =
+        QString::fromUcs4(pair, 2).normalized(QString::NormalizationForm_C).toUcs4();
+    if (composed.size() == 1)
+        cell.ch = composed.front();
+    // Sonst (Emoji-Verbinder, Variantenwahl, Akzent ohne Vorkomposition):
+    // verwerfen — das Grundzeichen bleibt lesbar stehen.
+}
+
+void TerminalEmulator::repairWide(int row)
+{
+    if (row < 0 || row >= m_rows)
+        return;
+    auto &line = m_grid[row];
+    for (int c = 0; c < m_cols; ++c) {
+        TermCell &cell = line[c];
+        if (cell.ch == kWideTail) {
+            if (c == 0 || !(line[c - 1].attrs & AttrWide))
+                cell.ch = U' ';  // verwaiste rechte Haelfte
+        } else if (cell.attrs & AttrWide) {
+            if (c + 1 >= m_cols || line[c + 1].ch != kWideTail) {
+                cell.ch = U' ';  // linke Haelfte ohne Partner
+                cell.attrs &= ~AttrWide;
+            }
+        }
     }
 }
 
@@ -516,6 +800,7 @@ void TerminalEmulator::eraseInDisplay(int mode)
         for (int c = 0; c <= m_cx && c < m_cols; ++c)
             m_grid[m_cy][c] = blankCell();
     }
+    repairWide(m_cy);
 }
 
 void TerminalEmulator::eraseInLine(int mode)
@@ -530,6 +815,7 @@ void TerminalEmulator::eraseInLine(int mode)
     } else if (mode == 2) {
         m_grid[m_cy].assign(m_cols, blankCell());
     }
+    repairWide(m_cy);
 }
 
 void TerminalEmulator::insertLines(int n)
@@ -567,6 +853,7 @@ void TerminalEmulator::insertChars(int n)
         row[c] = row[c - n];
     for (int c = m_cx; c < m_cx + n; ++c)
         row[c] = blankCell();
+    repairWide(m_cy);
 }
 
 void TerminalEmulator::deleteChars(int n)
@@ -578,6 +865,7 @@ void TerminalEmulator::deleteChars(int n)
         row[c] = row[c + n];
     for (int c = m_cols - n; c < m_cols; ++c)
         row[c] = blankCell();
+    repairWide(m_cy);
 }
 
 void TerminalEmulator::eraseChars(int n)
@@ -586,6 +874,7 @@ void TerminalEmulator::eraseChars(int n)
     n = std::min(n, m_cols - m_cx);
     for (int c = m_cx; c < m_cx + n; ++c)
         m_grid[m_cy][c] = blankCell();
+    repairWide(m_cy);
 }
 
 // --- Cursor sichern / Modi --------------------------------------------------
@@ -597,6 +886,9 @@ void TerminalEmulator::saveCursor()
     m_savedAttrs = m_attrs;
     m_savedFg = m_fg;
     m_savedBg = m_bg;
+    m_savedG0 = m_g0Graphics;
+    m_savedG1 = m_g1Graphics;
+    m_savedShift = m_shiftOut;
 }
 
 void TerminalEmulator::restoreCursor()
@@ -606,6 +898,9 @@ void TerminalEmulator::restoreCursor()
     m_attrs = m_savedAttrs;
     m_fg = m_savedFg;
     m_bg = m_savedBg;
+    m_g0Graphics = m_savedG0;
+    m_g1Graphics = m_savedG1;
+    m_shiftOut = m_savedShift;
     m_wrapPending = false;
     clampCursor();
 }
@@ -643,7 +938,9 @@ void TerminalEmulator::privateMode(const QString &paramBuf, bool set)
             switchAltScreen(set);
             break;
         default:
-            break;  // 12 (Blink), 2004 (Bracketed Paste), Maus etc.: ignoriert
+            // 12 (Blink) wird ignoriert; Maus (9/100x) und Bracketed Paste
+            // (2004) verfolgt das Terminal-Widget ueber den ganzen Strom.
+            break;
         }
     }
 }
@@ -743,8 +1040,11 @@ QString TerminalEmulator::screenText() const
     QString out;
     for (int r = 0; r < m_rows; ++r) {
         QString line;
-        for (int c = 0; c < m_cols; ++c)
-            line += QChar(static_cast<char16_t>(m_grid[r][c].ch));
+        for (int c = 0; c < m_cols; ++c) {
+            const char32_t ch = m_grid[r][c].ch;
+            if (ch != kWideTail)  // rechte Haelfte eines breiten Zeichens
+                line += QString::fromUcs4(&ch, 1);
+        }
         while (line.endsWith(QLatin1Char(' ')))
             line.chop(1);
         out += line;

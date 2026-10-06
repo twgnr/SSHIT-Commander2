@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -77,6 +78,8 @@ public:
     QString hostKeyStatus = QStringLiteral("ignored");  // ignored | known | unknown
     bool closing = false;
     std::optional<QString> sudoPassword;  // nur im RAM; leer = NOPASSWD/unbekannt
+    // su-Passwoerter je Ziel-Benutzer (Pane als anderer Benutzer) — nur im RAM.
+    std::map<QString, QString> userPasswords;
 
     QString label() const { return profile.display(); }
 
@@ -89,6 +92,15 @@ public:
 
     // Fuehrt einen Befehl aus und sammelt stdout/stderr/exit (blockierend).
     ExecResult exec(const QString &command, const QByteArray &stdinData = {});
+
+    // Fuehrt einen Befehl in einem Pseudo-Terminal aus (ohne Echo) — fuer
+    // Programme, die nur von einem Terminal lesen (su fragt das Passwort ueber
+    // das TTY ab). step bekommt nach jeder neuen Ausgabe alles bisher Gelesene
+    // und liefert Bytes, die ins Terminal geschrieben werden (leer = nichts).
+    // stdout und stderr sind im PTY vereint (ExecResult::err bleibt leer).
+    // Bricht ab, wenn idleTimeoutMs lang weder gelesen noch geschrieben wurde.
+    using PtyStep = std::function<QByteArray(const QByteArray &output)>;
+    ExecResult execPty(const QString &command, const PtyStep &step, int idleTimeoutMs = 30000);
 
     void close();
 

@@ -37,8 +37,15 @@ public:
 
     // Sendet Text an die Shell (z.B. ein 'cd' beim Verzeichniswechsel).
     void sendText(const QString &text);
-    // Zwischenablage einfuegen; Zeilenenden werden zu CR wie bei getippter Eingabe.
+    // Zwischenablage einfuegen; Zeilenenden werden zu CR wie bei getippter
+    // Eingabe, bei Bracketed Paste (DECSET 2004) eingeklammert.
     void pasteClipboard();
+    // Ausgabe der Shell anzeigen: leitet sie an den Zeilen-Renderer
+    // (Primaerschirm) bzw. an den Zellengitter-Emulator (Alternate-Screen:
+    // vim/htop/tmux) weiter und verfolgt Maus-/Paste-Modi.
+    void feedOutput(const QString &data);
+    // Von der Anwendung angeforderte Modi (Maus-Reporting, Bracketed Paste).
+    const core::TerminalModes &terminalModes() const { return m_modes; }
     // Eigene Meldung der Anwendung anzeigen (nicht an die Shell gesendet).
     void printLocal(const QString &text, bool error = false);
     // Die gerade getippte, noch nicht ausgefuehrte Befehlszeile (ohne Prompt)
@@ -74,7 +81,13 @@ protected:
     bool focusNextPrevChild(bool) override { return false; }
     void resizeEvent(QResizeEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
+    // Maus: hat die Vollbild-Anwendung Maus-Reporting angefordert (vim, htop,
+    // tmux, mc), gehen Klicks/Bewegung/Rad an sie; Shift umgeht das.
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
     // Read-only blendet den Standard-Cursor aus -> Block-Cursor selbst zeichnen.
     void paintEvent(QPaintEvent *event) override;
     void focusInEvent(QFocusEvent *event) override;
@@ -82,10 +95,17 @@ protected:
 
 private:
     void applyThemeColors();
+    // Schrift aus den Einstellungen (terminal_font_family/-size) uebernehmen;
+    // true, wenn sie sich geaendert hat.
+    bool applyTerminalFont();
+    // Spalten/Zeilen an Shell und Emulator melden (nach Groessen-/Schriftwechsel).
+    void syncTerminalSize();
     void attachBackend(ShellBackend *backend);
-    // Leitet Ausgabe entweder an den Zeilen-Renderer (Primaerschirm) oder an den
-    // Zellengitter-Emulator (Alternate-Screen: vim/htop/tmux) weiter.
-    void feedOutput(const QString &data);
+    void sendBytes(const QByteArray &data);
+    // Maus-Ereignisse gehen an die Anwendung (statt Markieren/Kontextmenue).
+    bool mouseReporting(Qt::KeyboardModifiers mods) const;
+    // Zelle (Spalte, Zeile) des Emulator-Gitters unter einer Viewport-Position.
+    QPoint cellAt(const QPoint &pos) const;
     void paintEmulator();
     void recomputeMatches();
     void highlightMatches();
@@ -109,6 +129,9 @@ private:
     std::unique_ptr<core::TerminalEmulator> m_emu;
     bool m_altScreen = false;
     QString m_feedCarry;  // unvollstaendige Sequenz ueber Chunk-Grenzen
+    core::TerminalModes m_modes;
+    QPoint m_lastMouseCell{-1, -1};     // gegen doppelte Bewegungsmeldungen
+    int m_wheelAccum = 0;               // Teil-Schritte hochaufloesender Raeder
 
     QString m_searchPattern;
     std::vector<int> m_matchPositions;  // Zeichen-Offsets der Treffer
@@ -122,6 +145,8 @@ private:
     // Selbstgezeichneter Block-Cursor (blinkend).
     QColor m_termFg = QColor(QStringLiteral("#e6e6e6"));
     QColor m_termBg = QColor(QStringLiteral("#101216"));
+    QString m_fontFamily;               // aktuelle Terminal-Schrift (Einstellungen)
+    int m_fontSize = 0;
     QTimer *m_blinkTimer = nullptr;
     bool m_cursorOn = true;
     void restartCursorBlink();          // nach Ausgabe/Fokus wieder sichtbar

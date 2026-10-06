@@ -6,7 +6,7 @@
 #include "ncssh/core/githubalarm.hpp"
 #include "ncssh/core/gitstatus.hpp"
 #include "ncssh/core/i18n.hpp"
-#include "ncssh/core/natsort.hpp"
+#include "ncssh/gui/pane_filter_dialog.hpp"
 #include "ncssh/core/netscan.hpp"
 #include "ncssh/core/openwith.hpp"
 #include "ncssh/core/profiles.hpp"
@@ -134,7 +134,14 @@ void FilePanel::buildUi(const QString &title)
     m_sudoChip->setObjectName(QStringLiteral("Chip"));
     m_sudoChip->setCheckable(true);
     m_sudoChip->setVisible(false);
-    m_sudoChip->setToolTip(_t("Diese Pane mit sudo-Rechten (root) anzeigen"));
+    m_sudoChip->setToolTip(_t("Diese Pane mit sudo-Rechten (root) anzeigen — "
+                              "Rechtsklick: als anderer Benutzer"));
+    // Rechtsklick: Benutzerliste (Pane als anderer Benutzer, su bzw. sudo -u).
+    m_sudoChip->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_sudoChip, &QPushButton::customContextMenuRequested, this, [this] {
+        emit activated();
+        emit userMenuRequested(m_sudoChip->mapToGlobal(QPoint(0, m_sudoChip->height())));
+    });
     connect(m_sudoChip, &QPushButton::toggled, this, [this](bool on) {
         m_sudoActive = on;
         updateSudoFrame();
@@ -156,7 +163,19 @@ void FilePanel::buildUi(const QString &title)
         emit activated();
         emit serverInfoRequested();
     });
+    // Filter und Sortierung der Ansicht; hervorgehoben, solange Eintraege
+    // ausgeblendet werden (sonst wundert man sich ueber "fehlende" Dateien).
+    m_filterChip = new QPushButton(_t("Filter"), this);
+    m_filterChip->setObjectName(QStringLiteral("Chip"));
+    m_filterChip->setIcon(themedIcon(QStringLiteral("filter"), 14));
+    m_filterChip->setCheckable(true);
+    connect(m_filterChip, &QPushButton::clicked, this, [this] {
+        emit activated();
+        openFilterDialog();
+    });
+    updateFilterChip();
     headerRow->addWidget(m_header, 1);
+    headerRow->addWidget(m_filterChip);
     headerRow->addWidget(m_serverInfoChip);
     headerRow->addWidget(m_disconnectChip);
     headerRow->addWidget(m_sudoChip);
@@ -184,11 +203,20 @@ void FilePanel::buildUi(const QString &title)
     back->setFixedWidth(30);
     back->setToolTip(_t("Zurück (Alt+←)"));
     connect(back, &QPushButton::clicked, this, &FilePanel::goBack);
+    // Rechtsklick: Liste der letzten Ziele (wie im Explorer).
+    back->setObjectName(QStringLiteral("PaneBack"));
+    back->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(back, &QPushButton::customContextMenuRequested, this,
+            [this, back] { showHistoryMenu(/*forward=*/false, back); });
     auto *forward = new QPushButton(this);
     forward->setIcon(themedIcon(QStringLiteral("nav-forward"), 16));
     forward->setFixedWidth(30);
     forward->setToolTip(_t("Vor (Alt+→)"));
     connect(forward, &QPushButton::clicked, this, &FilePanel::goForward);
+    forward->setObjectName(QStringLiteral("PaneForward"));
+    forward->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(forward, &QPushButton::customContextMenuRequested, this,
+            [this, forward] { showHistoryMenu(/*forward=*/true, forward); });
     auto *up = new QPushButton(this);
     up->setIcon(themedIcon(QStringLiteral("nav-up"), 16));
     up->setFixedWidth(34);
@@ -445,13 +473,15 @@ void FilePanel::setTableHeaders()
                       QStringLiteral("services"), QStringLiteral("shares"),
                       QStringLiteral("web")};
         m_table->setColumnCount(m_fileCols.size());
-        m_table->setHorizontalHeaderLabels({_t("Name"), _t("IP"), _t("MAC"), _t("Hersteller"),
-                                            _t("Betriebssystem"), _t("Latenz"), _t("Dienste"),
-                                            _t("Freigaben"), _t("Web")});
+        m_headerLabels = {_t("Name"), _t("IP"), _t("MAC"), _t("Hersteller"),
+                          _t("Betriebssystem"), _t("Latenz"), _t("Dienste"),
+                          _t("Freigaben"), _t("Web")};
+        m_table->setHorizontalHeaderLabels(m_headerLabels);
         QHeaderView *header = m_table->horizontalHeader();
         header->setSectionResizeMode(0, QHeaderView::Stretch);
         for (int c = 1; c < m_fileCols.size(); ++c)
             header->setSectionResizeMode(c, QHeaderView::ResizeToContents);
+        updateSortIndicator();
         return;
     }
 
@@ -460,11 +490,33 @@ void FilePanel::setTableHeaders()
     QStringList labels{_t("Name")};
     for (int i = 1; i < m_fileCols.size(); ++i)
         labels << columnLabel(m_fileCols.at(i));
+    m_headerLabels = labels;
     m_table->setHorizontalHeaderLabels(labels);
     // Breiten frei einstellbar; gesetzt wird erst am Ende von populate().
     QHeaderView *hh = m_table->horizontalHeader();
     for (int c = 0; c < m_fileCols.size(); ++c)
         hh->setSectionResizeMode(c, QHeaderView::Interactive);
+    updateSortIndicator();
+}
+
+void FilePanel::updateSortIndicator()
+{
+    // Als Text statt QHeaderView-Sortierpfeil: den zeichnet das Stylesheet je
+    // nach Stil winzig oder gar nicht.
+    // Mehrere Stufen: Pfeil plus Rang (Name ▲1, Geändert ▼2).
+    for (int c = 0; c < m_headerLabels.size() && c < m_table->columnCount(); ++c) {
+        QString text = m_headerLabels.at(c);
+        for (int level = 0; c < m_fileCols.size() && level < m_sortKeys.size(); ++level) {
+            if (m_sortKeys.at(level).column != m_fileCols.at(c))
+                continue;
+            text += m_sortKeys.at(level).ascending ? QStringLiteral(" ▲") : QStringLiteral(" ▼");
+            if (m_sortKeys.size() > 1)
+                text += QString::number(level + 1);
+            break;
+        }
+        if (QTableWidgetItem *item = m_table->horizontalHeaderItem(c))
+            item->setText(text);
+    }
 }
 
 void FilePanel::applyColumnWidths()
@@ -1026,6 +1078,53 @@ void FilePanel::goForward()
     loadDir(m_history.at(int(m_histPos)), /*record=*/false);
 }
 
+QStringList FilePanel::backHistory() const
+{
+    QStringList out;
+    for (qsizetype i = m_histPos - 1; i >= 0; --i)
+        out << m_history.at(int(i));
+    return out;
+}
+
+QStringList FilePanel::forwardHistory() const
+{
+    QStringList out;
+    if (m_histPos < 0)
+        return out;
+    for (qsizetype i = m_histPos + 1; i < m_history.size(); ++i)
+        out << m_history.at(int(i));
+    return out;
+}
+
+void FilePanel::goHistory(int steps)
+{
+    const qsizetype target = m_histPos + steps;
+    if (steps == 0 || m_histPos < 0 || target < 0 || target >= m_history.size())
+        return;
+    m_histPos = target;
+    loadDir(m_history.at(int(m_histPos)), /*record=*/false);
+}
+
+void FilePanel::showHistoryMenu(bool forward, QWidget *button)
+{
+    const QStringList targets = forward ? forwardHistory() : backHistory();
+    if (targets.isEmpty())
+        return;
+    QMenu menu(this);
+    menu.setToolTipsVisible(true);
+    const int limit = 20;   // aeltere Ziele per wiederholtem Aufruf erreichbar
+    for (int i = 0; i < targets.size() && i < limit; ++i) {
+        const QString path = targets.at(i);
+        QString label = menu.fontMetrics().elidedText(path, Qt::ElideMiddle, 480);
+        label.replace(QLatin1Char('&'), QStringLiteral("&&"));
+        QAction *action = menu.addAction(label);
+        action->setToolTip(path);
+        const int steps = forward ? i + 1 : -(i + 1);
+        connect(action, &QAction::triggered, this, [this, steps] { goHistory(steps); });
+    }
+    menu.exec(button->mapToGlobal(QPoint(0, button->height())));
+}
+
 void FilePanel::goUp()
 {
     if (!m_provider || m_path.isEmpty())
@@ -1122,37 +1221,12 @@ void FilePanel::loadDir(const QString &rawPath, bool record)
 void FilePanel::populate(const std::vector<FileEntry> &entries)
 {
     cancelInlineRename();
-    // Sortieren nach der gewaehlten Spalte — ".." und Ordner bleiben oben.
+    // Sortieren nach den gewaehlten Stufen — ".." oben, Ordner wahlweise zuerst.
     // Namen wahlweise natuerlich (datei2 vor datei10).
     const bool natural = core::getSettingBool(QStringLiteral("natural_sort"), true);
-    const QString key = m_sortKey;
-    auto nameLess = [natural](const FileEntry &a, const FileEntry &b) {
-        return natural ? core::naturalLess(a.name, b.name)
-                       : a.name.toLower() < b.name.toLower();
-    };
-    auto extOf = [](const FileEntry &e) {
-        const int dot = e.name.lastIndexOf(QLatin1Char('.'));
-        return dot > 0 ? e.name.mid(dot + 1).toLower() : QString();
-    };
-
     std::vector<FileEntry> sorted = entries;
-    std::stable_sort(sorted.begin(), sorted.end(),
-                     [&](const FileEntry &a, const FileEntry &b) {
-        if (a.type == EntryType::Parent) return true;
-        if (b.type == EntryType::Parent) return false;
-        if (a.isDir() != b.isDir()) return a.isDir();
-        bool less;
-        if (key == QLatin1String("size"))          less = a.size < b.size;
-        else if (key == QLatin1String("modified")) less = a.modified < b.modified;
-        else if (key == QLatin1String("created"))  less = a.created < b.created;
-        else if (key == QLatin1String("accessed")) less = a.accessed < b.accessed;
-        else if (key == QLatin1String("type"))     less = int(a.type) < int(b.type);
-        else if (key == QLatin1String("ext"))      less = extOf(a) < extOf(b);
-        else if (key == QLatin1String("perm"))     less = a.permissions < b.permissions;
-        else if (key == QLatin1String("owner"))    less = a.owner.toLower() < b.owner.toLower();
-        else                                       less = nameLess(a, b);
-        return m_sortAscending ? less : !less;
-    });
+    core::sortEntries(sorted, m_sortKeys, m_dirsFirst, natural);
+    const core::CompiledPaneFilter paneFilter(m_paneFilter);
 
     // Wildcard-Filter (leer = alles).
     QRegularExpression filterRe;
@@ -1178,12 +1252,17 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
     // plus Relayout pro Eintrag.
     std::vector<const FileEntry *> visible;
     visible.reserve(sorted.size());
+    int filteredOut = 0;   // vom Filter-Dialog ausgeblendet
     for (const FileEntry &e : sorted) {
         if (!m_showHidden && e.hidden && e.type != EntryType::Parent)
             continue;
         if (filtering && e.type != EntryType::Parent
             && !filterRe.match(e.name).hasMatch())
             continue;
+        if (!paneFilter.matches(e)) {
+            ++filteredOut;
+            continue;
+        }
         visible.push_back(&e);
     }
     m_table->setUpdatesEnabled(false);
@@ -1234,6 +1313,8 @@ void FilePanel::populate(const std::vector<FileEntry> &entries)
                    + QStringLiteral(" · ") + humanSize(totalSize);
     if (filtering)
         m_baseStatus += QStringLiteral(" · Filter: %1").arg(m_filter);
+    if (filteredOut > 0)
+        m_baseStatus += QStringLiteral(" · ") + _t("%1 ausgeblendet (Filter)").arg(filteredOut);
     updateSelectionStatus();
     // Erst hier, sonst verstellt der folgende Layout-Schritt die Breiten wieder.
     applyColumnWidths();
@@ -2332,7 +2413,19 @@ void FilePanel::setSudoActive(bool active)
     QSignalBlocker blocker(m_sudoChip);
     m_sudoChip->setChecked(active);
     m_sudoActive = active;
+    if (!active)
+        m_sudoChip->setText(QStringLiteral("sudo"));
     updateSudoFrame();
+}
+
+void FilePanel::setSudoLabel(const QString &text)
+{
+    m_sudoChip->setText(text.isEmpty() ? QStringLiteral("sudo") : text);
+}
+
+QString FilePanel::sudoLabel() const
+{
+    return m_sudoChip->text();
 }
 
 void FilePanel::updateSudoFrame()
@@ -2352,13 +2445,61 @@ void FilePanel::sortBy(int column)
     if (column < 0 || column >= m_fileCols.size())
         return;
     const QString key = m_fileCols.at(column);
-    if (key == m_sortKey) {
-        m_sortAscending = !m_sortAscending;
-    } else {
-        m_sortKey = key;
-        m_sortAscending = true;
-    }
+    // Klick auf die erste Stufe kehrt deren Richtung um (Folgestufen bleiben);
+    // jede andere Spalte wird alleinige Sortierung.
+    if (!m_sortKeys.isEmpty() && m_sortKeys.first().column == key)
+        m_sortKeys.first().ascending = !m_sortKeys.first().ascending;
+    else
+        m_sortKeys = {core::SortKey{key, true}};
+    updateSortIndicator();
     populate(m_entries);
+}
+
+void FilePanel::openFilterDialog()
+{
+    // Sortierbar sind alle Dateispalten, auch ausgeblendete.
+    QList<QPair<QString, QString>> columns{{QStringLiteral("name"), _t("Name")}};
+    for (const QString &id : optionalColumns())
+        columns.append({id, columnLabel(id)});
+    const core::PaneFilter oldFilter = m_paneFilter;
+    const QList<core::SortKey> oldKeys = m_sortKeys;
+    const bool oldDirsFirst = m_dirsFirst;
+
+    PaneFilterDialog dlg(m_paneFilter, m_sortKeys, m_dirsFirst, columns, this);
+    connect(&dlg, &PaneFilterDialog::applied, this, [this, &dlg] {
+        setViewOptions(dlg.filter(), dlg.sortKeys(), dlg.dirsFirst());
+    });
+    if (dlg.exec() == QDialog::Accepted)
+        setViewOptions(dlg.filter(), dlg.sortKeys(), dlg.dirsFirst());
+    else   // Abbrechen nimmt auch "Anwenden" zurueck
+        setViewOptions(oldFilter, oldKeys, oldDirsFirst);
+}
+
+void FilePanel::setViewOptions(const core::PaneFilter &filter,
+                               const QList<core::SortKey> &sortKeys, bool dirsFirst)
+{
+    const QList<core::SortKey> keys = sortKeys.isEmpty() ? QList<core::SortKey>{core::SortKey{}}
+                                                         : sortKeys;
+    if (filter == m_paneFilter && keys == m_sortKeys && dirsFirst == m_dirsFirst) {
+        updateFilterChip();
+        return;
+    }
+    m_paneFilter = filter;
+    m_sortKeys = keys;
+    m_dirsFirst = dirsFirst;
+    updateFilterChip();
+    updateSortIndicator();
+    populate(m_entries);
+}
+
+void FilePanel::updateFilterChip()
+{
+    if (!m_filterChip)
+        return;
+    const bool active = m_paneFilter.isActive();
+    m_filterChip->setChecked(active);
+    m_filterChip->setToolTip(active ? _t("Filter aktiv: %1").arg(m_paneFilter.summary())
+                                    : _t("Filter und Sortierung der Ansicht einstellen"));
 }
 
 void FilePanel::applyFilter(const QString &pattern)

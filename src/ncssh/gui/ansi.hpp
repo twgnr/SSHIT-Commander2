@@ -1,8 +1,9 @@
 // ANSI/VT-Renderer fuer ein QPlainTextEdit (farbige Terminal-Ausgabe).
 //
 // Interpretiert SGR-Farben (16/256/Truecolor, fett/kursiv/unterstrichen),
-// behandelt Zeilenumbruch, Wagenruecklauf und Zeile-Loeschen; andere
-// Steuersequenzen werden verworfen, statt als "Muell" angezeigt zu werden.
+// behandelt Zeilenumbruch, Wagenruecklauf, Zeile-Loeschen und die
+// DEC-Liniengrafik; andere Steuersequenzen werden verworfen, statt als "Muell"
+// angezeigt zu werden.
 #pragma once
 
 #include <QColor>
@@ -55,7 +56,14 @@ private:
     bool m_underline = false;
     bool m_reverse = false;
     bool m_pendingCr = false;  // (unbenutzt; Zeilenmodell braucht es nicht mehr)
-    int m_col = 0;             // Cursorspalte in der letzten Zeile (bleibt ueber Chunks)
+    // Cursorspalte in der letzten Zeile (bleibt ueber Chunks). Gezaehlt in
+    // Terminalspalten, nicht in Zeichen: CJK/Emoji belegen zwei Spalten,
+    // kombinierende Akzente keine — so passen Rueckschritte der Shell.
+    int m_col = 0;
+    // Zeichensaetze G0/G1 (ESC ( 0 = DEC-Liniengrafik), SO/SI waehlen G1/G0.
+    bool m_g0Graphics = false;
+    bool m_g1Graphics = false;
+    bool m_shiftOut = false;
     QString m_carry;           // angeschnittene Escape-Sequenz vom letzten Chunk
     bool m_inString = false;   // mitten in OSC/DCS (bis BEL bzw. ESC \ ueberspringen)
     int m_stringLen = 0;       // bisher uebersprungene Zeichen dieser Zeichenkette

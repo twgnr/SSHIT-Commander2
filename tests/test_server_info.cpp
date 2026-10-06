@@ -85,6 +85,11 @@ TEST(server_info, categories_group_config_files)
     const QString env = core::configCategory(QStringLiteral("/home/bob/app/.env"));
     CHECK_EQ(core::configCategory(QStringLiteral("/srv/x/.env.production")), env);
     CHECK_EQ(core::configCategory(QStringLiteral("/etc/environment")), env);
+    CHECK_EQ(core::configCategory(QStringLiteral("/etc/default/locale")), env);
+    CHECK_EQ(core::configCategory(QStringLiteral("/etc/security/pam_env.conf")), env);
+    CHECK_EQ(core::configCategory(QStringLiteral("/root/.pam_environment")), env);
+    CHECK_EQ(core::configCategory(QStringLiteral("/etc/profile.d/apps-bin-path.sh")),
+             core::configCategory(QStringLiteral("/root/.bashrc")));
     CHECK(core::configCategory(QStringLiteral("/etc/nginx/nginx.conf"))
           == core::configCategory(QStringLiteral("/etc/apache2/apache2.conf")));
     CHECK(core::configCategory(QStringLiteral("/opt/a/docker-compose.yml"))

@@ -32,6 +32,7 @@ namespace ncssh::gui {
 
 // Weiterleitung von Worker-Threads in den GUI-Thread (siehe .cpp).
 struct MacroGuiGate;
+class GlobalHotkeys;
 
 // Eine Taste im Raster: eigenes Zeichnen (Icon + Beschriftung) und
 // Unterscheidung zwischen kurzem Klick und langem Halten.
@@ -89,6 +90,9 @@ public:
     void rememberVisibility();
     // Startwert fuer MainWindow: Tastenleiste beim Start wieder zeigen?
     static bool shouldRestore();
+    // Hat irgendeine Taste ein globales Kuerzel? Dann legt das Hauptfenster den
+    // (unsichtbaren) Dialog schon beim Start an, damit die Kuerzel greifen.
+    static bool hasGlobalShortcuts();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -103,7 +107,10 @@ private:
     void drawGrid();
     void onTileClicked(int index);
     void onTileHeld(int index);
-    void runKey(const QJsonObject &config, int index);
+    // layer: Layer der Taste (fuer die Zustands-ID). viaHotkey: per globalem
+    // Kuerzel ausgeloest — dann wirkt die Aktion im Fenster, das gerade vorn ist.
+    void runKey(const QJsonObject &config, int index, const QString &layer,
+                bool viaHotkey = false);
     // Sequenz: jeder Schritt erst nach Abschluss des vorherigen.
     void runSteps(std::vector<QJsonObject> steps, const QString &keyId, int index);
     // Eine einzelne Aktion: Navigation und GUI-Aktionen im GUI-Thread, alles
@@ -124,6 +131,13 @@ private:
     void toggleMode(bool runMode);
     void onDimsChanged();   // Reihen/Spalten des aktuellen Layers uebernehmen
     void onTileContextMenu(int index, const QPoint &globalPos);  // Bearbeiten/Ausführen/Leeren
+    void editKey(int index);   // Tasten-Editor fuer eine Taste des aktuellen Layers
+    // Globale Kuerzel aller Layer neu registrieren; liefert die Kuerzel, die
+    // sich nicht registrieren liessen (z. B. von einem anderen Programm belegt).
+    QStringList updateHotkeys();
+    void onHotkey(int id);
+    // Fuehrt die Taste aus, sobald keine Modifikatortaste mehr gedrueckt ist.
+    void fireHotkey(const QString &layerName, int index, int tries);
     void pollForeground();
     core::macros::Layer *currentLayer();
 
@@ -153,6 +167,13 @@ private:
     QTimer *m_targetTimer = nullptr;
     quintptr m_lastExternalWindow = 0;
     QElapsedTimer m_appActivatedAt;   // wann die App zuletzt aktiv wurde
+
+    // Globale Kuerzel: je Registrierungs-ID die Tasten (Layer, Index) mit
+    // dieser Kombination. Waehrend der Tasten-Editor offen ist, ausgesetzt —
+    // sonst faengt Windows die Kombination ab, bevor das Kuerzel-Feld sie sieht.
+    GlobalHotkeys *m_hotkeys = nullptr;
+    std::vector<std::vector<std::pair<QString, int>>> m_hotkeyKeys;
+    bool m_hotkeysSuspended = false;
 
     QListWidget *m_layerList = nullptr;
     QWidget *m_gridHost = nullptr;

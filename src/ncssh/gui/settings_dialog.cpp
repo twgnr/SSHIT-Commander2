@@ -17,6 +17,7 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QFontComboBox>
 #include <QJsonObject>
 #include <QPointer>
 #include <QProgressBar>
@@ -118,6 +119,13 @@ QWidget *SettingsDialog::buildGeneralTab()
     m_paneFont = makeFontSpin("pane_font_size", 11);
     form->addRow(_t("Editor-Schriftgröße"), m_editorFont);
     form->addRow(_t("Terminal-Schriftgröße"), m_terminalFont);
+    // Nur Festbreiten-Schriften: das Terminal rechnet in gleich breiten Zellen.
+    m_terminalFontFamily = new QFontComboBox(page);
+    m_terminalFontFamily->setFontFilters(QFontComboBox::MonospacedFonts);
+    m_terminalFontFamily->setEditable(false);   // nur installierte Schriften waehlbar
+    m_terminalFontFamily->setCurrentFont(QFont(core::getSettingString(
+        QStringLiteral("terminal_font_family"), QStringLiteral("Consolas"))));
+    form->addRow(_t("Terminal-Schriftart"), m_terminalFontFamily);
     form->addRow(_t("Pane-Schriftgröße (Dateiliste)"), m_paneFont);
 
     m_dateFormat = new QLineEdit(
@@ -901,6 +909,8 @@ void SettingsDialog::save()
     core::setSetting(QStringLiteral("theme"), m_theme->currentText());
     core::setSetting(QStringLiteral("editor_font_size"), m_editorFont->value());
     core::setSetting(QStringLiteral("terminal_font_size"), m_terminalFont->value());
+    core::setSetting(QStringLiteral("terminal_font_family"),
+                     m_terminalFontFamily->currentFont().family());
     core::setSetting(QStringLiteral("pane_font_size"), m_paneFont->value());
     core::setSetting(QStringLiteral("date_format"), m_dateFormat->text());
     core::setSetting(QStringLiteral("hide_hidden"), m_hideHidden->isChecked());

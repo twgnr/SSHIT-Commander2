@@ -2,6 +2,7 @@
 
 #include "ncssh/core/appmonitor.hpp"
 #include "ncssh/core/i18n.hpp"
+#include "ncssh/gui/global_hotkeys.hpp"
 #include "ncssh/gui/macro_key_editor.hpp"
 
 #include <QAction>
@@ -314,6 +315,10 @@ MacroManagerDialog::MacroManagerDialog(AsyncBridge *bridge,
     refreshLayers();
     drawGrid();
 
+    m_hotkeys = new GlobalHotkeys(this);
+    connect(m_hotkeys, &GlobalHotkeys::activated, this, &MacroManagerDialog::onHotkey);
+    updateHotkeys();
+
     // Zuletzt gemerkte Andock-Seite anwenden: nur im Ausfuehren-Modus und nur,
     // wenn der Dialog ein QMainWindow als Eltern hat (Bearbeiten bleibt schwebend).
     if (m_runMode && m_config.dock != QLatin1String("float")
@@ -599,6 +604,7 @@ void MacroManagerDialog::editLayer()
     mc::save(m_config);
     refreshLayers();
     drawGrid();
+    updateHotkeys();   // Name/Groesse des Layers stecken in der Zuordnung
 }
 
 void MacroManagerDialog::deleteLayer()
@@ -617,6 +623,7 @@ void MacroManagerDialog::deleteLayer()
     mc::save(m_config);
     refreshLayers();
     drawGrid();
+    updateHotkeys();
 }
 
 void MacroManagerDialog::onDimsChanged()
@@ -628,6 +635,7 @@ void MacroManagerDialog::onDimsChanged()
     layer->cols = m_colsSpin->value();
     saveConfig();
     drawGrid();
+    updateHotkeys();   // ausgeblendete Tasten loesen nicht mehr aus
 }
 
 void MacroManagerDialog::drawGrid()
@@ -681,19 +689,13 @@ void MacroManagerDialog::onTileClicked(int index)
     mc::Layer *layer = currentLayer();
     if (!layer)
         return;
-    const auto key = layer->key(index);
     if (m_runMode) {
-        if (key)
-            runKey(*key, index);
+        if (const auto key = layer->key(index))
+            runKey(*key, index, m_currentLayer);
         return;
     }
     // Bearbeiten-Modus: Editor oeffnen.
-    MacroKeyEditor editor(key.value_or(mc::newKey()), m_config.layerNames(), this);
-    if (editor.exec() != QDialog::Accepted)
-        return;
-    layer->setKey(index, editor.cleared() ? QJsonObject() : editor.config());
-    mc::save(m_config);
-    drawGrid();
+    editKey(index);
 }
 
 void MacroManagerDialog::onTileHeld(int index)
@@ -701,16 +703,124 @@ void MacroManagerDialog::onTileHeld(int index)
     // Langes Halten oeffnet den Editor auch im Ausfuehren-Modus.
     if (!m_runMode)
         return;
-    mc::Layer *layer = currentLayer();
+    editKey(index);
+}
+
+void MacroManagerDialog::editKey(int index)
+{
+    // Layer per Name festhalten: waehrend des modalen Editors kann der
+    // kontextabhaengige Wechsel den aktuellen Layer umstellen.
+    const QString layerName = m_currentLayer;
+    mc::Layer *layer = m_config.get(layerName);
     if (!layer)
         return;
-    const auto key = layer->key(index);
-    MacroKeyEditor editor(key.value_or(mc::newKey()), m_config.layerNames(), this);
-    if (editor.exec() != QDialog::Accepted)
+    // Globale Kuerzel aussetzen, solange der Editor offen ist: sonst faengt
+    // Windows die Kombination ab, bevor das Kuerzel-Feld sie aufnehmen kann.
+    m_hotkeysSuspended = true;
+    updateHotkeys();
+    MacroKeyEditor editor(layer->key(index).value_or(mc::newKey()), m_config.layerNames(), this);
+    const bool accepted = editor.exec() == QDialog::Accepted;
+    m_hotkeysSuspended = false;
+    layer = m_config.get(layerName);
+    if (!accepted || !layer) {
+        updateHotkeys();
         return;
-    layer->setKey(index, editor.cleared() ? QJsonObject() : editor.config());
+    }
+    const QJsonObject config = editor.cleared() ? QJsonObject() : editor.config();
+    layer->setKey(index, config);
     mc::save(m_config);
     drawGrid();
+
+    const QStringList failed = updateHotkeys();
+    const QKeySequence seq(config.value(QStringLiteral("shortcut")).toString(),
+                           QKeySequence::PortableText);
+    const QString combo =
+        seq.isEmpty() ? QString() : QKeySequence(seq[0]).toString(QKeySequence::NativeText);
+    if (!combo.isEmpty() && failed.contains(combo)) {
+        QMessageBox::warning(this, _t("Makro-Manager"),
+                             _t("Das globale Kürzel %1 konnte nicht registriert werden. "
+                                "Vermutlich nutzt es bereits ein anderes Programm.")
+                                 .arg(combo));
+    }
+}
+
+QStringList MacroManagerDialog::updateHotkeys()
+{
+    if (!m_hotkeys)
+        return {};
+    m_hotkeys->clear();
+    m_hotkeyKeys.clear();
+    if (m_hotkeysSuspended)
+        return {};
+
+    QHash<QString, int> idByCombo;   // Kombination -> ID (-1 = nicht registrierbar)
+    QStringList failed;
+    for (const QString &name : m_config.layerNames()) {
+        const mc::Layer layer = m_config.layers.value(name);
+        for (auto it = layer.keys.cbegin(); it != layer.keys.cend(); ++it) {
+            // Nur sichtbare Tasten — ausgeblendete (Raster verkleinert) zaehlen nicht.
+            if (it.key() < 0 || it.key() >= layer.capacity())
+                continue;
+            const QKeySequence seq(it.value().value(QStringLiteral("shortcut")).toString(),
+                                   QKeySequence::PortableText);
+            if (seq.isEmpty())
+                continue;
+            // Nur die erste Kombination zaehlt (Mehrfach-Folgen kann Windows nicht).
+            const QKeySequence first(seq[0]);
+            const QString combo = first.toString(QKeySequence::NativeText);
+            int id = idByCombo.value(combo, -2);
+            if (id == -2) {
+                id = int(m_hotkeyKeys.size());
+                if (m_hotkeys->add(id, first)) {
+                    m_hotkeyKeys.emplace_back();
+                } else {
+                    id = -1;
+                    failed << combo;
+                }
+                idByCombo.insert(combo, id);
+            }
+            if (id >= 0)
+                m_hotkeyKeys[size_t(id)].emplace_back(name, it.key());
+        }
+    }
+    if (!failed.isEmpty())
+        m_status->setText(_t("Globale Kürzel nicht registrierbar (bereits belegt?): %1")
+                              .arg(failed.join(QStringLiteral(", "))));
+    return failed;
+}
+
+void MacroManagerDialog::onHotkey(int id)
+{
+    if (id < 0 || id >= int(m_hotkeyKeys.size()) || m_hotkeyKeys[size_t(id)].empty())
+        return;
+    // Mehrere Tasten mit derselben Kombination: die im aktuellen Layer zuerst.
+    const auto &targets = m_hotkeyKeys[size_t(id)];
+    auto target = targets.front();
+    for (const auto &t : targets) {
+        if (t.first == m_currentLayer) {
+            target = t;
+            break;
+        }
+    }
+
+    fireHotkey(target.first, target.second, 100);
+}
+
+void MacroManagerDialog::fireHotkey(const QString &layerName, int index, int tries)
+{
+    // Erst ausfuehren, wenn Strg/Alt/… losgelassen sind — sonst wuerde getippter
+    // Text oder ein simuliertes Kuerzel mit der noch gedrueckten Ausloese-
+    // Kombination vermischt. Hoechstens ~1,5 s warten.
+    if (tries > 0 && GlobalHotkeys::modifiersHeld()) {
+        QTimer::singleShot(15, this, [this, layerName, index, tries] {
+            fireHotkey(layerName, index, tries - 1);
+        });
+        return;
+    }
+    // Konfiguration erneut lesen: die Taste kann inzwischen geaendert sein.
+    const mc::Layer *layer = m_config.get(layerName);
+    if (const auto key = layer ? layer->key(index) : std::nullopt)
+        runKey(*key, index, layerName, /*viaHotkey=*/true);
 }
 
 void MacroManagerDialog::onTileContextMenu(int index, const QPoint &globalPos)
@@ -729,43 +839,43 @@ void MacroManagerDialog::onTileContextMenu(int index, const QPoint &globalPos)
 
     QAction *chosen = menu.exec(globalPos);
     if (chosen == edit) {
-        MacroKeyEditor editor(layer->key(index).value_or(mc::newKey()),
-                              m_config.layerNames(), this);
-        if (editor.exec() != QDialog::Accepted)
-            return;
-        layer->setKey(index, editor.cleared() ? QJsonObject() : editor.config());
-        mc::save(m_config);
-        drawGrid();
+        editKey(index);
     } else if (chosen == run) {
         if (const auto key = layer->key(index))
-            runKey(*key, index);
+            runKey(*key, index, m_currentLayer);
     } else if (chosen == clear) {
         layer->setKey(index, QJsonObject());   // leeres Objekt entfernt die Taste
         mc::save(m_config);
         drawGrid();
+        updateHotkeys();
     }
 }
 
-void MacroManagerDialog::runKey(const QJsonObject &config, int index)
+void MacroManagerDialog::runKey(const QJsonObject &config, int index, const QString &layer,
+                                bool viaHotkey)
 {
     const QString type = config.value(QStringLiteral("action_type")).toString();
     const QJsonValue payload = config.value(QStringLiteral("payload"));
-    const QString keyId = QStringLiteral("%1:%2").arg(m_currentLayer).arg(index);
+    const QString keyId = QStringLiteral("%1:%2").arg(layer).arg(index);
 
     // Kam der Klick aus einem anderen Programm (die App wurde gerade erst
     // durch diesen Klick aktiv), gilt das zuvor aktive Fenster als Ziel:
     // erst dorthin zurueck, dann ausfuehren — wie bei einem Stream Deck.
     // Wer schon in der App arbeitete, tippt weiter ins fokussierte Feld.
+    // Ein globales Kuerzel wirkt immer im Fenster, das gerade vorn ist.
     const ma::ActionSpec &spec = ma::spec(type);
     const bool consoleAction = type == QLatin1String("ssh_command")
                                || type == QLatin1String("ssh_broadcast");
-    const bool fromOutside = m_appActivatedAt.isValid() && m_appActivatedAt.elapsed() < 1000
+    const bool fromOutside = !viaHotkey && m_appActivatedAt.isValid()
+                             && m_appActivatedAt.elapsed() < 1000
                              && QGuiApplication::applicationState() == Qt::ApplicationActive;
     if (fromOutside && !spec.navigation && !spec.gui && !consoleAction
         && core::bringWindowToFront(m_lastExternalWindow)) {
         m_appActivatedAt.invalidate();
         // Kurz warten, bis das Fenster wirklich vorn ist und Eingaben annimmt.
-        QTimer::singleShot(120, this, [this, config, index] { runKey(config, index); });
+        QTimer::singleShot(120, this, [this, config, index, layer] {
+            runKey(config, index, layer);
+        });
         return;
     }
 
@@ -1094,6 +1204,7 @@ void MacroManagerDialog::importLayers()
         return;
     mc::save(m_config);
     refreshLayers();
+    updateHotkeys();
     QMessageBox::information(this, _t("Makro-Manager"),
                              _t("%1 Layer importiert: %2")
                                  .arg(added.size()).arg(added.join(QStringLiteral(", "))));
@@ -1218,6 +1329,18 @@ bool MacroManagerDialog::shouldRestore()
 {
     const mc::MacroConfig config = mc::load();
     return config.open && config.mode == QLatin1String("run");
+}
+
+bool MacroManagerDialog::hasGlobalShortcuts()
+{
+    const mc::MacroConfig config = mc::load();
+    for (const mc::Layer &layer : config.layers) {
+        for (const QJsonObject &key : layer.keys) {
+            if (!key.value(QStringLiteral("shortcut")).toString().isEmpty())
+                return true;
+        }
+    }
+    return false;
 }
 
 void MacroManagerDialog::closeEvent(QCloseEvent *event)

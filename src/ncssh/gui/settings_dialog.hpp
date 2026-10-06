@@ -11,6 +11,7 @@
 
 class QFormLayout;
 class QComboBox;
+class QFontComboBox;
 class QLineEdit;
 class QCheckBox;
 class QSpinBox;
@@ -63,6 +64,7 @@ private:
     QComboBox *m_theme = nullptr;
     QSpinBox *m_editorFont = nullptr;
     QSpinBox *m_terminalFont = nullptr;
+    QFontComboBox *m_terminalFontFamily = nullptr;
     QSpinBox *m_paneFont = nullptr;
     QLineEdit *m_dateFormat = nullptr;
     QCheckBox *m_hideHidden = nullptr;

@@ -301,6 +301,10 @@ MainWindow::MainWindow(AsyncBridge *bridge, QWidget *parent)
             ensureMacroDialog();
             m_macroDialog->present();
         });
+    } else if (MacroManagerDialog::hasGlobalShortcuts()) {
+        // Globale Makro-Kuerzel gelten auch ohne sichtbaren Makro-Manager —
+        // registriert werden sie vom (hier unsichtbaren) Dialog.
+        QTimer::singleShot(0, this, [this] { ensureMacroDialog(); });
     }
 }
 

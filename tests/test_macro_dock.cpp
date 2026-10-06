@@ -3,11 +3,13 @@
 // Genau dieser Pfad wurde als "angedockte Tasten erscheinen nicht" gemeldet.
 #include "tests/harness.hpp"
 
+#include "ncssh/config.hpp"
 #include "ncssh/gui/bridge.hpp"
 #include "ncssh/gui/macro_manager_dialog.hpp"
 
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDir>
 #include <QDockWidget>
 #include <QMainWindow>
 #include <QPushButton>
@@ -23,38 +25,41 @@ TEST(macro_dock, right_dock_shows_keys_in_run_mode)
     CHECK(tmp.isValid());
     qputenv("APPDATA", tmp.path().toUtf8());
 
-    gui::AsyncBridge bridge;
-    QMainWindow main;
-    main.show();
+    // Dialog und Fenster in eigener Funktion: ihre Destruktoren speichern die
+    // Makro-Konfiguration und muessen laufen, solange APPDATA noch umgelenkt ist
+    // — sonst ueberschrieben sie die echte macros.json des Nutzers.
+    [] {
+        gui::AsyncBridge bridge;
+        QMainWindow main;
+        main.show();
 
-    auto *dlg = new gui::MacroManagerDialog(&bridge, {}, {}, &main);
-    dlg->present();  // startet schwebend (Bearbeiten-Modus)
-    QCoreApplication::processEvents();
+        auto *dlg = new gui::MacroManagerDialog(&bridge, {}, {}, &main);
+        dlg->present();  // startet schwebend (Bearbeiten-Modus)
+        QCoreApplication::processEvents();
 
-    // Andockseite "Rechts" waehlen — soll sofort andocken (wechselt selbst in
-    // den Ausfuehren-Modus, da Bearbeiten immer schwebend ist).
-    auto *combo = dlg->findChild<QComboBox *>(QStringLiteral("MacroDockCombo"));
-    CHECK(combo != nullptr);
-    if (!combo) {
-        qputenv("APPDATA", oldAppData);
-        return;
-    }
-    combo->setCurrentIndex(combo->findData(QStringLiteral("right")));
-    QCoreApplication::processEvents();
+        // Andockseite "Rechts" waehlen — soll sofort andocken (wechselt selbst in
+        // den Ausfuehren-Modus, da Bearbeiten immer schwebend ist).
+        auto *combo = dlg->findChild<QComboBox *>(QStringLiteral("MacroDockCombo"));
+        CHECK(combo != nullptr);
+        if (!combo)
+            return;
+        combo->setCurrentIndex(combo->findData(QStringLiteral("right")));
+        QCoreApplication::processEvents();
 
-    auto *dock = main.findChild<QDockWidget *>(QStringLiteral("MacroManagerDock"));
-    CHECK(dock != nullptr);
-    if (dock) {
-        CHECK(main.dockWidgetArea(dock) == Qt::RightDockWidgetArea);
-        CHECK(dock->widget() != nullptr);
-        // Das Tastenraster muss im angedockten Inhalt vorhanden sein.
-        CHECK(dock->findChildren<gui::KeyTile *>().size() > 0);
-        // Angedockt: nur Tasten — Modus-Knopf ausgeblendet.
-        auto *mb = dock->findChild<QPushButton *>(QStringLiteral("MacroModeButton"));
-        CHECK(mb != nullptr);
-        if (mb)
-            CHECK(!mb->isVisible());
-    }
+        auto *dock = main.findChild<QDockWidget *>(QStringLiteral("MacroManagerDock"));
+        CHECK(dock != nullptr);
+        if (dock) {
+            CHECK(main.dockWidgetArea(dock) == Qt::RightDockWidgetArea);
+            CHECK(dock->widget() != nullptr);
+            // Das Tastenraster muss im angedockten Inhalt vorhanden sein.
+            CHECK(dock->findChildren<gui::KeyTile *>().size() > 0);
+            // Angedockt: nur Tasten — Modus-Knopf ausgeblendet.
+            auto *mb = dock->findChild<QPushButton *>(QStringLiteral("MacroModeButton"));
+            CHECK(mb != nullptr);
+            if (mb)
+                CHECK(!mb->isVisible());
+        }
+    }();
 
     qputenv("APPDATA", oldAppData);
 }
@@ -158,4 +163,14 @@ TEST(macro_dock, edit_mode_button_offers_docking)
         CHECK(docked);
     }
     qputenv("APPDATA", oldAppData);
+}
+
+// Der Testlauf darf die echten Einstellungen nie anfassen: test_main lenkt
+// APPDATA auf ein Temp-Verzeichnis um. Frueher ueberschrieb ein Test beim
+// Aufraeumen die macros.json des Nutzers (nach jedem Build waren die Makros weg).
+TEST(macro_dock, test_run_uses_isolated_config_dir)
+{
+    const QString dir = QDir::cleanPath(ncssh::configDir());
+    const QString temp = QDir::cleanPath(QDir::tempPath());
+    CHECK(dir.startsWith(temp, Qt::CaseInsensitive));
 }

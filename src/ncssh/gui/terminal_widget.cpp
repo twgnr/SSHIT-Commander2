@@ -32,6 +32,10 @@
 #include <QShortcut>
 #include <QTextEdit>
 #include <QUrl>
+#include <QWheelEvent>
+
+#include <algorithm>
+#include <cstdlib>
 
 namespace ncssh::gui {
 
@@ -45,11 +49,9 @@ TerminalWidget::TerminalWidget(AsyncBridge *bridge, QWidget *parent)
     setMaximumBlockCount(10000);    // Scrollback
     setLineWrapMode(QPlainTextEdit::NoWrap);
     setCursorWidth(0);              // Standard-Cursor aus — wir zeichnen selbst
-    QFont mono(QStringLiteral("Consolas"));
-    mono.setStyleHint(QFont::Monospace);
-    mono.setPointSize(core::getSettingInt(QStringLiteral("terminal_font_size"), 10));
-    setFont(mono);
-    applyThemeColors();
+    applyTerminalFont();     // setzt auch die Theme-Farben (gemeinsames Stylesheet)
+    // Bewegung ohne gedrueckte Taste melden (Maus-Modus 1003, z. B. tmux).
+    viewport()->setMouseTracking(true);
     m_renderer = std::make_unique<AnsiRenderer>(this);
 
     // Cursor-Blinken (~530 ms, wie ein Terminal).
@@ -83,14 +85,45 @@ void TerminalWidget::applyThemeColors()
     // wie ein Fremdkoerper).
     const QString border = m_termBg.lightness() > 128 ? QStringLiteral("#c9ced8")
                                                       : QStringLiteral("#2e3340");
+    // Schrift MUSS hier stehen: das App-Stylesheet setzt "* { font-family:
+    // Segoe UI; font-size: 13px }" und ueberstimmt damit setFont() — das
+    // Terminal lief sonst in einer Proportionalschrift (Zellengitter
+    // verrutscht, Schriftgroessen-Einstellung wirkungslos).
+    QString family = m_fontFamily;
+    family.remove(QLatin1Char('"'));
     setStyleSheet(QStringLiteral("QPlainTextEdit { background: %1; color: %2; "
-                                 "border: 1px solid %3; border-radius: 8px; padding: 4px; }")
-                      .arg(bg, fg, border));
+                                 "border: 1px solid %3; border-radius: 8px; padding: 4px; "
+                                 "font-family: \"%4\"; font-size: %5pt; }")
+                      .arg(bg, fg, border, family)
+                      .arg(m_fontSize));
+}
+
+bool TerminalWidget::applyTerminalFont()
+{
+    const QString family = core::getSettingString(QStringLiteral("terminal_font_family"),
+                                                  QStringLiteral("Consolas"));
+    const int size = core::getSettingInt(QStringLiteral("terminal_font_size"), 10);
+    if (family == m_fontFamily && size == m_fontSize)
+        return false;
+    m_fontFamily = family;
+    m_fontSize = size;
+    QFont mono(family);
+    mono.setStyleHint(QFont::Monospace);
+    mono.setFixedPitch(true);
+    mono.setPointSize(size);
+    setFont(mono);           // ohne App-Stylesheet (Tests) — sonst gilt das eigene
+    applyThemeColors();      // Stylesheet mit derselben Schrift
+    ensurePolished();        // font() sofort aktuell (columns()/rows() rechnen damit)
+    return true;
 }
 
 bool TerminalWidget::event(QEvent *event)
 {
     if (event->type() == themeChangedEventType()) {
+        // Kommt auch nach dem Einstellungsdialog — Schriftart/-groesse gelten
+        // damit sofort fuer offene Terminals, nicht erst fuer neue.
+        if (applyTerminalFont())
+            syncTerminalSize();
         applyThemeColors();
         if (m_renderer)
             m_renderer->retheme();
@@ -180,6 +213,7 @@ void TerminalWidget::attachBackend(ShellBackend *backend)
     stop();
     m_backend = backend;
     m_shellEnded = false;
+    m_modes = {};   // Maus/Paste-Modi der vorigen Shell gelten nicht weiter
     connect(backend, &ShellBackend::dataReceived, this, [this](const QString &data) {
         feedOutput(data);
         if (!m_altScreen)
@@ -203,6 +237,7 @@ void TerminalWidget::attachBackend(ShellBackend *backend)
         stop();
         m_shellEnded = true;
         m_altScreen = false;    // etwaigen Alt-Screen verlassen, damit die Meldung sichtbar ist
+        m_modes = {};
         setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
         m_feedCarry.clear();
         m_renderer->reset();    // halbe Sequenz/Farben der alten Shell verwerfen
@@ -213,19 +248,29 @@ void TerminalWidget::attachBackend(ShellBackend *backend)
 }
 
 namespace {
-// Sucht ab `start` die naechste Alternate-Screen-Umschaltung
-// (CSI ? … h|l mit Parameter 47/1047/1049). Rueckgabe:
-//   idx  >= 0 : Position der Umschaltsequenz (seqLen = Laenge)
+// Ursprung des Zellengitters im Viewport (paintEmulator und Mauskoordinaten).
+constexpr int kEmuOriginX = 4;
+constexpr int kEmuOriginY = 2;
+
+bool isAltScreenMode(int code)
+{
+    return code == 47 || code == 1047 || code == 1049;
+}
+
+// Sucht ab `start` die naechste private Modus-Umschaltung (CSI ? … h|l):
+// Alternate-Screen (47/1047/1049), Maus (9/100x), Bracketed Paste (2004) …
+// Rueckgabe:
+//   idx  >= 0 : Position der Sequenz (seqLen = Laenge, params ohne '?')
 //   idx  == -1: keine gefunden — der Rest ist normaler Text
 //   idx  == -2: am Ende steht eine unvollstaendige Sequenz; `seqLen` ist der
 //               Offset des dazugehoerigen ESC (ab dort zuruecklegen)
-struct AltScan {
+struct ModeScan {
     int idx = -1;
     int seqLen = 0;
-    bool enter = false;
-    bool exit = false;
+    bool set = false;
+    QString params;
 };
-AltScan scanAltTransition(const QString &s, int start)
+ModeScan scanPrivateMode(const QString &s, int start)
 {
     const int n = s.size();
     int i = start;
@@ -236,7 +281,7 @@ AltScan scanAltTransition(const QString &s, int start)
         }
         const int esc = i;
         if (esc + 1 >= n)
-            return {-2, esc, false, false};  // einzelnes ESC am Ende -> warten
+            return {-2, esc, false, {}};  // einzelnes ESC am Ende -> warten
         if (s.at(esc + 1) != QLatin1Char('[')) {
             i = esc + 1;  // anderer Escape (Charset o.ae.) -> nicht unsere Umschaltung
             continue;
@@ -252,41 +297,52 @@ AltScan scanAltTransition(const QString &s, int start)
         if (j >= n) {
             // Unvollstaendige CSI am Ende. Kurz genug -> zuruecklegen und warten.
             if (n - esc <= 32)
-                return {-2, esc, false, false};
+                return {-2, esc, false, {}};
             i = esc + 1;  // ueberlang/kaputt: nicht ewig puffern
             continue;
         }
         const QChar fin = s.at(j);
         const QString paramStr = s.mid(esc + 2, j - (esc + 2));
         if (paramStr.startsWith(QLatin1Char('?'))
-            && (fin == QLatin1Char('h') || fin == QLatin1Char('l'))) {
-            bool isAlt = false;
-            for (const QString &p : paramStr.mid(1).split(QLatin1Char(';'))) {
-                if (p == QLatin1String("47") || p == QLatin1String("1047")
-                    || p == QLatin1String("1049")) {
-                    isAlt = true;
-                    break;
-                }
-            }
-            if (isAlt)
-                return {esc, j - esc + 1, fin == QLatin1Char('h'), fin == QLatin1Char('l')};
-        }
+            && (fin == QLatin1Char('h') || fin == QLatin1Char('l')))
+            return {esc, j - esc + 1, fin == QLatin1Char('h'), paramStr.mid(1)};
         i = j + 1;  // andere CSI -> ueberspringen, weitersuchen
     }
-    return {-1, 0, false, false};
+    return {-1, 0, false, {}};
+}
+
+// Qt-Maustaste -> Tastennummer im Terminalprotokoll (-1 = nicht meldbar).
+int terminalButton(Qt::MouseButton button)
+{
+    switch (button) {
+    case Qt::LeftButton:   return 0;
+    case Qt::MiddleButton: return 1;
+    case Qt::RightButton:  return 2;
+    default:               return -1;
+    }
+}
+
+// Gedrueckte Taste waehrend einer Bewegung (3 = keine).
+int heldButton(Qt::MouseButtons buttons)
+{
+    if (buttons & Qt::LeftButton)
+        return 0;
+    if (buttons & Qt::MiddleButton)
+        return 1;
+    if (buttons & Qt::RightButton)
+        return 2;
+    return 3;
 }
 }  // namespace
 
 void TerminalWidget::pasteClipboard()
 {
-    QString text = QApplication::clipboard()->text();
+    const QString text = QApplication::clipboard()->text();
     if (text.isEmpty())
         return;
-    // Getippte Eingabe endet mit CR — LF bzw. CRLF aus der Zwischenablage
-    // sonst als doppelte bzw. fremde Zeilenenden.
-    text.replace(QStringLiteral("\r\n"), QStringLiteral("\r"));
-    text.replace(QLatin1Char('\n'), QLatin1Char('\r'));
-    sendText(text);
+    // Mit Bracketed Paste erkennt die Shell/vim den Block als eingefuegt:
+    // keine Ausfuehrung bei jedem Zeilenende, keine Auto-Einrueckung.
+    sendText(core::preparePaste(text, m_modes.bracketedPaste));
 }
 
 void TerminalWidget::printLocal(const QString &text, bool error)
@@ -315,7 +371,7 @@ void TerminalWidget::feedOutput(const QString &dataIn)
     int i = 0;
     const int n = data.size();
     while (i < n) {
-        const AltScan scan = scanAltTransition(data, i);
+        const ModeScan scan = scanPrivateMode(data, i);
         if (scan.idx == -2) {  // unvollstaendige Sequenz am Ende -> zuruecklegen
             emitChunk(data.mid(i, scan.seqLen - i));
             m_feedCarry = data.mid(scan.seqLen);
@@ -325,9 +381,24 @@ void TerminalWidget::feedOutput(const QString &dataIn)
             emitChunk(data.mid(i));
             break;
         }
+        const int end = scan.idx + scan.seqLen;
+        // Maus/Paste-Modi gelten fuer beide Schirme und werden hier verfolgt.
+        bool isAlt = false;
+        for (const QString &p : scan.params.split(QLatin1Char(';'))) {
+            const int code = p.toInt();
+            if (isAltScreenMode(code))
+                isAlt = true;
+            else
+                m_modes.apply(code, scan.set);
+        }
+        if (!isAlt) {
+            emitChunk(data.mid(i, end - i));   // Sequenz geht normal mit (z. B. DECCKM)
+            i = end;
+            continue;
+        }
         emitChunk(data.mid(i, scan.idx - i));
         const QString seq = data.mid(scan.idx, scan.seqLen);
-        if (scan.enter) {
+        if (scan.set) {
             if (!m_emu)
                 m_emu = std::make_unique<core::TerminalEmulator>(columns(), rows());
             else
@@ -335,13 +406,13 @@ void TerminalWidget::feedOutput(const QString &dataIn)
             m_altScreen = true;
             setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
             m_emu->feed(seq);  // verarbeitet 1049h (leert den Schirm)
-        } else if (scan.exit) {
+        } else {
             if (m_emu)
                 m_emu->feed(seq);
             m_altScreen = false;
             setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
         }
-        i = scan.idx + scan.seqLen;
+        i = end;
     }
     if (m_altScreen)
         viewport()->update();
@@ -354,7 +425,7 @@ void TerminalWidget::paintEmulator()
     const int cw = qMax(1, fm.horizontalAdvance(QLatin1Char('M')));
     const int chh = qMax(1, fm.height());
     const int ascent = fm.ascent();
-    const int ox = 4, oy = 2;
+    const int ox = kEmuOriginX, oy = kEmuOriginY;
 
     p.fillRect(viewport()->rect(), m_termBg);
     const int rows = m_emu->rows();
@@ -375,12 +446,14 @@ void TerminalWidget::paintEmulator()
             QColor fg, bg;
             effColors(first, fg, bg);
             // Lauf gleicher Farbe/Attribute zusammenfassen (weniger drawText-Aufrufe).
+            // AttrWide zaehlt nicht als Stilwechsel (linke vs. rechte Haelfte).
+            const auto style = static_cast<quint8>(first.attrs & ~core::AttrWide);
             int c2 = c + 1;
             while (c2 < cols) {
                 const core::TermCell &nx = m_emu->cell(r, c2);
                 QColor f2, b2;
                 effColors(nx, f2, b2);
-                if (f2 != fg || b2 != bg || nx.attrs != first.attrs)
+                if (f2 != fg || b2 != bg || (nx.attrs & ~core::AttrWide) != style)
                     break;
                 ++c2;
             }
@@ -388,16 +461,35 @@ void TerminalWidget::paintEmulator()
             const int y = oy + r * chh;
             if (bg != m_termBg)
                 p.fillRect(x, y, (c2 - c) * cw, chh, bg);
-            QString run;
-            for (int k = c; k < c2; ++k)
-                run += QChar(static_cast<char16_t>(m_emu->cell(r, k).ch));
             QFont f = font();
-            f.setBold(first.attrs & core::AttrBold);
-            f.setItalic(first.attrs & core::AttrItalic);
-            f.setUnderline(first.attrs & core::AttrUnderline);
+            f.setBold(style & core::AttrBold);
+            f.setItalic(style & core::AttrItalic);
+            f.setUnderline(style & core::AttrUnderline);
             p.setFont(f);
             p.setPen(fg);
-            p.drawText(x, y + ascent, run);
+            // ASCII am Stueck zeichnen, alles andere einzeln an seiner Zelle:
+            // Rahmenzeichen, CJK und Emoji kommen oft aus Ersatzschriften mit
+            // anderer Breite und wuerden sonst den Rest der Zeile verschieben.
+            QString batch;
+            int batchStart = c;
+            const auto flush = [&] {
+                if (!batch.isEmpty())
+                    p.drawText(ox + batchStart * cw, y + ascent, batch);
+                batch.clear();
+            };
+            for (int k = c; k < c2; ++k) {
+                const char32_t ch = m_emu->cell(r, k).ch;
+                if (ch < 0x80 && ch != core::kWideTail) {
+                    if (batch.isEmpty())
+                        batchStart = k;
+                    batch += QChar(static_cast<char16_t>(ch));
+                    continue;
+                }
+                flush();
+                if (ch != core::kWideTail)   // rechte Haelfte: Zeichen steht links
+                    p.drawText(ox + k * cw, y + ascent, QString::fromUcs4(&ch, 1));
+            }
+            flush();
             c = c2;
         }
     }
@@ -457,6 +549,12 @@ void TerminalWidget::sendText(const QString &text)
 {
     if (m_backend)
         m_backend->write(text);
+}
+
+void TerminalWidget::sendBytes(const QByteArray &data)
+{
+    if (m_backend && !data.isEmpty())
+        m_backend->writeBytes(data);
 }
 
 void TerminalWidget::keyPressEvent(QKeyEvent *event)
@@ -592,17 +690,125 @@ void TerminalWidget::keyPressEvent(QKeyEvent *event)
 void TerminalWidget::resizeEvent(QResizeEvent *event)
 {
     QPlainTextEdit::resizeEvent(event);
+    syncTerminalSize();
+    layoutSearchBar();
+}
+
+void TerminalWidget::syncTerminalSize()
+{
     if (m_backend)
         m_backend->resize(columns(), rows());
     if (m_altScreen && m_emu) {
         m_emu->resize(columns(), rows());
         viewport()->update();
     }
-    layoutSearchBar();
+}
+
+// --- Maus -------------------------------------------------------------------
+
+bool TerminalWidget::mouseReporting(Qt::KeyboardModifiers mods) const
+{
+    // Nur im Zellengitter: im Zeilenpuffer des Primaerschirms gibt es keine
+    // verlaessliche Zeile/Spalte. Shift umgeht das Reporting (wie xterm und
+    // PuTTY), damit man trotzdem lokal markieren kann.
+    return m_backend && m_altScreen && m_emu && m_modes.mouse != core::MouseTracking::Off
+           && !(mods & Qt::ShiftModifier);
+}
+
+QPoint TerminalWidget::cellAt(const QPoint &pos) const
+{
+    const QFontMetrics fm(font());
+    const int cw = qMax(1, fm.horizontalAdvance(QLatin1Char('M')));
+    const int chh = qMax(1, fm.height());
+    const int col = std::clamp((pos.x() - kEmuOriginX) / cw, 0, m_emu->cols() - 1);
+    const int row = std::clamp((pos.y() - kEmuOriginY) / chh, 0, m_emu->rows() - 1);
+    return {col, row};
+}
+
+void TerminalWidget::mousePressEvent(QMouseEvent *event)
+{
+    if (!mouseReporting(event->modifiers())) {
+        QPlainTextEdit::mousePressEvent(event);
+        return;
+    }
+    setFocus(Qt::MouseFocusReason);
+    const int button = terminalButton(event->button());
+    if (button >= 0) {
+        const QPoint cell = cellAt(event->position().toPoint());
+        m_lastMouseCell = cell;
+        sendBytes(core::encodeMouse(m_modes, core::MouseAction::Press, button, cell.x(),
+                                    cell.y(), event->modifiers()));
+    }
+    event->accept();
+}
+
+void TerminalWidget::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (!mouseReporting(event->modifiers())) {
+        QPlainTextEdit::mouseReleaseEvent(event);
+        return;
+    }
+    const int button = terminalButton(event->button());
+    if (button >= 0) {
+        const QPoint cell = cellAt(event->position().toPoint());
+        sendBytes(core::encodeMouse(m_modes, core::MouseAction::Release, button, cell.x(),
+                                    cell.y(), event->modifiers()));
+    }
+    event->accept();
+}
+
+void TerminalWidget::mouseMoveEvent(QMouseEvent *event)
+{
+    if (!mouseReporting(event->modifiers())) {
+        QPlainTextEdit::mouseMoveEvent(event);
+        return;
+    }
+    // Nur bei Zellwechsel melden — sonst flutet jede Pixelbewegung die Leitung.
+    const QPoint cell = cellAt(event->position().toPoint());
+    if (cell != m_lastMouseCell) {
+        m_lastMouseCell = cell;
+        sendBytes(core::encodeMouse(m_modes, core::MouseAction::Move,
+                                    heldButton(event->buttons()), cell.x(), cell.y(),
+                                    event->modifiers()));
+    }
+    event->accept();   // kein Markieren im verborgenen Zeilenpuffer
+}
+
+void TerminalWidget::wheelEvent(QWheelEvent *event)
+{
+    if (!m_backend || !m_altScreen || !m_emu || (event->modifiers() & Qt::ShiftModifier)) {
+        QPlainTextEdit::wheelEvent(event);
+        return;
+    }
+    // Hochaufloesende Raeder/Touchpads liefern Bruchteile einer Rastung.
+    m_wheelAccum += event->angleDelta().y();
+    const int steps = m_wheelAccum / 120;
+    m_wheelAccum -= steps * 120;
+    event->accept();
+    if (steps == 0)
+        return;
+    const bool up = steps > 0;
+    if (m_modes.mouse != core::MouseTracking::Off) {
+        const QPoint cell = cellAt(event->position().toPoint());
+        for (int k = 0; k < std::abs(steps); ++k)
+            sendBytes(core::encodeMouse(
+                m_modes, up ? core::MouseAction::WheelUp : core::MouseAction::WheelDown, 0,
+                cell.x(), cell.y(), event->modifiers()));
+        return;
+    }
+    // Ohne Maus-Modus wie Windows Terminal/gnome-terminal: Pfeiltasten senden,
+    // damit less, man und vim mit dem Rad scrollen (3 Zeilen je Rastung).
+    const QString arrow = QStringLiteral("\x1b")
+                          + (m_emu->applicationCursorKeys() ? QLatin1Char('O') : QLatin1Char('['))
+                          + (up ? QLatin1Char('A') : QLatin1Char('B'));
+    sendText(arrow.repeated(std::abs(steps) * 3));
 }
 
 void TerminalWidget::contextMenuEvent(QContextMenuEvent *event)
 {
+    // Rechtsklick gehoert der Anwendung, wenn sie die Maus angefordert hat.
+    if (event->reason() == QContextMenuEvent::Mouse && mouseReporting(event->modifiers()))
+        return;
     QMenu menu(this);
     QAction *copyAct = menu.addAction(_t("Kopieren"));
     copyAct->setEnabled(textCursor().hasSelection());
@@ -857,6 +1063,11 @@ QString TerminalWidget::urlAt(const QPoint &pos) const
 
 void TerminalWidget::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    // Maus-Reporting: der zweite Klick ist fuer die Anwendung ein normaler Klick.
+    if (mouseReporting(event->modifiers())) {
+        mousePressEvent(event);
+        return;
+    }
     // Doppelklick auf einen Link oeffnet ihn; sonst normale Wortauswahl.
     const QString url = urlAt(event->pos());
     if (!url.isEmpty()) {

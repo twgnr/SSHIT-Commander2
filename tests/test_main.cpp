@@ -6,6 +6,7 @@
 
 #include <QApplication>
 #include <QFileInfo>
+#include <QTemporaryDir>
 #include <cstdio>
 
 int main(int argc, char *argv[])
@@ -29,6 +30,19 @@ int main(int argc, char *argv[])
                     "Standard-Plattform.\n");
         qunsetenv("QT_QPA_PLATFORM");
     }
+
+    // Konfiguration des ganzen Laufs in ein Wegwerf-Verzeichnis lenken: Tests,
+    // die APPDATA selbst nicht (oder zu frueh zurueck-)setzen, ueberschrieben
+    // sonst die echten Einstellungen des Nutzers (z. B. macros.json beim
+    // Zerstoeren eines Makro-Dialogs).
+    QTemporaryDir configHome;
+    if (!configHome.isValid()) {
+        std::printf("Temporaeres Konfigurationsverzeichnis fehlt — Abbruch, um die "
+                    "echten Einstellungen nicht zu veraendern.\n");
+        return 1;
+    }
+    qputenv("APPDATA", configHome.path().toLocal8Bit());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toLocal8Bit());
 
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("sshit-tests"));

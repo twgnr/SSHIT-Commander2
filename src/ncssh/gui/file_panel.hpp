@@ -5,6 +5,7 @@
 #include "ncssh/core/bookmarks.hpp"
 #include "ncssh/core/filesystem.hpp"
 #include "ncssh/core/models.hpp"
+#include "ncssh/core/panefilter.hpp"
 #include "ncssh/gui/bridge.hpp"
 
 #include <functional>
@@ -56,6 +57,10 @@ public:
     // Chip-Zustand setzen, ohne sudoToggled auszuloesen — fuer den Fall, dass
     // das Umschalten fehlschlaegt und der Haken zurueck muss.
     void setSudoActive(bool active);
+    // Beschriftung des sudo-Chips ("sudo", "sudo: www-data", "su: bob");
+    // setSudoActive(false) stellt "sudo" wieder her.
+    void setSudoLabel(const QString &text);
+    QString sudoLabel() const;
 
     QString currentPath() const { return m_path; }
     QString selectedPath() const;                 // markierte Datei (Vollpfad) oder ""
@@ -101,6 +106,18 @@ public:
     void goForward();
     bool canGoBack() const { return m_histPos > 0; }
     bool canGoForward() const { return m_histPos >= 0 && m_histPos < m_history.size() - 1; }
+    // Ziele fuer das Rechtsklick-Menue der Vor/Zurueck-Knoepfe, jeweils das
+    // naechstliegende zuerst. goHistory(-2) springt zwei Schritte zurueck.
+    QStringList backHistory() const;
+    QStringList forwardHistory() const;
+    void goHistory(int steps);
+
+    // --- Filter und Sortierung (Filter-Knopf in der Kopfzeile) ---
+    void openFilterDialog();
+    void setViewOptions(const core::PaneFilter &filter, const QList<core::SortKey> &sortKeys,
+                        bool dirsFirst);
+    const core::PaneFilter &paneFilter() const { return m_paneFilter; }
+    const QList<core::SortKey> &sortKeys() const { return m_sortKeys; }
 
     // --- Markieren ---
     void markByPattern(bool select);   // Num + / Num -
@@ -127,6 +144,7 @@ signals:
     void transferRequested(const QString &srcPath);  // F5 aus dieser Pane
     void statusMessage(const QString &msg);
     void sudoToggled(bool on);                    // sudo-Chip umgeschaltet
+    void userMenuRequested(const QPoint &globalPos);  // Rechtsklick auf den sudo-Chip
     void sudoFrameChanged(bool on);               // sudo-Markierung an/aus (auch programmatisch)
     // Auswahl geaendert (fuer das Vorschau-Panel); leer = nichts markiert.
     void selectionChanged(const QString &path);
@@ -197,6 +215,8 @@ private:
     void setStatusText(const QString &text);   // gekuerzt, voller Text im Tooltip
     void elideStatus();
     void sortBy(int column);          // Spaltenkopf angeklickt
+    void updateSortIndicator();       // Pfeil ▲/▼ an der sortierten Spalte
+    void showHistoryMenu(bool forward, QWidget *button);
     void applyFilter(const QString &pattern);
 
     // --- Spalten (frei waehlbar, in core/settings gespeichert) ---
@@ -268,8 +288,12 @@ private:
     QString m_dateFormat;             // Datumsformat der Pane (Einstellung date_format)
     QString m_filter;                 // Wildcard-Filter (Strg+F)
     QStringList m_fileCols;           // angezeigte Spalten; [0] ist immer "name"
-    QString m_sortKey = QStringLiteral("name");   // Spalten-Kennung, nach der sortiert wird
-    bool m_sortAscending = true;
+    QStringList m_headerLabels;       // Spaltentitel ohne Sortierpfeil
+    // Sortierstufen (erst nach [0], bei Gleichstand nach [1] …); ein Klick auf
+    // einen Spaltenkopf setzt eine einzelne Stufe.
+    QList<core::SortKey> m_sortKeys{core::SortKey{}};
+    bool m_dirsFirst = true;
+    core::PaneFilter m_paneFilter;    // erweiterter Filter aus dem Filter-Dialog
     bool m_sudoAvailable = false;
     bool m_sudoActive = false;
     bool m_userResizing = false;   // Nutzer zieht gerade eine Spaltenbreite
@@ -314,6 +338,8 @@ private:
     QString m_statusFull;             // ungekuerzter Text der Statuszeile
     QPushButton *m_starButton = nullptr;
     QPushButton *m_sudoChip = nullptr;
+    QPushButton *m_filterChip = nullptr;   // hervorgehoben, solange ein Filter wirkt
+    void updateFilterChip();
     QPushButton *m_disconnectChip = nullptr;
     QPushButton *m_serverInfoChip = nullptr;
     // Inline-Umbenennen: Feld ueber der Namenszelle und der "langsame

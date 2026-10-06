@@ -521,6 +521,99 @@ ExecResult SSHSession::exec(const QString &command, const QByteArray &stdinData)
     return result;
 }
 
+ExecResult SSHSession::execPty(const QString &command, const PtyStep &step, int idleTimeoutMs)
+{
+    // Gleiche Lock-Disziplin wie exec(): Mutex nur je libssh2-Aufruf, Warten
+    // auf den Socket ohne Lock.
+    ExecResult result;
+    LIBSSH2_CHANNEL *channel = nullptr;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        if (closing || !m_session)
+            fail("Sitzung geschlossen.");
+        while (!(channel = libssh2_channel_open_session(m_session))) {
+            if (libssh2_session_last_errno(m_session) != LIBSSH2_ERROR_EAGAIN)
+                fail(QStringLiteral("Kanal konnte nicht geöffnet werden: %1")
+                         .arg(lastSshError(m_session)));
+            waitSocket(m_socket, m_session);
+        }
+        // Terminal-Modi (RFC 4254, 8): ECHO aus — das Passwort soll nicht in
+        // der Ausgabe auftauchen. Opcode 53 = ECHO, Wert als uint32, 0 = Ende.
+        static const char modes[] = {53, 0, 0, 0, 0, 0};
+        int rc;
+        while ((rc = libssh2_channel_request_pty_ex(channel, "dumb", 4, modes, sizeof(modes),
+                                                    200, 50, 0, 0))
+               == LIBSSH2_ERROR_EAGAIN)
+            waitSocket(m_socket, m_session);
+        if (rc != 0) {
+            libssh2_channel_free(channel);
+            fail(QStringLiteral("Terminal konnte nicht angefordert werden: %1")
+                     .arg(lastSshError(m_session)));
+        }
+        const QByteArray cmd = command.toUtf8();
+        while ((rc = libssh2_channel_exec(channel, cmd.constData())) == LIBSSH2_ERROR_EAGAIN)
+            waitSocket(m_socket, m_session);
+        if (rc != 0) {
+            libssh2_channel_free(channel);
+            fail(QStringLiteral("Befehl fehlgeschlagen: %1").arg(lastSshError(m_session)));
+        }
+    }
+
+    QByteArray pending;   // noch zu schreibende Antwort
+    char buf[16384];
+    auto lastActivity = std::chrono::steady_clock::now();
+    bool timedOut = false;
+    for (;;) {
+        ssize_t n = 0, w = 0;
+        bool eof;
+        int dir;
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
+            if (closing || !m_session)
+                fail("Sitzung geschlossen.");
+            libssh2_session_set_blocking(m_session, 0);
+            if (!pending.isEmpty()) {
+                w = libssh2_channel_write(channel, pending.constData(), pending.size());
+                if (w > 0)
+                    pending.remove(0, qsizetype(w));
+            }
+            n = libssh2_channel_read(channel, buf, sizeof(buf));
+            if (n > 0)
+                result.out.append(buf, n);
+            eof = libssh2_channel_eof(channel) != 0;
+            dir = libssh2_session_block_directions(m_session);
+            libssh2_session_set_blocking(m_session, 1);
+        }
+        if (n > 0 || w > 0)
+            lastActivity = std::chrono::steady_clock::now();
+        if (n > 0 && step)
+            pending.append(step(result.out));
+        if (n > 0 || w > 0)
+            continue;
+        if ((n < 0 && n != LIBSSH2_ERROR_EAGAIN) || (w < 0 && w != LIBSSH2_ERROR_EAGAIN))
+            break;
+        if (eof)
+            break;
+        if (std::chrono::steady_clock::now() - lastActivity
+            > std::chrono::milliseconds(idleTimeoutMs)) {
+            timedOut = true;
+            break;
+        }
+        waitSocketDir(m_socket, dir | (pending.isEmpty() ? 0 : LIBSSH2_SESSION_BLOCK_OUTBOUND),
+                      200);
+    }
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (closing || !m_session)
+        fail("Sitzung geschlossen.");
+    while (libssh2_channel_close(channel) == LIBSSH2_ERROR_EAGAIN)
+        waitSocket(m_socket, m_session);
+    result.exitStatus = timedOut ? -1 : libssh2_channel_get_exit_status(channel);
+    libssh2_channel_free(channel);
+    if (timedOut)
+        fail("Zeitüberschreitung: das Terminal antwortet nicht.");
+    return result;
+}
+
 std::unique_ptr<SFTPFileSystem> SSHSession::filesystem()
 {
     return std::make_unique<SFTPFileSystem>(shared_from_this());

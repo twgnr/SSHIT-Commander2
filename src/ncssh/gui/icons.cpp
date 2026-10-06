@@ -368,6 +368,18 @@ void drawArrowUp(QPainter &p, qreal s, const QColor &c)
     p.drawLine(QPointF(s * 0.50, s * 0.30), QPointF(s * 0.66, s * 0.46));
 }
 
+void drawFilter(QPainter &p, qreal s, const QColor &c)
+{
+    // Trichter: breiter Rand oben, schmaler Hals nach unten.
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    QPolygonF funnel;
+    funnel << QPointF(s * 0.14, s * 0.18) << QPointF(s * 0.86, s * 0.18)
+           << QPointF(s * 0.58, s * 0.52) << QPointF(s * 0.58, s * 0.84)
+           << QPointF(s * 0.42, s * 0.74) << QPointF(s * 0.42, s * 0.52);
+    p.drawPolygon(funnel);
+}
+
 void drawBookmark(QPainter &p, qreal s, const QColor &c)
 {
     // Gefuelltes Lesezeichen mit Kerbe unten.
@@ -411,6 +423,7 @@ const QHash<QString, DrawFn> &registry()
         {QStringLiteral("tab"), drawTab},
         {QStringLiteral("play"), drawPlay},
         {QStringLiteral("bookmark"), drawBookmark},
+        {QStringLiteral("filter"), drawFilter},
         {QStringLiteral("star"), drawStar},
         {QStringLiteral("star-filled"), drawStarFilled},
         {QStringLiteral("nav-back"), drawArrowLeft},

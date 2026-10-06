@@ -170,8 +170,15 @@ private:
     // Strg+V: Inhalt der internen Zwischenablage in target einfuegen.
     void pasteInto(FilePanel *target, bool move);
     void setSudoMode(bool on);
-    // Haengt das sudo-Dateisystem in die rechte Pane (Passwort bereits geklaert).
-    void enableSudoFilesystem(const QString &keepPath);
+    // Pane als anderer Benutzer (leer = root): ermittelt sudo -u bzw. su,
+    // fragt das passende Passwort ab und haengt das Dateisystem ein.
+    void switchUser(const QString &user);
+    // Rechtsklick auf den sudo-Chip: Benutzerliste des Servers.
+    void showUserMenu(const QPoint &globalPos);
+    // Haengt das sudo-Dateisystem in die verbundene Pane (Zugang bereits geklaert).
+    void enableSudoFilesystem(const QString &keepPath, const net::RunAs &runAs);
+    // Nach einem gescheiterten Wechsel den Chip auf den tatsaechlichen Stand.
+    void restoreSudoChip();
     // Regelmaessige Keepalive-Pruefung; bei Abbruch wird neu verbunden.
     void startHealthCheck();
     // Konsole in ein eigenes Fenster loesen bzw. zurueckholen.
@@ -213,6 +220,10 @@ private:
     // Zaehler fuer sudo-Umschaltungen: eine verspaetete Antwort einer frueheren
     // Einschaltung darf das sudo-Dateisystem nicht mehr einhaengen.
     quint64 m_sudoSeq = 0;
+    // Benutzerliste fuer das Chip-Menue (je Sitzung einmal geladen).
+    std::vector<net::UserAccount> m_users;
+    QString m_loginUser;
+    std::weak_ptr<net::SSHSession> m_usersSession;
     QList<QPointer<QWidget>> m_boundDialogs;   // siehe bindDialog()
     QPointer<QWidget> m_serverInfo;            // offener Server-Info-Dialog
     QTimer *m_splitSaveTimer = nullptr;        // Trennlinien erst nach dem Ziehen speichern
