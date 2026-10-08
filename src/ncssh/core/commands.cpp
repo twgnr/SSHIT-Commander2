@@ -33,6 +33,9 @@ QString render(const CommandSpec &spec, const QHash<QString, QString> &values)
             const bool on = (lv == QLatin1String("1") || lv == QLatin1String("true")
                              || lv == QLatin1String("on") || lv == QLatin1String("yes"));
             tokens.insert(p.name, on ? p.flagValue : QString());
+        } else if (!p.flagValue.isEmpty()) {
+            // Wert mit eigenem Schalter ("-p {pid}"): leer -> beides weg.
+            tokens.insert(p.name, v.trimmed().isEmpty() ? QString() : p.flagValue + QLatin1Char(' ') + v);
         } else {
             tokens.insert(p.name, v);
         }
@@ -737,9 +740,11 @@ void addWindowsBase(std::vector<CS> &c)
     c.push_back(CS{
         .name = _t("ping — Erreichbarkeit"), .category = _t("Netzwerk"),
         .description = _t("Pingt einen Host. -n Anzahl, -t dauerhaft."),
-        .templateText = "ping -n {count} {host}",
+        // -t hinter -n: bei ping gewinnt die letzte Angabe.
+        .templateText = "ping -n {count} {endless} {host}",
         .params = {
             CP{.name = "count", .label = _t("Anzahl"), .defaultValue = "4"},
+            CP{.name = "endless", .label = _t("Dauerhaft (-t)"), .kind = "flag", .flagValue = "-t"},
             CP{.name = "host", .label = _t("Host/IP"), .required = true},
         },
         .example = "ping -n 4 8.8.8.8", .platform = "windows"});
@@ -1030,9 +1035,11 @@ void addPosixAdmin(std::vector<CS> &c)
     c.push_back(CS{
         .name = _t("lsof — offene Dateien"), .category = _t("System"),
         .description = _t("Listet offene Dateien/Sockets; -i Netzwerk, -p PID."),
-        .templateText = "sudo lsof {net} {filter}",
+        .templateText = "sudo lsof {net} {pid} {filter}",
         .params = {
             CP{.name = "net", .label = _t("Nur Netzwerk (-i)"), .kind = "flag", .flagValue = "-i"},
+            // -a verknuepft mit -i per UND (sonst listet lsof Netzwerk ODER PID).
+            CP{.name = "pid", .label = _t("PID (-p)"), .description = _t("Leer = alle Prozesse"), .flagValue = "-a -p"},
             CP{.name = "filter", .label = _t("Filter (| grep …)")},
         },
         .example = "sudo lsof -i"});

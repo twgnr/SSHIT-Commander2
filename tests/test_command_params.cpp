@@ -310,6 +310,38 @@ TEST(command_params, builder_checkboxes_reach_preview)
     }
 }
 
+TEST(command_params, valued_option_only_when_filled)
+{
+    // lsof: "-p" steht nur mit PID da; -a verknuepft es mit -i per UND.
+    const core::CommandSpec *lsof = specStartingWith(core::catalog(), QStringLiteral("sudo lsof "));
+    CHECK(lsof != nullptr);
+    if (!lsof)
+        return;
+    using Values = QHash<QString, QString>;
+    CHECK_EQ(core::render(*lsof, Values{}), QStringLiteral("sudo lsof"));
+    CHECK_EQ(core::render(*lsof, Values{{QStringLiteral("pid"), QStringLiteral("  ")}}),
+             QStringLiteral("sudo lsof"));
+    CHECK_EQ(core::render(*lsof, Values{{QStringLiteral("net"), QStringLiteral("1")},
+                                        {QStringLiteral("pid"), QStringLiteral("1234")}}),
+             QStringLiteral("sudo lsof -i -a -p 1234"));
+    // Parameter-Knopf der Konsole: gleiche Regel.
+    CHECK_EQ(core::positionalAppend(*lsof, Values{{QStringLiteral("pid"), QStringLiteral("1234")}},
+                                    QStringLiteral("sudo lsof")),
+             QStringLiteral("-a -p 1234"));
+
+    // Windows-ping: -t muss hinter -n stehen (die letzte Angabe gewinnt).
+    const core::CommandSpec *ping = nullptr;
+    for (const core::CommandSpec &s : core::catalog())
+        if (s.platform == QLatin1String("windows") && s.templateText.startsWith(QStringLiteral("ping ")))
+            ping = &s;
+    CHECK(ping != nullptr);
+    if (!ping)
+        return;
+    CHECK_EQ(core::render(*ping, Values{{QStringLiteral("endless"), QStringLiteral("1")},
+                                        {QStringLiteral("host"), QStringLiteral("8.8.8.8")}}),
+             QStringLiteral("ping -n 4 -t 8.8.8.8"));
+}
+
 TEST(command_params, light_theme_makes_terminal_light_and_readable)
 {
     // Weiss auf hellem Grund wird abgedunkelt, auf dunklem bleibt es.

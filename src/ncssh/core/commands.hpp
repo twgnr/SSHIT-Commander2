@@ -18,7 +18,8 @@ struct CommandParam {
     QString description;
     QString defaultValue;                        // ("default" ist in C++ reserviert)
     QStringList choices;
-    QString flagValue;                           // nur kind=="flag": eingefuegter Text wenn aktiv
+    QString flagValue;                           // kind=="flag": eingefuegter Text wenn aktiv;
+                                                 // sonst: steht vor dem Wert, entfaellt mit ihm
     bool required = false;
 };
 
