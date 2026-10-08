@@ -93,6 +93,22 @@ python tools\i18n_extract.py --prune    # drop keys no longer used
 Fill in the English text before opening a pull request — an empty value falls
 back to German and counts as untranslated.
 
+## User guide
+
+The user guide in `docs/user-guide.md` (English) and `docs/user-guide.de.md`
+(German) is generated from the in-app manual — the topics in
+`src/ncssh/gui/help_dialog.cpp`, their translations in `i18n/en.json` and the
+default shortcuts in `src/ncssh/core/shortcuts.cpp`. Never edit the files under
+`docs/` by hand. When you add a feature, describe it in the matching manual
+topic, then regenerate:
+
+```powershell
+python tools\gen_user_guide.py            # rewrite docs/user-guide*.md
+python tools\gen_user_guide.py --check    # what the test does
+```
+
+The test `i18n.user_guide_up_to_date` fails while the generated files are stale.
+
 ## Tests
 
 The suite uses a small in-house harness rather than an external framework:

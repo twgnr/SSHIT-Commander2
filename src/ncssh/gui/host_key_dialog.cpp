@@ -29,6 +29,12 @@ HostKeyDialog::HostKeyDialog(const QString &host, int port, const QString &algor
            "Verbindung umleiten (MITM)."), this);
     warning->setWordWrap(true);
     layout->addWidget(warning);
+    auto *noLogin = new QLabel(
+        _t("Angemeldet wird erst nach deiner Bestätigung — bisher wurden keine "
+           "Zugangsdaten gesendet."), this);
+    noLogin->setWordWrap(true);
+    noLogin->setObjectName(QStringLiteral("Muted"));
+    layout->addWidget(noLogin);
 
     auto *form = new QFormLayout();
     form->addRow(_t("Server"), new QLabel(QStringLiteral("%1:%2").arg(host).arg(port), this));
@@ -59,11 +65,11 @@ HostKeyDialog::HostKeyDialog(const QString &host, int port, const QString &algor
     trustBtn->setDefault(true);
     connect(rejectBtn, &QPushButton::clicked, this, &QDialog::reject);
     connect(onceBtn, &QPushButton::clicked, this, [this] {
-        m_trust = false;
+        m_decision = Decision::Once;
         accept();
     });
     connect(trustBtn, &QPushButton::clicked, this, [this] {
-        m_trust = true;
+        m_decision = Decision::Trust;
         accept();
     });
     buttons->addWidget(rejectBtn);
@@ -73,11 +79,12 @@ HostKeyDialog::HostKeyDialog(const QString &host, int port, const QString &algor
     layout->addLayout(buttons);
 }
 
-bool HostKeyDialog::ask(const QString &host, int port, const QString &algorithm,
-                        const QString &fingerprint, QWidget *parent)
+HostKeyDialog::Decision HostKeyDialog::askUnknown(const QString &host, int port,
+                                                  const QString &algorithm,
+                                                  const QString &fingerprint, QWidget *parent)
 {
     HostKeyDialog dlg(host, port, algorithm, fingerprint, parent);
-    return dlg.exec() == QDialog::Accepted && dlg.trustPermanently();
+    return dlg.exec() == QDialog::Accepted ? dlg.decision() : Decision::Cancel;
 }
 
 bool HostKeyDialog::askChanged(const QString &host, int port, const QString &algorithm,

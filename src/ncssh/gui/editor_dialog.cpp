@@ -150,10 +150,10 @@ EditorDialog::EditorDialog(AsyncBridge *bridge, core::FileSystemProvider *provid
     // KI: Datei/Config untersuchen oder befragen (nur bei aktivierter KI).
     QAction *aiExplain = toolbar->addAction(_t("KI erklären"), this,
                                             &EditorDialog::explainWithAi);
-    aiExplain->setToolTip(_t("Datei (oder Auswahl) vom lokalen Modell erklären lassen"));
+    aiExplain->setToolTip(_t("Datei (oder Auswahl) von der KI erklären lassen"));
     QAction *aiCheck = toolbar->addAction(_t("KI Fehleranalyse"), this,
                                           &EditorDialog::codecheckWithAi);
-    aiCheck->setToolTip(_t("Quellcode vom lokalen Modell auf Fehler prüfen lassen"));
+    aiCheck->setToolTip(_t("Quellcode von der KI auf Fehler prüfen lassen"));
     toolbar->addSeparator();
     QAction *convert = toolbar->addAction(_t("Encoding konvertieren …"), this,
                                           &EditorDialog::openEncodingConverter);

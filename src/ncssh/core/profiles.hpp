@@ -28,6 +28,10 @@ public:
     std::vector<ServerProfile> profiles() const { return m_profiles; }
     std::optional<ServerProfile> get(const QString &name) const;
     void upsert(const ServerProfile &profile);
+    // Setzt NUR den Zeitstempel der letzten Verbindung und speichert — ohne
+    // die Keyring-Secrets anzufassen (upsert wuerde sie mit dem Profilstand
+    // ueberschreiben). false, wenn es kein Profil dieses Namens gibt.
+    bool touchLastConnected(const QString &name, const QString &timestamp);
     void remove(const QString &name);
     // Ersetzt das Profil oldName durch profile (neuer Name) und zieht die
     // Keyring-Secrets mit um. Wirft, wenn profile.name schon einem ANDEREN

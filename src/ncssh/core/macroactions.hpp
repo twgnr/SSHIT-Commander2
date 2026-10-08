@@ -58,6 +58,11 @@ struct ExecContext {
     QHash<QString, int> cycleIndex;
 };
 
+// Sequenz (eine pro Druck): liefert den Index des Schritts, der bei diesem
+// Druck dran ist, und rueckt fuer den naechsten Druck weiter (nach dem letzten
+// wieder 0). Ohne Kontext immer 0.
+int nextSequenceStep(ExecContext *context, const QString &keyId, int stepCount);
+
 // Fuehrt eine Aktion aus. Gibt nullopt oder die Fehlermeldung zurueck.
 std::optional<QString> executeAction(const QString &actionType,
                                      const QJsonValue &payload = QStringLiteral(""),

@@ -4,3 +4,5 @@ out/
 .vscode/
 *.user
 CMakeUserPresets.json
+__pycache__/
+*.pyc

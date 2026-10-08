@@ -461,6 +461,18 @@ static void httpRequest(const QJsonValue &payload)
         throw std::runtime_error(("HTTP-Anfrage fehlgeschlagen: " + msg).toStdString());
 }
 
+int nextSequenceStep(ExecContext *context, const QString &keyId, int stepCount)
+{
+    if (!context || stepCount <= 0)
+        return 0;
+    // Eigener Namensraum, damit sich das nicht mit Mehrzustands-Tasten mischt.
+    const QString id = QStringLiteral("seq:") + keyId;
+    QMutexLocker lock(&context->stateMutex);
+    const int current = context->cycleIndex.value(id, 0) % stepCount;
+    context->cycleIndex.insert(id, (current + 1) % stepCount);
+    return current;
+}
+
 std::optional<QString> executeAction(const QString &actionType, const QJsonValue &payload,
                                      ExecContext *context, const QString &keyId)
 {
@@ -505,12 +517,21 @@ std::optional<QString> executeAction(const QString &actionType, const QJsonValue
             ctx->sshBroadcast(cmd, run);
         } else if (actionType == QLatin1String("multi_action")
                    || actionType == QLatin1String("sequence")) {
+            std::vector<QJsonObject> steps;
             for (const QJsonValue &step : payload.toArray()) {
-                if (!step.isObject())
-                    continue;
+                if (step.isObject())
+                    steps.push_back(step.toObject());
+            }
+            // Sequenz: nur der Schritt, der bei diesem Druck dran ist.
+            if (actionType == QLatin1String("sequence") && !steps.empty()) {
+                const QJsonObject one =
+                    steps[nextSequenceStep(ctx, keyId, int(steps.size()))];
+                steps = {one};
+            }
+            for (const QJsonObject &step : steps) {
                 const auto err = executeAction(
-                    step.toObject().value(QStringLiteral("action_type")).toString(QStringLiteral("none")),
-                    step.toObject().value(QStringLiteral("payload")), ctx);
+                    step.value(QStringLiteral("action_type")).toString(QStringLiteral("none")),
+                    step.value(QStringLiteral("payload")), ctx);
                 if (err)
                     return err;
             }

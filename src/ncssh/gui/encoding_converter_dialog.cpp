@@ -99,7 +99,7 @@ EncodingConverterDialog::EncodingConverterDialog(AsyncBridge *bridge,
     auto *cancel = new QPushButton(_t("Abbrechen"), this);
     m_repairButton = new QPushButton(_t("Mit KI reparieren …"), this);
     m_repairButton->setToolTip(
-        _t("Beschädigten Text vom lokalen Modell rekonstruieren lassen"));
+        _t("Beschädigten Text von der KI rekonstruieren lassen"));
     connect(m_repairButton, &QPushButton::clicked, this, &EncodingConverterDialog::repairWithAi);
     auto *convertBtn = new QPushButton(_t("Konvertieren"), this);
     convertBtn->setDefault(true);

@@ -8,6 +8,7 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDialogButtonBox>
 #include <QFontMetrics>
 #include "ncssh/gui/file_dialogs.hpp"
@@ -159,6 +160,10 @@ ServerManagerDialog::ServerManagerDialog(AsyncBridge *bridge, QWidget *parent)
     m_timeout->setSuffix(QStringLiteral(" s"));
     form->addRow(_t("Verbindungs-Timeout"), m_timeout);
     m_compression = new QCheckBox(_t("SSH-Kompression"), this);
+    m_compression->setToolTip(
+        _t("Komprimiert den Datenverkehr (zlib). Lohnt sich bei langsamen Verbindungen "
+           "und gut komprimierbaren Daten, kostet etwas Rechenzeit. Wirkt ab der nächsten "
+           "Verbindung."));
     form->addRow(QString(), m_compression);
     m_agentFwd = new QCheckBox(_t("SSH-Agent weiterreichen (Forwarding)"), this);
     // libssh2 kann eingehende auth-agent@openssh.com-Kanaele NICHT annehmen.
@@ -183,6 +188,29 @@ ServerManagerDialog::ServerManagerDialog(AsyncBridge *bridge, QWidget *parent)
     m_environment->setTabChangesFocus(true);
     m_environment->setFixedHeight(QFontMetrics(m_environment->font()).lineSpacing() * 3 + 18);
     form->addRow(_t("Umgebungsvariablen"), m_environment);
+
+    // Tunnel-Presets: werden im Tunnel-Dialog mit "Im Server-Profil speichern"
+    // angelegt und beim Verbinden automatisch geoeffnet.
+    auto *tunnelBox = new QHBoxLayout();
+    m_tunnelList = new QListWidget(this);
+    m_tunnelList->setToolTip(
+        _t("Tunnel, die beim Verbinden automatisch geöffnet werden. Anlegen im "
+           "Tunnel-Dialog (Strg+Shift+T) mit „Im Server-Profil speichern“."));
+    m_tunnelList->setFixedHeight(QFontMetrics(m_tunnelList->font()).lineSpacing() * 3 + 12);
+    m_tunnelRemove = new QPushButton(_t("Entfernen"), this);
+    m_tunnelRemove->setEnabled(false);
+    connect(m_tunnelList, &QListWidget::currentRowChanged, this,
+            [this](int row) { m_tunnelRemove->setEnabled(row >= 0); });
+    connect(m_tunnelRemove, &QPushButton::clicked, this, [this] {
+        const int row = m_tunnelList->currentRow();
+        if (row < 0 || row >= int(m_tunnels.size()))
+            return;
+        m_tunnels.erase(m_tunnels.begin() + row);   // wirksam mit "Speichern"
+        refreshTunnelList();
+    });
+    tunnelBox->addWidget(m_tunnelList, 1);
+    tunnelBox->addWidget(m_tunnelRemove, 0, Qt::AlignTop);
+    form->addRow(_t("Tunnel (Auto-Start)"), tunnelBox);
 
     m_lastConnected = new QLabel(this);
     m_lastConnected->setObjectName(QStringLiteral("Muted"));
@@ -301,15 +329,28 @@ void ServerManagerDialog::loadIntoForm(const ServerProfile &p)
     m_ciphers->setText(p.ciphers);
     m_kex->setText(p.kexAlgorithms);
     m_environment->setPlainText(core::formatEnvironment(p.environment));
+    m_tunnels = p.tunnels;
+    refreshTunnelList();
     m_startPath->setText(p.startPath);
     m_savePassword->setChecked(p.savePassword);
     m_tabColor = p.color;
     updateColorButton();
-    m_lastConnected->setText(p.lastConnected.isEmpty() ? QStringLiteral("—") : p.lastConnected);
+    const QDateTime last = QDateTime::fromString(p.lastConnected, Qt::ISODate);
+    m_lastConnected->setText(last.isValid() ? last.toString(QStringLiteral("yyyy-MM-dd HH:mm"))
+                             : p.lastConnected.isEmpty() ? QStringLiteral("—")
+                                                         : p.lastConnected);
     m_reachability->clear();
     // Gespeichertes Passwort (maskiert) anzeigen, damit erkennbar ist, dass es
     // hinterlegt ist, und ein erneutes Speichern es nicht verwirft.
     m_password->setText(p.password);
+}
+
+void ServerManagerDialog::refreshTunnelList()
+{
+    m_tunnelList->clear();
+    for (const core::TunnelSpec &t : m_tunnels)
+        m_tunnelList->addItem(t.label());
+    m_tunnelRemove->setEnabled(false);
 }
 
 ServerProfile ServerManagerDialog::formToProfile() const
@@ -332,6 +373,7 @@ ServerProfile ServerManagerDialog::formToProfile() const
     p.ciphers = m_ciphers->text().trimmed();
     p.kexAlgorithms = m_kex->text().trimmed();
     p.environment = core::parseEnvironment(m_environment->toPlainText()).vars;
+    p.tunnels = m_tunnels;
     p.color = m_tabColor;
     p.startPath = m_startPath->text().trimmed().isEmpty() ? QStringLiteral(".")
                                                           : m_startPath->text().trimmed();

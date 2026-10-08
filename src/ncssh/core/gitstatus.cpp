@@ -49,13 +49,21 @@ QHash<QString, QString> parsePorcelain(const QString &text, const QString &prefi
         path = path.trimmed();
         while (path.startsWith(QLatin1Char('"'))) path.remove(0, 1);
         while (path.endsWith(QLatin1Char('"'))) path.chop(1);
-        if (!prefix.isEmpty()) {
 #ifdef Q_OS_WIN
-            // Der Prefix stammt aus dem (evtl. anders geschriebenen) Pfad.
-            if (!path.startsWith(prefix, Qt::CaseInsensitive))
+        // Der Prefix stammt aus dem (evtl. anders geschriebenen) Pfad.
+        const Qt::CaseSensitivity cs = Qt::CaseInsensitive;
 #else
-            if (!path.startsWith(prefix))
+        const Qt::CaseSensitivity cs = Qt::CaseSensitive;
 #endif
+        // Innerhalb eines neuen Ordners meldet git nur den Ordner selbst
+        // ("?? neu/") — dann ist alles im angezeigten Verzeichnis neu.
+        if (!prefix.isEmpty() && (x == QLatin1Char('?') || y == QLatin1Char('?'))
+            && path.endsWith(QLatin1Char('/')) && prefix.startsWith(path, cs)) {
+            out.insert(kGitAllEntries, QStringLiteral("?"));
+            continue;
+        }
+        if (!prefix.isEmpty()) {
+            if (!path.startsWith(prefix, cs))
                 continue;   // liegt nicht im angezeigten Verzeichnis
             path.remove(0, prefix.length());
         }
@@ -64,7 +72,7 @@ QHash<QString, QString> parsePorcelain(const QString &text, const QString &prefi
         const QString name = path.section(QLatin1Char('/'), 0, 0);
         const QString code = badge(x, y);
         const QString prev = out.value(name);
-        out.insert(name, (!prev.isEmpty() && prev != code) ? QStringLiteral("M") : code);
+        out.insert(name, mergeGitBadges(prev, code));
     }
     return out;
 }
@@ -111,18 +119,42 @@ QHash<QString, QString> gitStatus(const QString &directory, int timeoutMs)
     QString pre = *prefix;
     while (pre.endsWith(QLatin1Char('\n')) || pre.endsWith(QLatin1Char('\r')))
         pre.chop(1);
-    return parsePorcelain(*status, pre);
+    QHash<QString, QString> result = parsePorcelain(*status, pre);
+    if (result.contains(kGitAllEntries)) {
+        // Das angezeigte Verzeichnis ist selbst neu: Dateien einzeln auflisten
+        // (nur dieser Teilbaum). So bleiben darin ignorierte Dateien ungefaerbt;
+        // klappt das nicht, gilt "alles neu".
+        const auto all = runGit(directory,
+                                {QStringLiteral("status"), QStringLiteral("--porcelain"),
+                                 QStringLiteral("--untracked-files=all"),
+                                 QStringLiteral("--"), QStringLiteral(".")},
+                                timeoutMs);
+        if (all) {
+            QHash<QString, QString> detailed = parsePorcelain(*all, pre);
+            detailed.remove(kGitAllEntries);
+            return detailed;
+        }
+    }
+    return result;
+}
+
+QString mergeGitBadges(const QString &a, const QString &b)
+{
+    if (a.isEmpty() || a == b)
+        return b;
+    if (b.isEmpty())
+        return a;
+    const auto isNew = [](const QString &c) {
+        return c == QLatin1String("A") || c == QLatin1String("?");
+    };
+    return (isNew(a) && isNew(b)) ? QStringLiteral("A") : QStringLiteral("M");
 }
 
 QString aggregateBadge(const QHash<QString, QString> &status)
 {
     QString out;
-    for (const QString &code : status) {
-        if (out.isEmpty())
-            out = code;
-        else if (out != code)
-            return QStringLiteral("M");
-    }
+    for (const QString &code : status)
+        out = mergeGitBadges(out, code);
     return out;
 }
 
@@ -153,8 +185,7 @@ QHash<QString, QString> repoAncestorMarks(const QString &directory, const QStrin
         const QString code = aggregateBadge(gitStatus(root, timeoutMs));
         if (code.isEmpty())
             continue;   // sauber -> nichts markieren
-        const QString prev = out.value(child);
-        out.insert(child, (!prev.isEmpty() && prev != code) ? QStringLiteral("M") : code);
+        out.insert(child, mergeGitBadges(out.value(child), code));
     }
     return out;
 }

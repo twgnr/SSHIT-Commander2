@@ -920,6 +920,10 @@ int openViaProxyJump(const SSHSessionPtr &target, const ServerProfile &profile,
     SSHSessionPtr jsess;
     try {
         jsess = connectSession(jump, hostkeys, control);
+    } catch (const HostKeyChangedError &) {
+        throw;   // Fingerprints des Sprung-Hosts muss die Oberflaeche zeigen
+    } catch (const HostKeyUnknownError &) {
+        throw;
     } catch (const std::exception &e) {
         fail(QStringLiteral("Sprung-Host (%1) nicht erreichbar: %2")
                  .arg(jump.display(), QString::fromUtf8(e.what())));
@@ -955,6 +959,51 @@ int openViaProxyJump(const SSHSessionPtr &target, const ServerProfile &profile,
     target->m_pumpThread =
         std::thread(&pumpProxyJump, jsess, chan, sockB, &target->m_pumpStop);
     return sockA;
+}
+
+QString hostKeyId(const QString &host, int port)
+{
+    return QStringLiteral("%1:%2").arg(host.toLower()).arg(port);
+}
+
+QString decideHostKey(const ServerProfile &profile, HostKeyStore *hostkeys, const QString &fp,
+                      const QString &algo, const ConnectControl &control,
+                      const std::function<int()> &openssh)
+{
+    if (profile.knownHostsPolicy == QLatin1String("ignore") || !hostkeys)
+        return QStringLiteral("ignored");
+    if (const auto exact = hostkeys->get(profile.host, profile.port, algo)) {
+        if (*exact == fp)
+            return QStringLiteral("known");
+        // Abbruch VOR der Authentifizierung — es gehen keine Zugangsdaten an
+        // einen moeglicherweise fremden Server.
+        throw HostKeyChangedError(
+            QStringLiteral("HOST-KEY HAT SICH GEÄNDERT! Möglicher MITM-Angriff.\n"
+                           "Erwartet: %1\nErhalten: %2").arg(*exact, fp),
+            *exact, fp, algo, profile.host, profile.port);
+    }
+    const auto legacy = hostkeys->getLegacy(profile.host, profile.port);
+    if (legacy && *legacy == fp)
+        return QStringLiteral("known");
+    const int osk = openssh ? openssh() : 0;
+    if (osk == 1)
+        return QStringLiteral("known");
+    if (osk == -1)
+        throw HostKeyChangedError(
+            QStringLiteral("HOST-KEY weicht von ~/.ssh/known_hosts ab! "
+                           "Möglicher MITM-Angriff.\nErhalten: %1").arg(fp),
+            QString(), fp, algo, profile.host, profile.port);
+    if (profile.knownHostsPolicy == QLatin1String("strict"))
+        throw HostKeyError(QStringLiteral("Unbekannter Host-Key (strict):\n%1").arg(fp));
+    // accept-new, vom Nutzer "nur diesmal" bestaetigt: verbinden, nicht merken.
+    const auto once = control.trustedOnce.constFind(hostKeyId(profile.host, profile.port));
+    if (!fp.isEmpty() && once != control.trustedOnce.constEnd() && *once == fp)
+        return QStringLiteral("unknown");
+    // accept-new (TOFU): erst bestaetigt der Nutzer den Fingerprint, dann wird
+    // erneut verbunden — keine Anmeldung vorher.
+    throw HostKeyUnknownError(
+        QStringLiteral("Unbekannter Host-Key — bitte den Fingerprint bestätigen:\n%1").arg(fp), fp,
+        algo, profile.host, profile.port);
 }
 
 SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkeys)
@@ -1055,43 +1104,13 @@ SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkey
     step(core::_t("Prüfe Host-Key …"));
     QString algo;
     const QString fp = hostFingerprint(sess, algo);
-    QString status = QStringLiteral("ignored");
-    if (profile.knownHostsPolicy != QLatin1String("ignore") && hostkeys) {
-        const auto exact = hostkeys->get(profile.host, profile.port, algo);
-        if (exact) {
-            if (*exact == fp) {
-                status = QStringLiteral("known");
-            } else {
-                // Abbruch VOR der Authentifizierung — es gehen keine
-                // Zugangsdaten an einen moeglicherweise fremden Server.
-                throw HostKeyChangedError(
-                    QStringLiteral("HOST-KEY HAT SICH GEÄNDERT! Möglicher MITM-Angriff.\n"
-                                   "Erwartet: %1\nErhalten: %2").arg(*exact, fp),
-                    *exact, fp, algo);
-            }
-        } else {
-            const auto legacy = hostkeys->getLegacy(profile.host, profile.port);
-            // OpenSSH-Interop: vertraut das System-ssh (~/.ssh/known_hosts) dem
-            // Key bereits, uebernehmen wir das (kein erneutes Nachfragen).
-            const int osk = core::getSettingBool(QStringLiteral("openssh_known_hosts"), true)
-                                ? checkOpenSshKnownHosts(sess, profile.host, profile.port)
-                                : 0;
-            if (legacy && *legacy == fp) {
-                status = QStringLiteral("known");
-            } else if (osk == 1) {
-                status = QStringLiteral("known");
-            } else if (osk == -1) {
-                throw HostKeyChangedError(
-                    QStringLiteral("HOST-KEY weicht von ~/.ssh/known_hosts ab! "
-                                   "Möglicher MITM-Angriff.\nErhalten: %1").arg(fp),
-                    QString(), fp, algo);
-            } else if (profile.knownHostsPolicy == QLatin1String("strict")) {
-                throw HostKeyError(QStringLiteral("Unbekannter Host-Key (strict):\n%1").arg(fp));
-            } else {
-                status = QStringLiteral("unknown");  // accept-new: TOFU, UI bestaetigt
-            }
-        }
-    }
+    // OpenSSH-Interop: vertraut das System-ssh (~/.ssh/known_hosts) dem Key
+    // bereits, uebernehmen wir das (kein erneutes Nachfragen).
+    const QString status = decideHostKey(profile, hostkeys, fp, algo, control, [&] {
+        return core::getSettingBool(QStringLiteral("openssh_known_hosts"), true)
+                   ? checkOpenSshKnownHosts(sess, profile.host, profile.port)
+                   : 0;
+    });
     session->hostFingerprint = fp;
     session->hostKeyAlgo = algo;
     session->hostKeyStatus = status;

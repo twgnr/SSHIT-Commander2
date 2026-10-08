@@ -36,10 +36,16 @@ CALL_RE = re.compile(r'_t\(\s*"((?:[^"\\]|\\.)*)"')
 CONT_RE = re.compile(r'\s*"((?:[^"\\]|\\.)*)"')
 
 
+ESCAPES = {"n": "\n", "t": "\t", '"': '"', "\\": "\\"}
+ESCAPE_RE = re.compile(r"\\(.)")
+
+
 def unescape(text: str) -> str:
-    """C++-Escapes in den echten String wandeln (\\n, \\", \\\\ …)."""
-    return (text.replace('\\"', '"').replace("\\n", "\n")
-                .replace("\\t", "\t").replace("\\\\", "\\"))
+    """C++-Escapes in den echten String wandeln (\\n, \\", \\\\ …).
+
+    In EINEM Durchgang wie der Compiler — nacheinander ausgefuehrte replace()
+    machten aus "%APPDATA%\\\\ncssh" faelschlich einen Zeilenumbruch."""
+    return ESCAPE_RE.sub(lambda m: ESCAPES.get(m.group(1), m.group(0)), text)
 
 
 def extract_keys() -> set[str]:

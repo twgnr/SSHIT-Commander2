@@ -889,6 +889,12 @@ void MacroManagerDialog::runKey(const QJsonObject &config, int index, const QStr
             if (v.isObject())
                 steps.push_back(v.toObject());
         }
+        // Sequenz: bei jedem Druck nur der naechste Schritt (danach von vorn).
+        if (type == QLatin1String("sequence") && !steps.empty()) {
+            const QJsonObject one =
+                steps[ma::nextSequenceStep(m_context.get(), keyId, int(steps.size()))];
+            steps = {one};
+        }
         runSteps(std::move(steps), keyId, index);
         return;
     }

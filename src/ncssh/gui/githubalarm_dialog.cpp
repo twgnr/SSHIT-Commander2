@@ -16,6 +16,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -133,6 +134,9 @@ GithubAlarmDialog::GithubAlarmDialog(GithubAlarmManager *manager, QWidget *paren
     form->addRow(_t("GitHub-Token"), tokenRow);
     layout->addLayout(form);
 
+    layout->addWidget(new QLabel(
+        _t("Überwachte Repositories — Häkchen in „Aktiv“ schaltet die Überwachung an/aus:"),
+        this));
     m_table = new QTableWidget(0, 4, this);
     m_table->setHorizontalHeaderLabels(
         {_t("Repository"), _t("Lokaler Ordner"), _t("Letzter Push"), _t("Aktiv")});
@@ -141,10 +145,23 @@ GithubAlarmDialog::GithubAlarmDialog(GithubAlarmManager *manager, QWidget *paren
     m_table->verticalHeader()->setVisible(false);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    // Spalte "Aktiv": Haekchen schaltet die Ueberwachung des Repos an/aus.
+    connect(m_table, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
+        if (!item || item->column() != 3)
+            return;
+        const int id = item->data(Qt::UserRole).toInt();
+        m_repos = core::loadRepos();   // zwischendurch gelernte Ordner erhalten
+        for (RepoSpec &r : m_repos) {
+            if (r.id == id)
+                r.enabled = item->checkState() == Qt::Checked;
+        }
+        core::saveRepos(m_repos);
+        if (m_manager)
+            m_manager->reload();
+    });
     layout->addWidget(m_table, 2);
 
-    layout->addWidget(new QLabel(
-        _t("Überwachte Repositories — Häkchen schaltet an/aus:"), this));
+    layout->addWidget(new QLabel(_t("Meldungen:"), this));
     m_events = new QListWidget(this);
     layout->addWidget(m_events, 1);
     connect(manager, &GithubAlarmManager::repoChanged, this,
@@ -193,6 +210,7 @@ GithubAlarmDialog::GithubAlarmDialog(GithubAlarmManager *manager, QWidget *paren
 void GithubAlarmDialog::reload()
 {
     m_repos = core::loadRepos();
+    const QSignalBlocker blocker(m_table);   // Neuaufbau ist keine Nutzer-Aenderung
     m_table->setRowCount(0);
     int row = 0;
     for (const RepoSpec &r : m_repos) {
@@ -202,8 +220,11 @@ void GithubAlarmDialog::reload()
         m_table->setItem(row, 0, nameItem);
         m_table->setItem(row, 1, new QTableWidgetItem(r.localPath));
         m_table->setItem(row, 2, new QTableWidgetItem(r.lastPushed));
-        m_table->setItem(row, 3, new QTableWidgetItem(r.enabled ? QStringLiteral("✓")
-                                                                : QString()));
+        auto *active = new QTableWidgetItem();
+        active->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
+        active->setCheckState(r.enabled ? Qt::Checked : Qt::Unchecked);
+        active->setData(Qt::UserRole, r.id);
+        m_table->setItem(row, 3, active);
         ++row;
     }
     m_status->setText(QStringLiteral("%1 Repository(s)").arg(m_repos.size()));

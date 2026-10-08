@@ -48,7 +48,7 @@ const std::vector<ShortcutDef> &shortcutDefs()
         {QStringLiteral("rename_tab"), _t("Tabs & App"), _t("Tab umbenennen"), QStringLiteral("Ctrl+Shift+E")},
         {QStringLiteral("close_tab"), _t("Tabs & App"), _t("Tab schließen"), QStringLiteral("Ctrl+W")},
         {QStringLiteral("settings"), _t("Tabs & App"), _t("Einstellungen"), QStringLiteral("Ctrl+,")},
-        {QStringLiteral("help"), _t("Tabs & App"), _t("Tastenkürzel-Hilfe"), QStringLiteral("F1")},
+        {QStringLiteral("help"), _t("Tabs & App"), _t("Hilfe (Handbuch)"), QStringLiteral("F1")},
     };
     return defs;
 }

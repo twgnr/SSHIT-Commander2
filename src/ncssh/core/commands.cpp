@@ -1318,6 +1318,662 @@ void addPosixMisc(std::vector<CS> &c)
         .example = "python -m venv .venv", .platform = "any"});
 }
 
+// --- POSIX: Server-Administration (Debian/Ubuntu + RHEL-Familie) ------------
+// Bewusst nicht-interaktive Formen (--no-pager, -n …), da die Konsole kein
+// volles Terminal sein muss. shutdown/reboot fehlen als eigene Befehle
+// absichtlich (Neustart ueber systemctl): Katalog-Befehle gelten als
+// "bekannt" und bekommen vom Parameter-Knopf ein "--help" (command_params).
+void addPosixServer(std::vector<CS> &c)
+{
+    // --- Dienste (systemd) -------------------------------------------------
+    c.push_back(CS{
+        .name = _t("systemctl — Status mit Log"), .category = _t("Dienste"),
+        .description = _t("Ausführlicher Dienststatus ohne Pager und ohne gekürzte Zeilen; -n legt die Zahl der Log-Zeilen fest."),
+        .templateText = "systemctl status --no-pager --full {lines} {unit}",
+        .params = {
+            CP{.name = "lines", .label = _t("Log-Zeilen (-n)"), .defaultValue = "30", .flagValue = "-n"},
+            CP{.name = "unit", .label = _t("Dienst"), .required = true},
+        },
+        .example = "systemctl status --no-pager --full -n 30 nginx"});
+    c.push_back(CS{
+        .name = _t("systemctl — Dienst neu laden"), .category = _t("Dienste"),
+        .description = _t("Lädt die Konfiguration ohne Neustart neu; reload-or-restart startet neu, wenn der Dienst kein reload unterstützt."),
+        .templateText = "sudo systemctl {action} {unit}",
+        .params = {
+            CP{.name = "action", .label = _t("Aktion"), .kind = "choice", .defaultValue = "reload", .choices = {"reload", "reload-or-restart"}},
+            CP{.name = "unit", .label = _t("Dienst"), .required = true},
+        },
+        .example = "sudo systemctl reload nginx"});
+    c.push_back(CS{
+        .name = _t("systemctl — Autostart setzen"), .category = _t("Dienste"),
+        .description = _t("Aktiviert/deaktiviert den Start beim Booten; --now startet bzw. stoppt den Dienst zusätzlich sofort."),
+        .templateText = "sudo systemctl {action} {now} {unit}",
+        .params = {
+            CP{.name = "action", .label = _t("Aktion"), .kind = "choice", .defaultValue = "enable", .choices = {"enable", "disable"}},
+            CP{.name = "now", .label = _t("Sofort (--now)"), .kind = "flag", .defaultValue = "on", .flagValue = "--now"},
+            CP{.name = "unit", .label = _t("Dienst"), .required = true},
+        },
+        .example = "sudo systemctl enable --now nginx"});
+    c.push_back(CS{
+        .name = _t("systemctl — Units auflisten"), .category = _t("Dienste"),
+        .description = _t("Listet systemd-Units eines Typs; --failed nur fehlgeschlagene, --state=running nur laufende, --all auch inaktive."),
+        .templateText = "systemctl list-units --no-pager --type={type} {state}",
+        .params = {
+            CP{.name = "type", .label = _t("Typ"), .kind = "choice", .defaultValue = "service", .choices = {"service", "timer", "socket", "mount", "target"}},
+            CP{.name = "state", .label = _t("Zustand"), .kind = "choice", .choices = {"", "--failed", "--state=running", "--all"}},
+        },
+        .example = "systemctl list-units --no-pager --type=service --failed"});
+    c.push_back(CS{
+        .name = _t("systemctl — Timer auflisten"), .category = _t("Dienste"),
+        .description = _t("Zeigt systemd-Timer mit letzter und nächster Ausführung; --all auch inaktive."),
+        .templateText = "systemctl list-timers --no-pager {all}",
+        .params = {CP{.name = "all", .label = _t("Alle (--all)"), .kind = "flag", .flagValue = "--all"}},
+        .example = "systemctl list-timers --no-pager"});
+    c.push_back(CS{
+        .name = _t("systemctl — Unit-Dateien neu einlesen"), .category = _t("Dienste"),
+        .description = _t("daemon-reload: nötig nach dem Anlegen oder Ändern von .service- und .timer-Dateien."),
+        .templateText = "sudo systemctl daemon-reload", .example = "sudo systemctl daemon-reload"});
+
+    // --- Logs --------------------------------------------------------------
+    c.push_back(CS{
+        .name = _t("journalctl — Dienst-Logs (Zeitraum)"), .category = _t("Logs"),
+        .description = _t("Logs eines Dienstes ohne Pager; --since/--until begrenzen den Zeitraum, -n die Zeilenzahl."),
+        .templateText = "journalctl --no-pager -u {unit} {since} {until} {lines}",
+        .params = {
+            CP{.name = "unit", .label = _t("Dienst"), .required = true},
+            CP{.name = "since", .label = _t("Seit (--since)"), .description = _t("z. B. today, yesterday, -2h oder '2024-05-01 12:00'"), .defaultValue = "today", .flagValue = "--since"},
+            CP{.name = "until", .label = _t("Bis (--until)"), .description = _t("Leer = bis jetzt"), .flagValue = "--until"},
+            CP{.name = "lines", .label = _t("Zeilen (-n)"), .description = _t("Leer = alle"), .flagValue = "-n"},
+        },
+        .example = "journalctl --no-pager -u nginx --since today -n 200"});
+    c.push_back(CS{
+        .name = _t("journalctl — nur Fehler"), .category = _t("Logs"),
+        .description = _t("Meldungen ab einer Priorität (-p err zeigt err und schwerere); -b nur seit dem letzten Start."),
+        .templateText = "journalctl --no-pager -p {prio} {boot} {since} {lines}",
+        .params = {
+            CP{.name = "prio", .label = _t("Priorität (-p)"), .kind = "choice", .defaultValue = "err", .choices = {"err", "warning", "crit"}},
+            CP{.name = "boot", .label = _t("Nur aktueller Boot (-b)"), .kind = "flag", .defaultValue = "on", .flagValue = "-b"},
+            CP{.name = "since", .label = _t("Seit (--since)"), .description = _t("z. B. today, yesterday, -2h oder '2024-05-01 12:00'"), .flagValue = "--since"},
+            CP{.name = "lines", .label = _t("Zeilen (-n)"), .description = _t("Leer = alle"), .defaultValue = "100", .flagValue = "-n"},
+        },
+        .example = "journalctl --no-pager -p err -b -n 100"});
+    c.push_back(CS{
+        .name = _t("journalctl — Boot-Logs"), .category = _t("Logs"),
+        .description = _t("Meldungen eines Systemstarts: 0 = aktueller, -1 = vorheriger (z. B. nach einem Absturz, braucht persistentes Journal); -k nur Kernel."),
+        .templateText = "journalctl --no-pager -b {boot} {kernel} {lines}",
+        .params = {
+            CP{.name = "boot", .label = _t("Boot (-b)"), .kind = "choice", .defaultValue = "0", .choices = {"0", "-1", "-2"}},
+            CP{.name = "kernel", .label = _t("Nur Kernel (-k)"), .kind = "flag", .flagValue = "-k"},
+            CP{.name = "lines", .label = _t("Zeilen (-n)"), .description = _t("Leer = alle"), .defaultValue = "200", .flagValue = "-n"},
+        },
+        .example = "journalctl --no-pager -b -1 -n 200"});
+    c.push_back(CS{
+        .name = _t("journalctl — Journal verkleinern"), .category = _t("Logs"),
+        .description = _t("Löscht archivierte Journal-Dateien bis zur Größen- bzw. Altersgrenze; die Belegung zeigt journalctl --disk-usage."),
+        .templateText = "sudo journalctl --vacuum-{mode}={limit}",
+        .params = {
+            CP{.name = "mode", .label = _t("Grenze"), .kind = "choice", .defaultValue = "size", .choices = {"size", "time"}},
+            CP{.name = "limit", .label = _t("Wert"), .description = _t("z. B. 500M bzw. 2weeks"), .defaultValue = "500M", .required = true},
+        },
+        .example = "sudo journalctl --vacuum-time=2weeks", .danger = true});
+    c.push_back(CS{
+        .name = _t("tail — Log filtern"), .category = _t("Logs"),
+        .description = _t("Letzte Zeilen einer Datei, gefiltert nach Suchmuster; -f folgt live."),
+        .templateText = "tail {follow} -n {lines} {path} | grep --line-buffered {ignorecase} {pattern}",
+        .params = {
+            CP{.name = "follow", .label = _t("Folgen (-f)"), .kind = "flag", .flagValue = "-f"},
+            CP{.name = "lines", .label = _t("Zeilen"), .defaultValue = "500"},
+            CP{.name = "path", .label = _t("Datei"), .required = true},
+            CP{.name = "ignorecase", .label = _t("Groß/klein egal (-i)"), .kind = "flag", .defaultValue = "on", .flagValue = "-i"},
+            CP{.name = "pattern", .label = _t("Suchmuster"), .defaultValue = "error", .required = true},
+        },
+        .example = "tail -f -n 500 /var/log/nginx/error.log | grep --line-buffered -i error"});
+    c.push_back(CS{
+        .name = _t("cut — häufigste Werte zählen"), .category = _t("Logs"),
+        .description = _t("Zählt die Werte einer Spalte und zeigt die häufigsten zuerst, z. B. Client-IPs im Access-Log (Feld 1)."),
+        .templateText = "cut -d ' ' -f {field} {path} | sort | uniq -c | sort -nr | head -n {count}",
+        .params = {
+            CP{.name = "field", .label = _t("Feld (-f)"), .defaultValue = "1", .required = true},
+            CP{.name = "path", .label = _t("Datei"), .defaultValue = "/var/log/nginx/access.log", .required = true},
+            CP{.name = "count", .label = _t("Anzahl"), .defaultValue = "20"},
+        },
+        .example = "cut -d ' ' -f 1 /var/log/nginx/access.log | sort | uniq -c | sort -nr | head -n 20"});
+    c.push_back(CS{
+        .name = _t("logrotate — Konfiguration testen"), .category = _t("Logs"),
+        .description = _t("Probelauf (-d): zeigt, was rotiert würde, ohne Dateien zu ändern."),
+        .templateText = "sudo logrotate -d {config}",
+        .params = {CP{.name = "config", .label = _t("Konfigurationsdatei"), .defaultValue = "/etc/logrotate.conf", .required = true}},
+        .example = "sudo logrotate -d /etc/logrotate.d/nginx"});
+    c.push_back(CS{
+        .name = _t("truncate — Datei leeren"), .category = _t("Logs"),
+        .description = _t("Kürzt eine Datei auf 0 Byte (-s 0), etwa ein volles Log; die Datei bleibt bestehen und schreibende Prozesse laufen weiter."),
+        .templateText = "sudo truncate -s 0 {path}",
+        .params = {CP{.name = "path", .label = _t("Datei"), .required = true}},
+        .example = "sudo truncate -s 0 /var/log/app/debug.log", .danger = true});
+
+    // --- System: Prozesse / Auslastung / Cron / Benutzer -------------------
+    c.push_back(CS{
+        .name = _t("ps — Top-Prozesse"), .category = _t("System"),
+        .description = _t("Prozesse sortiert nach CPU- oder Speicherverbrauch, größte zuerst."),
+        .templateText = "ps aux --sort=-{sort} | head -n {count}",
+        .params = {
+            CP{.name = "sort", .label = _t("Sortierung"), .kind = "choice", .defaultValue = "%cpu", .choices = {"%cpu", "%mem"}},
+            CP{.name = "count", .label = _t("Anzahl"), .defaultValue = "15"},
+        },
+        .example = "ps aux --sort=-%mem | head -n 15"});
+    c.push_back(CS{
+        .name = _t("pgrep — Prozesse suchen"), .category = _t("System"),
+        .description = _t("Findet Prozesse per Name und zeigt PID und Befehlszeile (-a); -f durchsucht die ganze Befehlszeile."),
+        .templateText = "pgrep -a {full} {pattern}",
+        .params = {
+            CP{.name = "full", .label = _t("Ganze Befehlszeile (-f)"), .kind = "flag", .flagValue = "-f"},
+            CP{.name = "pattern", .label = _t("Muster"), .required = true},
+        },
+        .example = "pgrep -a -f gunicorn"});
+    c.push_back(CS{
+        .name = _t("kill — Signal senden"), .category = _t("System"),
+        .description = _t("Sendet ein gewähltes Signal: TERM beendet sauber, HUP lädt bei vielen Diensten die Konfiguration neu, KILL erzwingt."),
+        .templateText = "kill -s {signal} {pid}",
+        .params = {
+            CP{.name = "signal", .label = _t("Signal (-s)"), .kind = "choice", .defaultValue = "TERM", .choices = {"TERM", "HUP", "INT", "KILL", "USR1"}},
+            CP{.name = "pid", .label = _t("PID"), .required = true},
+        },
+        .example = "kill -s HUP 1234", .danger = true});
+    c.push_back(CS{
+        .name = _t("vmstat — Auslastung im Verlauf"), .category = _t("System"),
+        .description = _t("CPU, RAM, Swap und I/O alle N Sekunden; -w breite Ausgabe, -S M in MiB."),
+        .templateText = "vmstat {wide} {mega} {interval} {count}",
+        .params = {
+            CP{.name = "wide", .label = _t("Breit (-w)"), .kind = "flag", .defaultValue = "on", .flagValue = "-w"},
+            CP{.name = "mega", .label = _t("In MiB (-S M)"), .kind = "flag", .defaultValue = "on", .flagValue = "-S M"},
+            CP{.name = "interval", .label = _t("Intervall (s)"), .defaultValue = "1", .required = true},
+            CP{.name = "count", .label = _t("Anzahl"), .description = _t("Leer = endlos"), .defaultValue = "5"},
+        },
+        .example = "vmstat -w -S M 1 5"});
+    c.push_back(CS{
+        .name = _t("systemctl — Neustart/Herunterfahren"), .category = _t("System"),
+        .description = _t("Startet den Server sofort neu bzw. schaltet ihn aus; die Verbindung bricht ab."),
+        .templateText = "sudo systemctl {action}",
+        .params = {CP{.name = "action", .label = _t("Aktion"), .kind = "choice", .defaultValue = "reboot", .choices = {"reboot", "poweroff"}}},
+        .example = "sudo systemctl reboot", .danger = true});
+    c.push_back(CS{
+        .name = _t("crontab — bearbeiten"), .category = _t("System"),
+        .description = _t("Öffnet die eigene Crontab im Editor (Terminal-Modus)."),
+        .templateText = "crontab -e", .example = "crontab -e"});
+    c.push_back(CS{
+        .name = _t("cat /etc/crontab — System-Cronjobs"), .category = _t("System"),
+        .description = _t("Zeigt /etc/crontab und die Skripte in den Cron-Verzeichnissen (cron.d, cron.daily …)."),
+        .templateText = "cat /etc/crontab; ls -l /etc/cron.d /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly",
+        .example = "cat /etc/crontab; ls -l /etc/cron.d"});
+    c.push_back(CS{
+        .name = _t("getent — Benutzer/Gruppen abfragen"), .category = _t("System"),
+        .description = _t("Liest Einträge aus passwd, group oder hosts, auch aus LDAP/SSSD; ohne Name alle."),
+        .templateText = "getent {db} {key}",
+        .params = {
+            CP{.name = "db", .label = _t("Datenbank"), .kind = "choice", .defaultValue = "passwd", .choices = {"passwd", "group", "hosts"}},
+            CP{.name = "key", .label = _t("Name (optional)")},
+        },
+        .example = "getent group sudo"});
+    c.push_back(CS{
+        .name = _t("userdel — Benutzer löschen"), .category = _t("System"),
+        .description = _t("Löscht ein Benutzerkonto; -r entfernt auch Home-Verzeichnis und Mail-Spool."),
+        .templateText = "sudo userdel {home} {user}",
+        .params = {
+            CP{.name = "home", .label = _t("Home löschen (-r)"), .kind = "flag", .flagValue = "-r"},
+            CP{.name = "user", .label = _t("Benutzer"), .required = true},
+        },
+        .example = "sudo userdel -r altuser", .danger = true});
+
+    // --- Datenträger -------------------------------------------------------
+    c.push_back(CS{
+        .name = _t("df — Typ und Inodes"), .category = _t("Datenträger"),
+        .description = _t("Plattenbelegung mit Dateisystemtyp (-T) oder Inode-Belegung (-i); -x blendet tmpfs aus."),
+        .templateText = "df -h {type} {inodes} {notmp} {path}",
+        .params = {
+            CP{.name = "type", .label = _t("Typ (-T)"), .kind = "flag", .defaultValue = "on", .flagValue = "-T"},
+            CP{.name = "inodes", .label = _t("Inodes (-i)"), .kind = "flag", .flagValue = "-i"},
+            CP{.name = "notmp", .label = _t("Ohne tmpfs (-x)"), .kind = "flag", .defaultValue = "on", .flagValue = "-x tmpfs -x devtmpfs"},
+            CP{.name = "path", .label = _t("Pfad")},
+        },
+        .example = "df -h -T -x tmpfs -x devtmpfs"});
+    c.push_back(CS{
+        .name = _t("du — größte Verzeichnisse"), .category = _t("Datenträger"),
+        .description = _t("Größe der Unterverzeichnisse, aufsteigend sortiert (größte unten); -x bleibt im Dateisystem."),
+        .templateText = "du -h --max-depth=1 {xdev} {path} 2>/dev/null | sort -h | tail -n {count}",
+        .params = {
+            CP{.name = "xdev", .label = _t("Nur dieses Dateisystem (-x)"), .kind = "flag", .defaultValue = "on", .flagValue = "-x"},
+            CP{.name = "path", .label = _t("Pfad"), .defaultValue = "/var", .required = true},
+            CP{.name = "count", .label = _t("Anzahl"), .defaultValue = "20"},
+        },
+        .example = "du -h --max-depth=1 -x /var 2>/dev/null | sort -h | tail -n 20"});
+    c.push_back(CS{
+        .name = _t("lsblk — Dateisysteme und UUIDs"), .category = _t("Datenträger"),
+        .description = _t("Laufwerke und Partitionen mit Dateisystem, Label, UUID und Einhängepunkt (-f)."),
+        .templateText = "lsblk -f {device}",
+        .params = {CP{.name = "device", .label = _t("Gerät (optional)"), .description = _t("z. B. /dev/sda")}},
+        .example = "lsblk -f"});
+    c.push_back(CS{
+        .name = _t("findmnt — fstab prüfen"), .category = _t("Datenträger"),
+        .description = _t("Prüft /etc/fstab auf Fehler (Geräte, UUIDs, Optionen), bevor ein Neustart daran hängen bleibt."),
+        .templateText = "sudo findmnt --verify {verbose}",
+        .params = {CP{.name = "verbose", .label = _t("Ausführlich (--verbose)"), .kind = "flag", .flagValue = "--verbose"}},
+        .example = "sudo findmnt --verify"});
+    c.push_back(CS{
+        .name = _t("mount — Datenträger einhängen"), .category = _t("Datenträger"),
+        .description = _t("Hängt ein Gerät in ein Verzeichnis ein; -t Dateisystemtyp, -o Optionen (z. B. ro)."),
+        .templateText = "sudo mount {fstype} {options} {device} {target}",
+        .params = {
+            CP{.name = "fstype", .label = _t("Typ (-t)"), .description = _t("Leer = automatisch"), .flagValue = "-t"},
+            CP{.name = "options", .label = _t("Optionen (-o)"), .description = _t("z. B. ro oder noexec,nosuid"), .flagValue = "-o"},
+            CP{.name = "device", .label = _t("Gerät"), .required = true},
+            CP{.name = "target", .label = _t("Einhängepunkt"), .required = true},
+        },
+        .example = "sudo mount -o ro /dev/sdb1 /mnt"});
+    c.push_back(CS{
+        .name = _t("iostat — Datenträger-Auslastung"), .category = _t("Datenträger"),
+        .description = _t("Erweiterte I/O-Statistik je Gerät (-x) ohne untätige Geräte (-z); aus dem Paket sysstat."),
+        .templateText = "iostat -xz {interval} {count}",
+        .params = {
+            CP{.name = "interval", .label = _t("Intervall (s)"), .defaultValue = "1", .required = true},
+            CP{.name = "count", .label = _t("Anzahl"), .description = _t("Leer = endlos"), .defaultValue = "3"},
+        },
+        .example = "iostat -xz 1 3"});
+
+    // --- Netzwerk ----------------------------------------------------------
+    c.push_back(CS{
+        .name = _t("ip — Adressen kompakt"), .category = _t("Netzwerk"),
+        .description = _t("Ein Interface pro Zeile mit Status und IP-Adressen (-br)."),
+        .templateText = "ip -br {family} addr",
+        .params = {CP{.name = "family", .label = _t("IP-Version"), .kind = "choice", .choices = {"", "-4", "-6"}}},
+        .example = "ip -br -4 addr"});
+    c.push_back(CS{
+        .name = _t("ip — Routing-Tabelle"), .category = _t("Netzwerk"),
+        .description = _t("Zeigt die Routen; mit Ziel zeigt get, über welches Interface und Gateway es erreicht wird."),
+        .templateText = "ip {family} route {get}",
+        .params = {
+            CP{.name = "family", .label = _t("IP-Version"), .kind = "choice", .choices = {"", "-6"}},
+            CP{.name = "get", .label = _t("Ziel (get)"), .description = _t("Leer = ganze Tabelle"), .flagValue = "get"},
+        },
+        .example = "ip route get 8.8.8.8"});
+    c.push_back(CS{
+        .name = _t("ss — aufgebaute Verbindungen"), .category = _t("Netzwerk"),
+        .description = _t("Aktive TCP-Verbindungen mit Prozess (-p); mit sudo auch fremde Prozesse."),
+        .templateText = "sudo ss -tnp state established {filter}",
+        .params = {CP{.name = "filter", .label = _t("Filter (| grep …)")}},
+        .example = "sudo ss -tnp state established | grep :443"});
+    c.push_back(CS{
+        .name = _t("lsof — Prozess an Port"), .category = _t("Netzwerk"),
+        .description = _t("Zeigt, welcher Prozess einen Port belegt oder nutzt (-nP ohne Namensauflösung)."),
+        .templateText = "sudo lsof -nP -i :{port}",
+        .params = {CP{.name = "port", .label = _t("Port"), .required = true}},
+        .example = "sudo lsof -nP -i :8080"});
+    c.push_back(CS{
+        .name = _t("curl — Antwortzeiten messen"), .category = _t("Netzwerk"),
+        .description = _t("Misst DNS, Verbindungsaufbau, TLS, erste Antwort (TTFB) und Gesamtzeit eines Requests (-w)."),
+        // Das Format steht im Vorgabewert: %{…} im Template wuerde render()
+        // als Platzhalter lesen.
+        .templateText = "curl -o /dev/null -sS -w {format} {url}",
+        .params = {
+            CP{.name = "format", .label = _t("Ausgabeformat (-w)"),
+               .defaultValue = "'dns=%{time_namelookup}s connect=%{time_connect}s tls=%{time_appconnect}s ttfb=%{time_starttransfer}s total=%{time_total}s http=%{http_code}\\n'",
+               .required = true},
+            CP{.name = "url", .label = _t("URL"), .required = true},
+        },
+        .example = "curl -o /dev/null -sS -w 'total=%{time_total}s\\n' https://example.com"});
+    c.push_back(CS{
+        .name = _t("dig — bestimmten DNS-Server fragen"), .category = _t("Netzwerk"),
+        .description = _t("Fragt einen Nameserver direkt (@server), z. B. um eine DNS-Änderung zu prüfen."),
+        .templateText = "dig {short} @{server} {host} {type}",
+        .params = {
+            CP{.name = "short", .label = _t("Kurz (+short)"), .kind = "flag", .defaultValue = "on", .flagValue = "+short"},
+            CP{.name = "server", .label = _t("DNS-Server"), .defaultValue = "1.1.1.1", .required = true},
+            CP{.name = "host", .label = _t("Host"), .required = true},
+            CP{.name = "type", .label = _t("Typ"), .kind = "choice", .defaultValue = "A", .choices = {"A", "AAAA", "MX", "TXT", "NS", "CNAME", "SOA"}},
+        },
+        .example = "dig +short @1.1.1.1 example.com MX"});
+    c.push_back(CS{
+        .name = _t("mtr — Route mit Paketverlust"), .category = _t("Netzwerk"),
+        .description = _t("Kombiniert ping und traceroute: Verlust und Latenz je Hop als Bericht (--report, -c Durchläufe)."),
+        .templateText = "mtr --report --report-wide {numeric} -c {count} {host}",
+        .params = {
+            CP{.name = "numeric", .label = _t("Ohne DNS (-n)"), .kind = "flag", .flagValue = "-n"},
+            CP{.name = "count", .label = _t("Anzahl"), .defaultValue = "10"},
+            CP{.name = "host", .label = _t("Host/IP"), .required = true},
+        },
+        .example = "mtr --report --report-wide -c 10 example.com"});
+    c.push_back(CS{
+        .name = _t("tcpdump — Pakete mitschneiden"), .category = _t("Netzwerk"),
+        .description = _t("Schneidet Netzwerkverkehr mit; -c begrenzt die Paketzahl, -w schreibt eine pcap-Datei (z. B. für Wireshark)."),
+        .templateText = "sudo tcpdump -i {iface} -nn {count} {write} {filter}",
+        .params = {
+            CP{.name = "iface", .label = _t("Interface (-i)"), .defaultValue = "any", .required = true},
+            CP{.name = "count", .label = _t("Pakete (-c)"), .description = _t("Leer = bis Strg+C"), .defaultValue = "100", .flagValue = "-c"},
+            CP{.name = "write", .label = _t("Datei (-w)"), .description = _t("Leer = Ausgabe in der Konsole"), .flagValue = "-w"},
+            CP{.name = "filter", .label = _t("Filter"), .description = _t("z. B. port 443 oder host 10.0.0.5")},
+        },
+        .example = "sudo tcpdump -i any -nn -c 100 port 443"});
+
+    // --- Sicherheit (Firewall / fail2ban / SSH) -----------------------------
+    c.push_back(CS{
+        .name = _t("ufw — Regel für Port/Quelle"), .category = _t("Sicherheit"),
+        .description = _t("Erlaubt/sperrt einen Port gezielt für eine Quell-IP oder ein Netz; limit bremst Brute-Force (z. B. SSH)."),
+        .templateText = "sudo ufw {action} from {source} to any port {port} proto {proto}",
+        .params = {
+            CP{.name = "action", .label = _t("Aktion"), .kind = "choice", .defaultValue = "allow", .choices = {"allow", "deny", "limit"}},
+            CP{.name = "source", .label = _t("Quelle (IP/Netz)"), .description = _t("z. B. 203.0.113.0/24; any = alle"), .defaultValue = "any", .required = true},
+            CP{.name = "port", .label = _t("Port"), .defaultValue = "22", .required = true},
+            CP{.name = "proto", .label = _t("Protokoll (proto)"), .kind = "choice", .defaultValue = "tcp", .choices = {"tcp", "udp"}},
+        },
+        .example = "sudo ufw allow from 10.0.0.0/8 to any port 22 proto tcp"});
+    c.push_back(CS{
+        .name = _t("ufw — Regel löschen"), .category = _t("Sicherheit"),
+        .description = _t("Löscht eine Regel per Nummer ohne Rückfrage (--force); die Nummern zeigt sudo ufw status numbered."),
+        .templateText = "sudo ufw --force delete {num}",
+        .params = {CP{.name = "num", .label = _t("Regelnummer"), .required = true}},
+        .example = "sudo ufw --force delete 3", .danger = true});
+    c.push_back(CS{
+        .name = _t("firewall-cmd — Regeln anzeigen"), .category = _t("Sicherheit"),
+        .description = _t("Zeigt Dienste, Ports und Regeln einer firewalld-Zone (RHEL/Fedora)."),
+        .templateText = "sudo firewall-cmd {zone} --list-all",
+        .params = {CP{.name = "zone", .label = _t("Zone (--zone)"), .description = _t("Leer = Standardzone"), .flagValue = "--zone"}},
+        .example = "sudo firewall-cmd --list-all"});
+    c.push_back(CS{
+        .name = _t("firewall-cmd — Port/Dienst freigeben"), .category = _t("Sicherheit"),
+        .description = _t("Gibt einen Port (z. B. 8080/tcp) oder Dienst (z. B. https) dauerhaft frei und lädt die Firewall neu."),
+        .templateText = "sudo firewall-cmd --permanent {zone} --add-{kind}={value} && sudo firewall-cmd --reload",
+        .params = {
+            CP{.name = "kind", .label = _t("Art"), .kind = "choice", .defaultValue = "port", .choices = {"port", "service"}},
+            CP{.name = "value", .label = _t("Port/Dienst"), .defaultValue = "8080/tcp", .required = true},
+            CP{.name = "zone", .label = _t("Zone (--zone)"), .description = _t("Leer = Standardzone"), .flagValue = "--zone"},
+        },
+        .example = "sudo firewall-cmd --permanent --add-service=https && sudo firewall-cmd --reload"});
+    c.push_back(CS{
+        .name = _t("nft — Regelsatz anzeigen"), .category = _t("Sicherheit"),
+        .description = _t("Zeigt den kompletten nftables-Regelsatz, auch die von firewalld oder iptables-nft erzeugten Regeln."),
+        .templateText = "sudo nft list ruleset", .example = "sudo nft list ruleset"});
+    c.push_back(CS{
+        .name = _t("fail2ban-client — Status"), .category = _t("Sicherheit"),
+        .description = _t("Zeigt die aktiven Jails; mit Jail-Name auch gesperrte IPs und Fehlversuche."),
+        .templateText = "sudo fail2ban-client status {jail}",
+        .params = {CP{.name = "jail", .label = _t("Jail (optional)"), .description = _t("z. B. sshd")}},
+        .example = "sudo fail2ban-client status sshd"});
+    c.push_back(CS{
+        .name = _t("fail2ban-client — IP entsperren"), .category = _t("Sicherheit"),
+        .description = _t("Hebt die Sperre einer IP-Adresse in einem Jail auf."),
+        .templateText = "sudo fail2ban-client set {jail} unbanip {ip}",
+        .params = {
+            CP{.name = "jail", .label = _t("Jail"), .defaultValue = "sshd", .required = true},
+            CP{.name = "ip", .label = _t("IP-Adresse"), .required = true},
+        },
+        .example = "sudo fail2ban-client set sshd unbanip 203.0.113.7"});
+    c.push_back(CS{
+        .name = _t("journalctl — fehlgeschlagene SSH-Logins"), .category = _t("Sicherheit"),
+        .description = _t("Filtert das SSH-Log nach fehlgeschlagenen Anmeldungen; der Dienst heißt ssh (Debian/Ubuntu) bzw. sshd (RHEL)."),
+        .templateText = "sudo journalctl -u {unit} --no-pager {since} | grep -E {pattern}",
+        .params = {
+            CP{.name = "unit", .label = _t("Dienst"), .kind = "choice", .defaultValue = "ssh", .choices = {"ssh", "sshd"}},
+            CP{.name = "since", .label = _t("Seit (--since)"), .description = _t("z. B. today, yesterday, -2h oder '2024-05-01 12:00'"), .defaultValue = "today", .flagValue = "--since"},
+            CP{.name = "pattern", .label = _t("Suchmuster"), .defaultValue = "'Failed password|Invalid user|authentication failure'", .required = true},
+        },
+        .example = "sudo journalctl -u ssh --no-pager --since today | grep -E 'Failed password|Invalid user'"});
+    c.push_back(CS{
+        .name = _t("sshd — Konfiguration testen"), .category = _t("Sicherheit"),
+        .description = _t("-t prüft sshd_config auf Fehler (vor jedem Neustart von sshd!), -T zeigt die wirksame Konfiguration."),
+        .templateText = "sudo sshd {mode}",
+        .params = {CP{.name = "mode", .label = _t("Modus"), .kind = "choice", .defaultValue = "-t", .choices = {"-t", "-T"}}},
+        .example = "sudo sshd -t"});
+
+    // --- Paketverwaltung ---------------------------------------------------
+    c.push_back(CS{
+        .name = _t("apt — aktualisierbare Pakete"), .category = _t("Paket"),
+        .description = _t("Listet Pakete, für die Updates bereitstehen (vorher apt update ausführen)."),
+        .templateText = "apt list --upgradable", .example = "apt list --upgradable"});
+    c.push_back(CS{
+        .name = _t("apt — suchen/Infos"), .category = _t("Paket"),
+        .description = _t("search sucht Pakete, show zeigt Details, policy installierte und verfügbare Versionen."),
+        .templateText = "apt {action} {package}",
+        .params = {
+            CP{.name = "action", .label = _t("Aktion"), .kind = "choice", .defaultValue = "search", .choices = {"search", "show", "policy"}},
+            CP{.name = "package", .label = _t("Paket/Suchbegriff"), .required = true},
+        },
+        .example = "apt policy nginx"});
+    c.push_back(CS{
+        .name = _t("apt — entfernen"), .category = _t("Paket"),
+        .description = _t("Entfernt ein Paket; purge löscht zusätzlich seine Konfigurationsdateien."),
+        .templateText = "sudo apt {mode} -y {package}",
+        .params = {
+            CP{.name = "mode", .label = _t("Modus"), .kind = "choice", .defaultValue = "remove", .choices = {"remove", "purge"}},
+            CP{.name = "package", .label = _t("Paket"), .required = true},
+        },
+        .example = "sudo apt remove -y apache2", .danger = true});
+    c.push_back(CS{
+        .name = _t("apt — aufräumen"), .category = _t("Paket"),
+        .description = _t("Entfernt nicht mehr benötigte Abhängigkeiten und alte Kernel (autoremove); --purge auch deren Konfiguration."),
+        .templateText = "sudo apt autoremove {purge} -y",
+        .params = {CP{.name = "purge", .label = _t("Mit Konfiguration (--purge)"), .kind = "flag", .flagValue = "--purge"}},
+        .example = "sudo apt autoremove -y", .danger = true});
+    c.push_back(CS{
+        .name = _t("dpkg — installierte Pakete"), .category = _t("Paket"),
+        .description = _t("Listet installierte Debian-Pakete mit Version, gefiltert nach Suchbegriff."),
+        .templateText = "dpkg -l | grep -i {pattern}",
+        .params = {CP{.name = "pattern", .label = _t("Suchbegriff"), .required = true}},
+        .example = "dpkg -l | grep -i php"});
+    c.push_back(CS{
+        .name = _t("dnf — Updates prüfen/installieren"), .category = _t("Paket"),
+        .description = _t("check-update listet verfügbare Updates (Exit-Code 100 = Updates vorhanden), upgrade installiert sie; ohne Paket alle."),
+        .templateText = "sudo dnf {action} {package}",
+        .params = {
+            CP{.name = "action", .label = _t("Aktion"), .kind = "choice", .defaultValue = "check-update", .choices = {"check-update", "upgrade -y"}},
+            CP{.name = "package", .label = _t("Paket (optional)")},
+        },
+        .example = "sudo dnf upgrade -y"});
+    c.push_back(CS{
+        .name = _t("dnf — suchen/Infos"), .category = _t("Paket"),
+        .description = _t("search sucht Pakete, info zeigt Details, provides findet das Paket zu einer Datei."),
+        .templateText = "dnf {action} {package}",
+        .params = {
+            CP{.name = "action", .label = _t("Aktion"), .kind = "choice", .defaultValue = "search", .choices = {"search", "info", "provides"}},
+            CP{.name = "package", .label = _t("Paket/Suchbegriff"), .required = true},
+        },
+        .example = "dnf provides /usr/bin/dig"});
+    c.push_back(CS{
+        .name = _t("dnf — entfernen"), .category = _t("Paket"),
+        .description = _t("Entfernt ein Paket samt nicht mehr benötigter Abhängigkeiten (RHEL/Fedora)."),
+        .templateText = "sudo dnf remove -y {package}",
+        .params = {CP{.name = "package", .label = _t("Paket"), .required = true}},
+        .example = "sudo dnf remove -y httpd", .danger = true});
+    c.push_back(CS{
+        .name = _t("rpm — installierte Pakete"), .category = _t("Paket"),
+        .description = _t("Listet installierte RPM-Pakete, gefiltert nach Suchbegriff (RHEL/Fedora/SUSE)."),
+        .templateText = "rpm -qa | grep -i {pattern}",
+        .params = {CP{.name = "pattern", .label = _t("Suchbegriff"), .required = true}},
+        .example = "rpm -qa | grep -i kernel"});
+
+    // --- Webserver / TLS ---------------------------------------------------
+    c.push_back(CS{
+        .name = _t("nginx — testen und neu laden"), .category = _t("Webserver"),
+        .description = _t("Prüft die Konfiguration und lädt nginx nur bei Erfolg neu, ohne laufende Verbindungen zu trennen."),
+        .templateText = "sudo nginx -t && sudo systemctl reload nginx",
+        .example = "sudo nginx -t && sudo systemctl reload nginx"});
+    c.push_back(CS{
+        .name = _t("apache2ctl — Konfiguration prüfen (Debian/Ubuntu)"), .category = _t("Webserver"),
+        .description = _t("configtest prüft die Syntax, -S zeigt die VirtualHosts, -M die geladenen Module."),
+        .templateText = "sudo apache2ctl {action}",
+        .params = {CP{.name = "action", .label = _t("Aktion"), .kind = "choice", .defaultValue = "configtest", .choices = {"configtest", "-S", "-M"}}},
+        .example = "sudo apache2ctl -S"});
+    c.push_back(CS{
+        .name = _t("httpd — Konfiguration prüfen (RHEL)"), .category = _t("Webserver"),
+        .description = _t("-t prüft die Syntax, -S zeigt die VirtualHosts, -M die geladenen Module."),
+        .templateText = "sudo httpd {action}",
+        .params = {CP{.name = "action", .label = _t("Aktion"), .kind = "choice", .defaultValue = "-t", .choices = {"-t", "-S", "-M"}}},
+        .example = "sudo httpd -t"});
+    c.push_back(CS{
+        .name = _t("certbot — Zertifikate/Erneuerung"), .category = _t("Webserver"),
+        .description = _t("certificates listet die Let's-Encrypt-Zertifikate mit Ablaufdatum, renew --dry-run testet die Erneuerung."),
+        .templateText = "sudo certbot {action}",
+        .params = {CP{.name = "action", .label = _t("Aktion"), .kind = "choice", .defaultValue = "certificates", .choices = {"certificates", "renew --dry-run"}}},
+        .example = "sudo certbot renew --dry-run"});
+    c.push_back(CS{
+        .name = _t("openssl x509 — Zertifikatsdatei anzeigen"), .category = _t("Webserver"),
+        .description = _t("Liest ein PEM-Zertifikat: Laufzeit, Inhaber/Aussteller, Domains (SAN) oder alles (-text)."),
+        .templateText = "openssl x509 -in {path} -noout {mode}",
+        .params = {
+            CP{.name = "path", .label = _t("Datei"), .description = _t("z. B. /etc/letsencrypt/live/DOMAIN/cert.pem"), .required = true},
+            CP{.name = "mode", .label = _t("Anzeige"), .kind = "choice", .defaultValue = "-dates", .choices = {"-dates", "-subject -issuer", "-ext subjectAltName", "-text"}},
+        },
+        .example = "openssl x509 -in cert.pem -noout -dates"});
+    c.push_back(CS{
+        .name = _t("openssl — Server-Zertifikat mit SNI"), .category = _t("Webserver"),
+        .description = _t("Holt das Zertifikat eines Servers mit SNI (-servername, nötig bei mehreren Domains auf einer IP) und zeigt Laufzeit, Inhaber oder Domains."),
+        .templateText = "echo | openssl s_client -connect {host}:{port} -servername {host} 2>/dev/null | openssl x509 -noout {mode}",
+        .params = {
+            CP{.name = "host", .label = _t("Host"), .required = true},
+            CP{.name = "port", .label = _t("Port"), .defaultValue = "443"},
+            CP{.name = "mode", .label = _t("Anzeige"), .kind = "choice", .defaultValue = "-dates", .choices = {"-dates", "-subject -issuer", "-ext subjectAltName", "-text"}},
+        },
+        .example = "echo | openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | openssl x509 -noout -dates"});
+    c.push_back(CS{
+        .name = _t("curl — Server per IP testen"), .category = _t("Webserver"),
+        .description = _t("Ruft eine Domain per HTTPS auf einer bestimmten IP ab, ohne DNS zu ändern (--resolve), z. B. vor einem Umzug; -k ignoriert Zertifikatsfehler."),
+        .templateText = "curl -sS {head} {insecure} --resolve {host}:{port}:{ip} https://{host}:{port}/",
+        .params = {
+            CP{.name = "head", .label = _t("Nur Header (-I)"), .kind = "flag", .defaultValue = "on", .flagValue = "-I"},
+            CP{.name = "insecure", .label = _t("Zertifikat ignorieren (-k)"), .kind = "flag", .flagValue = "-k"},
+            CP{.name = "host", .label = _t("Host"), .required = true},
+            CP{.name = "ip", .label = _t("IP-Adresse"), .required = true},
+            CP{.name = "port", .label = _t("Port"), .defaultValue = "443", .required = true},
+        },
+        .example = "curl -sS -I --resolve example.com:443:203.0.113.10 https://example.com:443/"});
+
+    // --- Datenbank ---------------------------------------------------------
+    c.push_back(CS{
+        .name = _t("mysqldump — Datenbank sichern"), .category = _t("Datenbank"),
+        .description = _t("Schreibt einen SQL-Dump in eine Datei und überschreibt sie; --single-transaction sichert InnoDB ohne Tabellensperren."),
+        .templateText = "mysqldump {single} {user} {password} {db} > {file}",
+        .params = {
+            CP{.name = "single", .label = _t("Ohne Sperren (--single-transaction)"), .kind = "flag", .defaultValue = "on", .flagValue = "--single-transaction"},
+            CP{.name = "user", .label = _t("Benutzer (-u)"), .description = _t("Leer = aktueller Benutzer"), .flagValue = "-u"},
+            CP{.name = "password", .label = _t("Passwort abfragen (-p, Terminal-Modus)"), .kind = "flag", .flagValue = "-p"},
+            CP{.name = "db", .label = _t("Datenbank"), .required = true},
+            CP{.name = "file", .label = _t("Zieldatei"), .defaultValue = "backup.sql", .required = true},
+        },
+        .example = "mysqldump --single-transaction -u root -p shop > shop.sql", .danger = true});
+    c.push_back(CS{
+        .name = _t("mysql — SQL ausführen"), .category = _t("Datenbank"),
+        .description = _t("Führt eine SQL-Anweisung aus (-e) und beendet sich, etwa SHOW DATABASES oder SHOW PROCESSLIST."),
+        .templateText = "mysql {user} {password} -e {query} {db}",
+        .params = {
+            CP{.name = "user", .label = _t("Benutzer (-u)"), .description = _t("Leer = aktueller Benutzer"), .flagValue = "-u"},
+            CP{.name = "password", .label = _t("Passwort abfragen (-p, Terminal-Modus)"), .kind = "flag", .flagValue = "-p"},
+            CP{.name = "query", .label = _t("SQL (-e)"), .defaultValue = "\"SHOW DATABASES;\"", .required = true},
+            CP{.name = "db", .label = _t("Datenbank (optional)")},
+        },
+        .example = "mysql -u root -p -e \"SHOW PROCESSLIST;\""});
+    c.push_back(CS{
+        .name = _t("mysql — Dump einspielen"), .category = _t("Datenbank"),
+        .description = _t("Spielt eine SQL-Datei in eine Datenbank ein; vorhandene Tabellen können dabei überschrieben werden."),
+        .templateText = "mysql {user} {password} {db} < {file}",
+        .params = {
+            CP{.name = "user", .label = _t("Benutzer (-u)"), .description = _t("Leer = aktueller Benutzer"), .flagValue = "-u"},
+            CP{.name = "password", .label = _t("Passwort abfragen (-p, Terminal-Modus)"), .kind = "flag", .flagValue = "-p"},
+            CP{.name = "db", .label = _t("Datenbank"), .required = true},
+            CP{.name = "file", .label = _t("SQL-Datei"), .required = true},
+        },
+        .example = "mysql -u root -p shop < shop.sql", .danger = true});
+    c.push_back(CS{
+        .name = _t("pg_dump — Datenbank sichern"), .category = _t("Datenbank"),
+        .description = _t("Sichert eine PostgreSQL-Datenbank als Benutzer postgres in eine Datei und überschreibt sie; -Fc erzeugt das komprimierte Format für pg_restore."),
+        .templateText = "sudo -u postgres pg_dump {format} {db} > {file}",
+        .params = {
+            CP{.name = "format", .label = _t("Format"), .kind = "choice", .choices = {"", "-Fc"}},
+            CP{.name = "db", .label = _t("Datenbank"), .required = true},
+            CP{.name = "file", .label = _t("Zieldatei"), .defaultValue = "backup.sql", .required = true},
+        },
+        .example = "sudo -u postgres pg_dump -Fc shop > shop.dump", .danger = true});
+    c.push_back(CS{
+        .name = _t("psql — SQL ausführen"), .category = _t("Datenbank"),
+        .description = _t("Führt eine SQL-Anweisung als Benutzer postgres aus (-c), optional in einer bestimmten Datenbank (-d)."),
+        .templateText = "sudo -u postgres psql {db} -c {query}",
+        .params = {
+            CP{.name = "db", .label = _t("Datenbank (-d)"), .description = _t("Leer = postgres"), .flagValue = "-d"},
+            CP{.name = "query", .label = _t("SQL (-c)"), .defaultValue = "\"SELECT datname FROM pg_database;\"", .required = true},
+        },
+        .example = "sudo -u postgres psql -d shop -c \"SELECT count(*) FROM orders;\""});
+    c.push_back(CS{
+        .name = _t("redis-cli — Befehl senden"), .category = _t("Datenbank"),
+        .description = _t("Sendet einen Befehl an Redis, z. B. ping, info memory oder dbsize; -h/-p für einen anderen Server."),
+        .templateText = "redis-cli {host} {port} {cmd}",
+        .params = {
+            CP{.name = "host", .label = _t("Host (-h)"), .description = _t("Leer = localhost"), .flagValue = "-h"},
+            CP{.name = "port", .label = _t("Port (-p)"), .description = _t("Leer = 6379"), .flagValue = "-p"},
+            CP{.name = "cmd", .label = _t("Befehl"), .defaultValue = "ping", .required = true},
+        },
+        .example = "redis-cli info memory"});
+
+    // --- Suche / Archive / Dateien (weitere) --------------------------------
+    c.push_back(CS{
+        .name = _t("find — große Dateien"), .category = _t("Suche"),
+        .description = _t("Findet Dateien ab einer Mindestgröße (z. B. 100M, 1G), größte zuerst; -xdev bleibt im Dateisystem."),
+        .templateText = "find {path} -xdev -type f -size +{size} -print0 2>/dev/null | du -h --files0-from=- | sort -rh | head -n {count}",
+        .params = {
+            CP{.name = "path", .label = _t("Startpfad"), .defaultValue = "/", .required = true},
+            CP{.name = "size", .label = _t("Mindestgröße"), .defaultValue = "100M", .required = true},
+            CP{.name = "count", .label = _t("Anzahl"), .defaultValue = "20"},
+        },
+        .example = "find /var -xdev -type f -size +100M -print0 2>/dev/null | du -h --files0-from=- | sort -rh | head -n 20"});
+    c.push_back(CS{
+        .name = _t("find — alte Dateien finden/löschen"), .category = _t("Suche"),
+        .description = _t("Findet Dateien nach Muster, die älter als N Tage sind (-mtime +N); mit -delete werden sie gelöscht, daher erst ohne prüfen."),
+        .templateText = "find {path} -type f -name {pattern} -mtime +{days} {delete}",
+        .params = {
+            CP{.name = "path", .label = _t("Startpfad"), .required = true},
+            CP{.name = "pattern", .label = _t("Namensmuster"), .defaultValue = "\"*.log\"", .required = true},
+            CP{.name = "days", .label = _t("Älter als (Tage)"), .defaultValue = "30", .required = true},
+            CP{.name = "delete", .label = _t("Löschen (-delete)"), .kind = "flag", .flagValue = "-print -delete"},
+        },
+        .example = "find /var/backups -type f -name \"*.gz\" -mtime +30 -print -delete", .danger = true});
+    c.push_back(CS{
+        .name = _t("grep — rekursiv mit Dateifilter"), .category = _t("Suche"),
+        .description = _t("Durchsucht nur passende Dateien (--include, z. B. '*.conf'); -l listet nur die Dateinamen."),
+        .templateText = "grep -rn {ignorecase} {names} {include} {pattern} {path}",
+        .params = {
+            CP{.name = "ignorecase", .label = _t("Groß/klein egal (-i)"), .kind = "flag", .flagValue = "-i"},
+            CP{.name = "names", .label = _t("Nur Dateinamen (-l)"), .kind = "flag", .flagValue = "-l"},
+            CP{.name = "include", .label = _t("Dateimuster (--include)"), .defaultValue = "'*.conf'", .flagValue = "--include"},
+            CP{.name = "pattern", .label = _t("Suchmuster"), .required = true},
+            CP{.name = "path", .label = _t("Pfad"), .defaultValue = "/etc", .required = true},
+        },
+        .example = "grep -rn --include '*.conf' listen /etc/nginx"});
+    c.push_back(CS{
+        .name = _t("tar — Inhalt anzeigen"), .category = _t("Archive"),
+        .description = _t("Listet den Inhalt eines Archivs ausführlich (-tvf); die Kompression wird automatisch erkannt."),
+        .templateText = "tar -tvf {archive}",
+        .params = {CP{.name = "archive", .label = _t("Archiv"), .required = true}},
+        .example = "tar -tvf backup.tar.gz"});
+    c.push_back(CS{
+        .name = _t("tar — entpacken (automatisch)"), .category = _t("Archive"),
+        .description = _t("Entpackt .tar, .tar.gz, .tar.xz oder .tar.bz2 mit automatisch erkannter Kompression; -C wählt den Zielordner."),
+        .templateText = "tar -xf {archive} {dest}",
+        .params = {
+            CP{.name = "archive", .label = _t("Archiv"), .required = true},
+            CP{.name = "dest", .label = _t("Zielordner (-C)"), .description = _t("Muss existieren; leer = aktuelles Verzeichnis"), .flagValue = "-C"},
+        },
+        .example = "tar -xf backup.tar.xz -C /tmp/restore"});
+    c.push_back(CS{
+        .name = _t("rsync — mit Probelauf und SSH-Port"), .category = _t("Dateien"),
+        .description = _t("Synchronisiert über SSH mit eigenem Port; -n zeigt nur, was passieren würde, --delete löscht am Ziel, was in der Quelle fehlt."),
+        .templateText = "rsync -avzh {dryrun} {progress} {delete} -e 'ssh -p {port}' {src} {dst}",
+        .params = {
+            CP{.name = "dryrun", .label = _t("Probelauf (-n)"), .kind = "flag", .defaultValue = "on", .flagValue = "-n"},
+            CP{.name = "progress", .label = _t("Fortschritt (--progress)"), .kind = "flag", .flagValue = "--progress"},
+            CP{.name = "delete", .label = _t("Spiegeln (--delete)"), .kind = "flag", .flagValue = "--delete"},
+            CP{.name = "port", .label = _t("SSH-Port"), .defaultValue = "22", .required = true},
+            CP{.name = "src", .label = _t("Quelle"), .required = true},
+            CP{.name = "dst", .label = _t("Ziel (user@host:/pfad)"), .required = true},
+        },
+        .example = "rsync -avzh -n -e 'ssh -p 2222' ./site/ user@host:/var/www/site/", .danger = true});
+}
+
 // --- Windows: weitere Befehle (cmd) -----------------------------------------
 void addWindowsCmdMore(std::vector<CS> &c)
 {
@@ -1596,7 +2252,7 @@ void addWindowsPowerShell(std::vector<CS> &c)
 std::vector<CS> buildCatalog()
 {
     std::vector<CS> c;
-    c.reserve(186);
+    c.reserve(260);
     addPosixBase(c);
     addPosixFilesText(c);
     addPosixSystemNet(c);
@@ -1605,6 +2261,7 @@ std::vector<CS> buildCatalog()
     addWindowsAdmin(c);
     addPosixAdmin(c);
     addPosixMisc(c);
+    addPosixServer(c);
     addWindowsCmdMore(c);
     addWindowsPowerShell(c);
     return c;

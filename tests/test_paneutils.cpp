@@ -79,6 +79,20 @@ TEST(paneutils, parse_porcelain_in_subdirectory)
     CHECK_EQ(st.value(QStringLiteral("Ärger.txt")), QStringLiteral("M"));
     CHECK(!st.contains(QStringLiteral("README.md")));
     CHECK(!st.contains(QStringLiteral("x.cpp")));
+    CHECK(!st.contains(kGitAllEntries));
+
+    // Im neuen Ordner (oder darunter) meldet git nur den Ordner selbst.
+    CHECK_EQ(parsePorcelain(QStringLiteral("?? src/gui/neu/\n"), QStringLiteral("src/gui/neu/"))
+                 .value(kGitAllEntries),
+             QStringLiteral("?"));
+    CHECK_EQ(parsePorcelain(QStringLiteral("?? src/gui/neu/\n"),
+                            QStringLiteral("src/gui/neu/tief/"))
+                 .value(kGitAllEntries),
+             QStringLiteral("?"));
+    // Namensvetter ("neuer/") und geaenderte Ordner zaehlen nicht.
+    CHECK(parsePorcelain(QStringLiteral("?? src/neuer/\n"), QStringLiteral("src/neu/")).isEmpty());
+    CHECK(!parsePorcelain(QStringLiteral(" M src/gui/\n"), QStringLiteral("src/gui/"))
+               .contains(kGitAllEntries));
 }
 
 TEST(paneutils, git_status_in_subdirectory)
@@ -109,6 +123,20 @@ TEST(paneutils, git_status_in_subdirectory)
     CHECK_EQ(st.value(QStringLiteral("inner")), QStringLiteral("?"));
     CHECK(!st.contains(QStringLiteral("top.txt")));
     CHECK(!st.contains(QStringLiteral("sub")));
+
+    // Im neuen Ordner selbst: jede neue Datei einzeln, Ignoriertes nicht
+    // (frueher blieb dort alles ungefaerbt).
+    writeBytes(tmp.filePath(QStringLiteral(".gitignore")), QByteArrayLiteral("*.log\n"));
+    QDir(tmp.path()).mkpath(QStringLiteral("sub/inner/tief"));
+    writeBytes(tmp.filePath(QStringLiteral("sub/inner/tief/z.txt")), QByteArrayLiteral("z"));
+    writeBytes(tmp.filePath(QStringLiteral("sub/inner/debug.log")), QByteArrayLiteral("x"));
+    const auto inner = gitStatus(tmp.filePath(QStringLiteral("sub/inner")));
+    CHECK_EQ(inner.value(QStringLiteral("neu.txt")), QStringLiteral("?"));
+    CHECK_EQ(inner.value(QStringLiteral("tief")), QStringLiteral("?"));
+    CHECK(!inner.contains(QStringLiteral("debug.log")));
+    CHECK(!inner.contains(kGitAllEntries));
+    CHECK_EQ(gitStatus(tmp.filePath(QStringLiteral("sub/inner/tief"))).value(QStringLiteral("z.txt")),
+             QStringLiteral("?"));
 }
 
 TEST(paneutils, child_towards_and_aggregate)
@@ -132,8 +160,14 @@ TEST(paneutils, child_towards_and_aggregate)
     CHECK(aggregateBadge({}).isEmpty());
     CHECK_EQ(aggregateBadge({{QStringLiteral("a"), QStringLiteral("?")},
                              {QStringLiteral("b"), QStringLiteral("?")}}), QStringLiteral("?"));
+    // Hinzugefuegt + unverfolgt ist beides "neu" (gruen), nicht "gemischt".
     CHECK_EQ(aggregateBadge({{QStringLiteral("a"), QStringLiteral("?")},
-                             {QStringLiteral("b"), QStringLiteral("A")}}), QStringLiteral("M"));
+                             {QStringLiteral("b"), QStringLiteral("A")}}), QStringLiteral("A"));
+    CHECK_EQ(aggregateBadge({{QStringLiteral("a"), QStringLiteral("?")},
+                             {QStringLiteral("b"), QStringLiteral("M")}}), QStringLiteral("M"));
+    CHECK_EQ(mergeGitBadges(QStringLiteral("D"), QStringLiteral("D")), QStringLiteral("D"));
+    CHECK_EQ(mergeGitBadges(QStringLiteral("A"), QStringLiteral("D")), QStringLiteral("M"));
+    CHECK_EQ(mergeGitBadges(QString(), QStringLiteral("?")), QStringLiteral("?"));
 }
 
 TEST(paneutils, repo_changes_marked_up_to_the_top)

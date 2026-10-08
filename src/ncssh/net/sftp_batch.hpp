@@ -8,6 +8,8 @@
 #include "ncssh/core/filesystem.hpp"
 #include "ncssh/gui/bridge.hpp"
 
+#include <QDateTime>
+#include <QHash>
 #include <QString>
 #include <QStringList>
 #include <functional>
@@ -38,5 +40,15 @@ BatchResult runSftpBatch(const QString &script, FileSystemProvider *local,
 // Zerlegt eine Befehlszeile in Tokens; doppelte Anfuehrungszeichen fassen
 // Pfade mit Leerzeichen zusammen. Oeffentlich fuer Tests.
 QStringList tokenizeBatchLine(const QString &line);
+
+// Eingebaute Variablen eines Laufs (ein Zeitpunkt fuer alle Zeilen):
+// $heute (JJJJ-MM-TT), $jetzt (JJJJ-MM-TT_HH-MM-SS), $zeit (HH-MM-SS), $jahr,
+// $monat, $tag — englisch auch $today, $now, $time, $year, $month, $day.
+// Schluessel klein geschrieben.
+QHash<QString, QString> builtinBatchVariables(const QDateTime &now);
+
+// Ersetzt $name bzw. ${name} (Gross-/Kleinschreibung egal); $$ ergibt ein $.
+// Eine unbekannte Variable wirft, statt still "$name" in einen Pfad zu schreiben.
+QString expandBatchVariables(const QString &line, const QHash<QString, QString> &vars);
 
 } // namespace ncssh::net

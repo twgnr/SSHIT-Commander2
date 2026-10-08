@@ -36,8 +36,10 @@ SftpBatchDialog::SftpBatchDialog(AsyncBridge *bridge, net::SSHSessionPtr session
 
     auto *help = new QLabel(
         _t("Ein Befehl pro Zeile. Verfügbar: cd, lcd, pwd, lpwd, mkdir, rm, rmdir, "
-           "rename, chmod, ln, put, get, echo. Relative Pfade: entfernt ab „cd“, "
-           "lokal ab „lcd“. Pfade mit Leerzeichen in \"Anführungszeichen\". # = Kommentar."),
+           "rename, chmod, ln, put, get, echo, set. Relative Pfade: entfernt ab „cd“, "
+           "lokal ab „lcd“. Pfade mit Leerzeichen in \"Anführungszeichen\". # = Kommentar. "
+           "Variablen: $heute, $jetzt, $zeit, $jahr, $monat, $tag; eigene mit "
+           "„set NAME WERT“, verwendet als $NAME."),
         this);
     help->setWordWrap(true);
     help->setStyleSheet(QStringLiteral("color: palette(mid);"));
@@ -47,9 +49,10 @@ SftpBatchDialog::SftpBatchDialog(AsyncBridge *bridge, net::SSHSessionPtr session
     m_editor->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     m_editor->setPlaceholderText(QStringLiteral(
         "# Beispiel:\n"
+        "set ziel daten/$jahr\n"
         "cd /var/www\n"
-        "put report.csv daten/report.csv\n"
-        "chmod 640 daten/report.csv\n"
+        "put report.csv $ziel/report-$heute.csv\n"
+        "chmod 640 $ziel/report-$heute.csv\n"
         "get logs/app.log app-$heute.log"));
     // Zuletzt verwendetes Skript wiederherstellen.
     m_editor->setPlainText(core::getSettingString(QStringLiteral("sftp_batch_script")));

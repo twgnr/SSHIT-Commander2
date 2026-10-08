@@ -240,6 +240,12 @@ private:
     ConsolePanel *m_connectedConsole = nullptr;
     bool m_rightActive = false;  // zuletzt fokussierte Seite (Start: links)
     bool m_connecting = false;   // laeuft gerade ein Verbindungsaufbau?
+    // Host-Keys, die der Nutzer "nur diesmal" bestaetigt hat ("host:port" ->
+    // Fingerprint); gelten fuer diesen Tab, auch beim automatischen Neuverbinden.
+    QHash<QString, QString> m_trustedOnce;
+    // Eben dauerhaft bestaetigte Keys, die nach dem Verbinden zusaetzlich in
+    // ~/.ssh/known_hosts eingetragen werden sollen ("host:port").
+    QSet<QString> m_addToOpenSsh;
     TunnelManager m_tunnels;     // offene Port-Weiterleitungen dieser Sitzung
     QTimer *m_healthTimer = nullptr;   // Keepalive-Wecker
     bool m_healthPending = false;      // laeuft gerade eine Pruefung?

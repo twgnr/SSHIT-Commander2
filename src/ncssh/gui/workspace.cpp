@@ -15,6 +15,7 @@
 #include "ncssh/net/transfer.hpp"
 
 #include <algorithm>
+#include <QDateTime>
 #include <QDir>
 #include <QEvent>
 #include <QFileInfo>
@@ -1370,6 +1371,7 @@ void Workspace::connectTo(const core::ServerProfile &profile, FilePanel *target,
     net::ConnectControl control;
     control.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kConnectLimitSec);
     control.cancelled = attempt->cancelled;
+    control.trustedOnce = m_trustedOnce;
     control.progress = [self, attempt, report](const QString &text) {
         // Worker-Thread -> GUI-Thread; der Tab kann inzwischen geschlossen sein.
         QMetaObject::invokeMethod(qApp, [self, attempt, report, text] {
@@ -1414,6 +1416,16 @@ void Workspace::connectTo(const core::ServerProfile &profile, FilePanel *target,
             finish();
             m_connecting = false;
             report(_t("Verbunden."), false);
+            // "Zuletzt" in der Server-Verwaltung (nur fuer gespeicherte Profile).
+            try {
+                core::ProfileStore store;
+                store.load();
+                if (!store.unreadable())
+                    store.touchLastConnected(
+                        profile.name, QDateTime::currentDateTime().toString(Qt::ISODate));
+            } catch (const std::exception &) {
+                // Zeitstempel ist Komfort — die Verbindung steht trotzdem.
+            }
             // Erst NACH erfolgreichem Aufbau die alte Verbindung abbauen:
             // schlaegt der Aufbau fehl, bleibt die bestehende Sitzung nutzbar.
             // disconnectSession() haengt zudem die alte Pane vom Provider ab,
@@ -1444,19 +1456,12 @@ void Workspace::connectTo(const core::ServerProfile &profile, FilePanel *target,
             panel->setConnected(true);
             emit statusMessage(QStringLiteral("Verbunden: %1 (%2)")
                                    .arg(session->label(), session->osType));
-            if (session->hostKeyStatus == QLatin1String("unknown")) {
-                // TOFU: Fingerprint zeigen und auf Wunsch dauerhaft merken.
-                if (HostKeyDialog::ask(profile.host, profile.port, session->hostKeyAlgo,
-                                       session->hostFingerprint, this)) {
-                    m_sessions->hostkeys.add(profile.host, profile.port,
-                                             session->hostFingerprint, session->hostKeyAlgo);
-                    m_sessions->hostkeys.save();
-                    // Interop: den bestaetigten Key auch in OpenSSHs
-                    // ~/.ssh/known_hosts eintragen, damit das System-ssh ihn kennt.
-                    if (core::getSettingBool(QStringLiteral("openssh_known_hosts"), true))
-                        net::addToOpenSshKnownHosts(session, profile.host, profile.port);
-                }
-            }
+            // Interop: einen eben bestaetigten Key auch in OpenSSHs
+            // ~/.ssh/known_hosts eintragen, damit das System-ssh ihn kennt.
+            if (m_addToOpenSsh.remove(net::hostKeyId(profile.host, profile.port))
+                && session->hostKeyStatus == QLatin1String("known")
+                && core::getSettingBool(QStringLiteral("openssh_known_hosts"), true))
+                net::addToOpenSshKnownHosts(session, profile.host, profile.port);
             startHealthCheck();
             emit connectionChanged();
 
@@ -1491,9 +1496,36 @@ void Workspace::connectTo(const core::ServerProfile &profile, FilePanel *target,
             }
             finish();
             m_connecting = false;
-            // Geaenderter Host-Key: der Versuch wurde vor der Authentifizierung
-            // abgebrochen. Erst nach ausdruecklicher Zustimmung erneut versuchen.
+            // Unbekannter oder geaenderter Host-Key: der Versuch wurde vor der
+            // Authentifizierung abgebrochen. Erst nach ausdruecklicher
+            // Zustimmung erneut versuchen.
             const net::HostKeyMismatch mismatch = m_sessions->lastMismatch();
+            if (mismatch.valid && mismatch.unknown) {
+                m_sessions->clearMismatch();
+                const QString id = net::hostKeyId(mismatch.host, mismatch.port);
+                switch (HostKeyDialog::askUnknown(mismatch.host, mismatch.port,
+                                                  mismatch.algorithm, mismatch.received, this)) {
+                case HostKeyDialog::Decision::Trust:
+                    m_sessions->hostkeys.add(mismatch.host, mismatch.port, mismatch.received,
+                                             mismatch.algorithm);
+                    m_sessions->hostkeys.save();
+                    m_addToOpenSsh.insert(id);
+                    connectTo(profile, panel, quiet);   // jetzt ist der Key bekannt
+                    return;
+                case HostKeyDialog::Decision::Once:
+                    // Gilt fuer diesen Tab (auch fuer automatisches Neuverbinden),
+                    // aber nur fuer genau diesen Fingerprint.
+                    m_trustedOnce.insert(id, mismatch.received);
+                    connectTo(profile, panel, quiet);
+                    return;
+                case HostKeyDialog::Decision::Cancel:
+                    break;
+                }
+                report(_t("Abgebrochen — Host-Key nicht bestätigt."), true);
+                if (quiet)
+                    panel->navigateTo(safeLocalPath(QString()));
+                return;
+            }
             if (mismatch.valid) {
                 m_sessions->clearMismatch();
                 if (HostKeyDialog::askChanged(mismatch.host, mismatch.port,

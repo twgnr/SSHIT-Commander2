@@ -889,9 +889,8 @@ void FilePanel::loadGitStatus()
             res.status = core::gitStatus(path);
             const QHash<QString, QString> marks = core::repoAncestorMarks(path, alarmRoots);
             for (auto it = marks.constBegin(); it != marks.constEnd(); ++it) {
-                const QString prev = res.status.value(it.key());
-                res.status.insert(it.key(), (!prev.isEmpty() && prev != it.value())
-                                                ? QStringLiteral("M") : it.value());
+                res.status.insert(it.key(),
+                                  core::mergeGitBadges(res.status.value(it.key()), it.value()));
             }
             if (!unmapped.empty() && core::inGitRepo(path)) {
                 const core::GitRepoInfo info = core::gitRepoInfo(path);
@@ -939,7 +938,8 @@ void FilePanel::applyGitStatus()
         case 'U': return {QColor(0xf66151), _t("Konflikt")};
         case 'R': return {QColor(0x62a0ea), _t("umbenannt")};
         case 'C': return {QColor(0x62a0ea), _t("kopiert")};
-        case '?': return {QColor(0x9aa4b2), _t("unverfolgt")};
+        // Neue, noch nicht hinzugefuegte Dateien/Ordner — gruen wie "neu".
+        case '?': return {QColor(0x33d17a), _t("neu (unverfolgt)")};
         default:  return {QColor(0xe5a50a), _t("geändert")};
         }
     };
@@ -951,7 +951,12 @@ void FilePanel::applyGitStatus()
         if (!item)
             continue;
         const FileEntry &e = m_rows[size_t(row)];
-        const QString code = e.type == EntryType::Parent ? QString() : m_gitStatus.value(e.name);
+        // kGitAllEntries: das Verzeichnis selbst ist neu (falls die Einzelliste
+        // nicht zu bekommen war) — dann gilt das fuer jeden Eintrag.
+        const QString code =
+            e.type == EntryType::Parent
+                ? QString()
+                : m_gitStatus.value(e.name, m_gitStatus.value(core::kGitAllEntries));
         if (code.isEmpty()) {
             // Zustand wie in populate (Markierung kann beim Neuladen wegfallen).
             if (execHighlight && core::isExecutable(e))

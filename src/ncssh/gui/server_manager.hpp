@@ -70,6 +70,12 @@ private:
     QLineEdit *m_ciphers = nullptr;
     QLineEdit *m_kex = nullptr;
     QPlainTextEdit *m_environment = nullptr;   // NAME=Wert je Zeile
+    // Tunnel-Presets (Auto-Start) des geladenen Profils; angelegt werden sie im
+    // Tunnel-Dialog, hier lassen sie sich ansehen und entfernen.
+    QListWidget *m_tunnelList = nullptr;
+    QPushButton *m_tunnelRemove = nullptr;
+    std::vector<core::TunnelSpec> m_tunnels;
+    void refreshTunnelList();
     QPushButton *m_colorButton = nullptr;
     QString m_tabColor;
     QLabel *m_lastConnected = nullptr;

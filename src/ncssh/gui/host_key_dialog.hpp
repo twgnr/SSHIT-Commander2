@@ -1,5 +1,6 @@
 // Host-Key-Bestaetigung (Trust-on-First-Use): zeigt Host, Algorithmus und
-// Fingerprint und fragt, ob dem Server dauerhaft vertraut werden soll.
+// Fingerprint eines unbekannten Servers — VOR der Anmeldung — und fragt, ob
+// ihm dauerhaft, nur diesmal oder gar nicht vertraut werden soll.
 #pragma once
 
 #include <QDialog>
@@ -9,15 +10,16 @@ namespace ncssh::gui {
 class HostKeyDialog : public QDialog {
     Q_OBJECT
 public:
+    enum class Decision { Cancel, Once, Trust };
+
     HostKeyDialog(const QString &host, int port, const QString &algorithm,
                   const QString &fingerprint, QWidget *parent = nullptr);
 
-    // true = Fingerprint speichern (dauerhaft vertrauen).
-    bool trustPermanently() const { return m_trust; }
+    Decision decision() const { return m_decision; }
 
-    // One-Liner: zeigt den Dialog, true wenn gespeichert werden soll.
-    static bool ask(const QString &host, int port, const QString &algorithm,
-                    const QString &fingerprint, QWidget *parent = nullptr);
+    // One-Liner: zeigt den Dialog und liefert die Entscheidung.
+    static Decision askUnknown(const QString &host, int port, const QString &algorithm,
+                               const QString &fingerprint, QWidget *parent = nullptr);
 
     // Warnung bei GEAENDERTEM Host-Key: stellt erwarteten und erhaltenen
     // Fingerprint gegenueber. true = der Nutzer will trotzdem vertrauen (der
@@ -27,7 +29,7 @@ public:
                            QWidget *parent = nullptr);
 
 private:
-    bool m_trust = false;
+    Decision m_decision = Decision::Cancel;
 };
 
 } // namespace ncssh::gui

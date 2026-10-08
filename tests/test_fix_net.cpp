@@ -85,6 +85,85 @@ SOCKET connectLoopback(int port)
 
 } // namespace
 
+TEST(fix_net, unknown_host_key_stops_before_login)
+{
+    // accept-new: ein unbekannter Key bricht VOR der Anmeldung ab, bis der
+    // Nutzer genau diesen Fingerprint bestaetigt hat (frueher wurde erst
+    // angemeldet und danach gefragt).
+    FixNetConfigGuard guard;
+    core::HostKeyStore store;
+    core::ServerProfile p;
+    p.host = QStringLiteral("Server.example");
+    p.port = 2222;
+    p.knownHostsPolicy = QStringLiteral("accept-new");
+    const QString fp = QStringLiteral("SHA256:neu");
+    const QString algo = QStringLiteral("ssh-ed25519");
+    net::ConnectControl control;
+
+    bool unknownThrown = false;
+    try {
+        net::decideHostKey(p, &store, fp, algo, control);
+    } catch (const net::HostKeyUnknownError &err) {
+        unknownThrown = true;
+        CHECK_EQ(err.fingerprint, fp);
+        CHECK_EQ(err.algorithm, algo);
+        CHECK_EQ(err.host, p.host);
+        CHECK_EQ(err.port, 2222);
+    }
+    CHECK(unknownThrown);
+
+    // "Nur diesmal" gilt nur fuer genau diesen Fingerprint (Host ohne Gross/klein).
+    control.trustedOnce.insert(net::hostKeyId(QStringLiteral("server.example"), 2222),
+                               QStringLiteral("SHA256:anderer"));
+    CHECK_THROWS(net::decideHostKey(p, &store, fp, algo, control));
+    control.trustedOnce.insert(net::hostKeyId(p.host, p.port), fp);
+    CHECK_EQ(net::decideHostKey(p, &store, fp, algo, control), QStringLiteral("unknown"));
+
+    // Das System-ssh kennt den Key -> bekannt; kennt es einen anderen -> geaendert.
+    net::ConnectControl none;
+    CHECK_EQ(net::decideHostKey(p, &store, fp, algo, none, [] { return 1; }),
+             QStringLiteral("known"));
+    bool changedThrown = false;
+    try {
+        net::decideHostKey(p, &store, fp, algo, none, [] { return -1; });
+    } catch (const net::HostKeyChangedError &) {
+        changedThrown = true;
+    }
+    CHECK(changedThrown);
+
+    // strict: unbekannt = Abbruch ohne Rueckfrage (kein HostKeyUnknownError).
+    p.knownHostsPolicy = QStringLiteral("strict");
+    bool strictUnknown = false, strictThrown = false;
+    try {
+        net::decideHostKey(p, &store, fp, algo, control);
+    } catch (const net::HostKeyUnknownError &) {
+        strictUnknown = true;
+    } catch (const net::HostKeyError &) {
+        strictThrown = true;
+    }
+    CHECK(strictThrown);
+    CHECK(!strictUnknown);
+
+    // Gespeichert: bekannt; anderer Key unter derselben Adresse: geaendert.
+    p.knownHostsPolicy = QStringLiteral("accept-new");
+    store.add(p.host, p.port, fp, algo);
+    CHECK_EQ(net::decideHostKey(p, &store, fp, algo, none), QStringLiteral("known"));
+    changedThrown = false;
+    try {
+        net::decideHostKey(p, &store, QStringLiteral("SHA256:boese"), algo, none);
+    } catch (const net::HostKeyChangedError &err) {
+        changedThrown = true;
+        CHECK_EQ(err.expected, fp);
+        CHECK_EQ(err.host, p.host);
+    }
+    CHECK(changedThrown);
+
+    // ignore bzw. ohne Speicher: keine Pruefung.
+    p.knownHostsPolicy = QStringLiteral("ignore");
+    CHECK_EQ(net::decideHostKey(p, &store, QStringLiteral("x"), algo, none),
+             QStringLiteral("ignored"));
+}
+
 TEST(fix_net, hostkeys_concurrent_add_and_get)
 {
     FixNetConfigGuard guard;

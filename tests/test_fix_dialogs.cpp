@@ -8,14 +8,20 @@
 
 #include "ncssh/config.hpp"
 #include "ncssh/core/filealarm.hpp"
+#include "ncssh/core/i18n.hpp"
 #include "ncssh/core/profiles.hpp"
 #include "ncssh/core/runner.hpp"
 #include "ncssh/core/secrets.hpp"
 #include "ncssh/core/shortcuts.hpp"
+#include "ncssh/gui/bridge.hpp"
+#include "ncssh/gui/server_manager.hpp"
 
+#include <QListWidget>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QPushButton>
 #include <QSet>
+#include <QSpinBox>
 #include <QTemporaryDir>
 
 using namespace ncssh::core;
@@ -162,6 +168,65 @@ TEST(fix_dialogs, default_shortcuts_do_not_clash_with_fixed_ones)
                                           "Doppeltes Standard-Kuerzel: " + def.key.toStdString());
         seen.insert(norm);
     }
+}
+
+TEST(fix_dialogs, server_manager_save_keeps_tunnel_presets)
+{
+    // Tunnel-Presets haben kein Formularfeld; Speichern in der Server-
+    // Verwaltung hat sie frueher verworfen (kein Auto-Start mehr).
+    ConfigDirGuard guard;
+    CHECK(guard.isValid());
+    const QString name = QStringLiteral("ncssh-selftest-tunnels-C3");
+    {
+        ProfileStore store;
+        ServerProfile p;
+        p.name = name;
+        p.host = QStringLiteral("example.com");
+        TunnelSpec t;
+        t.listenPort = 8080;
+        t.destHost = QStringLiteral("localhost");
+        t.destPort = 80;
+        p.tunnels.push_back(t);
+        store.upsert(p);
+        store.save();
+    }
+
+    ncssh::gui::AsyncBridge bridge;
+    ncssh::gui::ServerManagerDialog dlg(&bridge);
+    auto *list = dlg.findChild<QListWidget *>();
+    CHECK(list != nullptr);
+    QPushButton *save = nullptr;
+    for (QPushButton *b : dlg.findChildren<QPushButton *>())
+        if (b->text() == _t("Speichern"))
+            save = b;
+    CHECK(save != nullptr);
+    if (!list || !save)
+        return;
+    const auto items = list->findItems(name, Qt::MatchExactly);
+    CHECK_EQ(int(items.size()), 1);
+    if (items.isEmpty())
+        return;
+    list->setCurrentItem(items.first());
+    // Eine echte Aenderung mitspeichern — belegt, dass gespeichert wurde.
+    QSpinBox *port = nullptr;
+    for (QSpinBox *s : dlg.findChildren<QSpinBox *>())
+        if (s->maximum() == 65535)
+            port = s;
+    CHECK(port != nullptr);
+    if (port)
+        port->setValue(2222);
+    save->click();
+
+    ProfileStore reloaded;
+    reloaded.load();
+    const auto saved = reloaded.get(name);
+    CHECK(saved.has_value());
+    if (!saved)
+        return;
+    CHECK_EQ(saved->port, 2222);
+    CHECK_EQ(int(saved->tunnels.size()), 1);
+    if (!saved->tunnels.empty())
+        CHECK_EQ(saved->tunnels.front().listenPort, 8080);
 }
 
 TEST(fix_dialogs, profile_unique_name_and_rename)

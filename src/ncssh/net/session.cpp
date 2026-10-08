@@ -14,8 +14,11 @@ SSHSessionPtr SessionManager::open(const core::ServerProfile &profile,
     } catch (const HostKeyChangedError &err) {
         // Fingerprints festhalten, damit die Oberflaeche sie zeigen kann; der
         // Fehler wird unveraendert weitergereicht.
-        setMismatch({true, profile.host, profile.port, err.algorithm, err.expected,
-                     err.received});
+        setMismatch({true, err.host, err.port, err.algorithm, err.expected, err.received});
+        throw;
+    } catch (const HostKeyUnknownError &err) {
+        setMismatch({true, err.host, err.port, err.algorithm, QString(), err.fingerprint,
+                     /*unknown=*/true});
         throw;
     }
     m_sessions.push_back(session);

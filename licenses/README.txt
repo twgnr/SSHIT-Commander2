@@ -23,6 +23,12 @@ QR Code generator library by Project Nayuki (compiled into the executable)
     Used to show the QR code when setting up two-factor authentication.
     Source code: https://www.nayuki.io/page/qr-code-generator-library
 
+zlib (compiled into the executable; standard builds)
+    zlib License  ->  zlib-License.txt
+    Used for SSH compression.
+    Source code: https://zlib.net
+    Builds made with -DUSE_ZLIB_COMPRESSION=OFF contain no zlib.
+
 OpenSSL 3 (compiled into the executable; standard builds)
     Apache License 2.0  ->  OpenSSL-Apache-2.0.txt
     Source code: https://www.openssl.org

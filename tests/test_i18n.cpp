@@ -153,3 +153,29 @@ TEST(i18n, completeness_gate)
                 + proc.readAllStandardError().toStdString());
     }
 }
+
+TEST(i18n, user_guide_up_to_date)
+{
+    // docs/user-guide*.md entstehen aus dem eingebauten Handbuch und muessen
+    // nach jeder Aenderung daran neu erzeugt werden.
+    const QString python = findPython();
+    if (python.isEmpty()) {
+        std::printf("       (uebersprungen: kein Python im PATH fuer gen_user_guide.py)\n");
+        return;
+    }
+    QProcess proc;
+    proc.setWorkingDirectory(sourceRoot());
+    proc.start(python, {sourceRoot() + QStringLiteral("/tools/gen_user_guide.py"),
+                        QStringLiteral("--check")});
+    if (!proc.waitForFinished(120000)) {
+        ::ncssh::tests::reportFailure(__FILE__, __LINE__, "gen_user_guide.py lief in ein Timeout");
+        return;
+    }
+    if (proc.exitCode() != 0) {
+        ::ncssh::tests::reportFailure(
+            __FILE__, __LINE__,
+            std::string("Benutzerhandbuch veraltet:\n")
+                + proc.readAllStandardOutput().toStdString()
+                + proc.readAllStandardError().toStdString());
+    }
+}

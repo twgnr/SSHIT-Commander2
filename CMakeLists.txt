@@ -30,7 +30,40 @@ include(FetchContent)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(ENABLE_ZLIB_COMPRESSION OFF CACHE BOOL "" FORCE)
+
+# zlib fuer die SSH-Kompression (Profiloption "SSH-Kompression"). Wie qrcodegen
+# als feste Version mit Pruefsumme geladen und direkt als kleine statische
+# Bibliothek gebaut — zlibs eigenes CMake baute zusaetzlich eine DLL.
+# Offline: -DFETCHCONTENT_SOURCE_DIR_ZLIB=<entpacktes Archiv>.
+option(USE_ZLIB_COMPRESSION "SSH-Kompression (zlib) in libssh2 einbauen" ON)
+if(USE_ZLIB_COMPRESSION)
+    FetchContent_Declare(zlib
+        URL      https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
+        URL_HASH SHA256=9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23
+        SOURCE_SUBDIR do-not-add)   # zlibs CMakeLists.txt NICHT einbinden
+    FetchContent_MakeAvailable(zlib)
+    set(ZLIB_SSH_SOURCES adler32 compress crc32 deflate gzclose gzlib gzread gzwrite
+        infback inffast inflate inftrees trees uncompr zutil)
+    list(TRANSFORM ZLIB_SSH_SOURCES PREPEND "${zlib_SOURCE_DIR}/")
+    list(TRANSFORM ZLIB_SSH_SOURCES APPEND ".c")
+    add_library(zlib_ssh STATIC ${ZLIB_SSH_SOURCES})
+    target_include_directories(zlib_ssh SYSTEM PUBLIC "${zlib_SOURCE_DIR}")
+    target_compile_definitions(zlib_ssh PRIVATE _CRT_SECURE_NO_DEPRECATE _CRT_NONSTDC_NO_DEPRECATE)
+    # $<0:> verhindert den Konfigurations-Unterordner bei Multi-Config-Generatoren:
+    # libssh2 bekommt unten einen festen Dateipfad.
+    set_target_properties(zlib_ssh PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/zlib$<0:>")
+    # libssh2 sucht zlib per find_package(ZLIB) — auf diese Bibliothek lenken.
+    # Als Dateipfad, nicht als Target: libssh2 exportiert seine Targets, und ein
+    # nicht exportiertes Abhaengigkeits-Target liesse die Konfiguration scheitern.
+    set(ZLIB_INCLUDE_DIR "${zlib_SOURCE_DIR}" CACHE PATH "" FORCE)
+    set(ZLIB_LIBRARY
+        "${CMAKE_BINARY_DIR}/zlib/${CMAKE_STATIC_LIBRARY_PREFIX}zlib_ssh${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        CACHE FILEPATH "" FORCE)
+    set(ENABLE_ZLIB_COMPRESSION ON CACHE BOOL "" FORCE)
+else()
+    set(ENABLE_ZLIB_COMPRESSION OFF CACHE BOOL "" FORCE)
+endif()
 
 if(USE_OPENSSL_BACKEND)
     include(${CMAKE_SOURCE_DIR}/cmake/OpenSSLBackend.cmake)
@@ -56,6 +89,10 @@ FetchContent_Declare(libssh2
     GIT_TAG        libssh2-1.11.1
     GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(libssh2)
+if(USE_ZLIB_COMPRESSION)
+    # zlib_ssh.lib muss stehen, bevor gegen libssh2 gelinkt wird.
+    add_dependencies(libssh2_static zlib_ssh)
+endif()
 
 # QR-Code-Erzeuger (Project Nayuki, MIT) fuer den 2FA-Einrichtungsdialog.
 # Eine einzelne C++-Datei ohne eigenes CMake — als feste Version mit
@@ -94,6 +131,9 @@ target_link_libraries(ncssh PUBLIC
 # Statisches OpenSSL braucht zusaetzlich diese System-Libs.
 if(USE_OPENSSL_BACKEND)
     target_link_libraries(ncssh PUBLIC OpenSSL::Crypto)
+endif()
+if(USE_ZLIB_COMPRESSION)
+    target_link_libraries(ncssh PUBLIC zlib_ssh)
 endif()
 
 qt_add_executable(sshit-commander WIN32

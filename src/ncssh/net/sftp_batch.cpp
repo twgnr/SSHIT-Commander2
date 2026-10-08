@@ -4,8 +4,48 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QRegularExpression>
 
 namespace ncssh::net {
+
+QHash<QString, QString> builtinBatchVariables(const QDateTime &now)
+{
+    const QString today = now.toString(QStringLiteral("yyyy-MM-dd"));
+    const QString time = now.toString(QStringLiteral("HH-mm-ss"));
+    QHash<QString, QString> v;
+    v[QStringLiteral("heute")] = v[QStringLiteral("today")] = today;
+    v[QStringLiteral("jetzt")] = v[QStringLiteral("now")] = today + QLatin1Char('_') + time;
+    v[QStringLiteral("zeit")] = v[QStringLiteral("time")] = time;
+    v[QStringLiteral("jahr")] = v[QStringLiteral("year")] = now.toString(QStringLiteral("yyyy"));
+    v[QStringLiteral("monat")] = v[QStringLiteral("month")] = now.toString(QStringLiteral("MM"));
+    v[QStringLiteral("tag")] = v[QStringLiteral("day")] = now.toString(QStringLiteral("dd"));
+    return v;
+}
+
+QString expandBatchVariables(const QString &line, const QHash<QString, QString> &vars)
+{
+    static const QRegularExpression re(
+        QStringLiteral(R"re(\$(\$|\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*)))re"));
+    QString out;
+    qsizetype last = 0;
+    auto it = re.globalMatch(line);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        out += line.mid(last, m.capturedStart() - last);
+        if (m.captured(1) == QLatin1String("$")) {
+            out += QLatin1Char('$');
+        } else {
+            const QString name = m.captured(2).isEmpty() ? m.captured(3) : m.captured(2);
+            const auto value = vars.constFind(name.toLower());
+            if (value == vars.constEnd())
+                throw std::runtime_error(("unbekannte Variable $" + name).toStdString());
+            out += *value;
+        }
+        last = m.capturedEnd();
+    }
+    out += line.mid(last);
+    return out;
+}
 
 QStringList tokenizeBatchLine(const QString &line)
 {
@@ -66,6 +106,8 @@ BatchResult runSftpBatch(const QString &script, FileSystemProvider *local,
             onLog(line);
     };
 
+    // Ein Zeitpunkt fuer den ganzen Lauf: $jetzt ist in jeder Zeile gleich.
+    QHash<QString, QString> vars = builtinBatchVariables(QDateTime::currentDateTime());
     const QStringList lines = script.split(QLatin1Char('\n'));
     for (const QString &raw : lines) {
         if (cancel && cancel->isCancelled()) {
@@ -73,10 +115,22 @@ BatchResult runSftpBatch(const QString &script, FileSystemProvider *local,
             logLine(QStringLiteral("⚠ abgebrochen"));
             break;
         }
-        const QString line = raw.trimmed();
-        if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+        const QString rawLine = raw.trimmed();
+        if (rawLine.isEmpty() || rawLine.startsWith(QLatin1Char('#')))
             continue;
 
+        QString line;
+        try {
+            line = expandBatchVariables(rawLine, vars);
+        } catch (const std::exception &exc) {
+            ++res.failed;
+            logLine(QStringLiteral("✗ %1 — %2").arg(rawLine, QString::fromUtf8(exc.what())));
+            if (stopOnError) {
+                res.aborted = true;
+                break;
+            }
+            continue;
+        }
         const QStringList tok = tokenizeBatchLine(line);
         if (tok.isEmpty())
             continue;
@@ -86,6 +140,13 @@ BatchResult runSftpBatch(const QString &script, FileSystemProvider *local,
         try {
             if (cmd == QLatin1String("echo")) {
                 logLine(line.mid(4).trimmed());
+            } else if (cmd == QLatin1String("set")) {
+                static const QRegularExpression reName(QStringLiteral("^[A-Za-z_][A-Za-z0-9_]*$"));
+                if (argCount < 1 || !reName.match(tok[1]).hasMatch())
+                    throw std::runtime_error("set: Name fehlt oder ungültig (Buchstaben, Ziffern, _)");
+                const QString value = tok.mid(2).join(QLatin1Char(' '));
+                vars.insert(tok[1].toLower(), value);
+                logLine(QStringLiteral("✓ set %1 = %2").arg(tok[1], value));
             } else if (cmd == QLatin1String("cd")) {
                 if (argCount < 1)
                     throw std::runtime_error("cd: Pfad fehlt");

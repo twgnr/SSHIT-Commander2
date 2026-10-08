@@ -9,6 +9,7 @@
 #include "ncssh/core/runner.hpp"
 
 #include <QByteArray>
+#include <QHash>
 #include <QString>
 #include <atomic>
 #include <chrono>
@@ -46,13 +47,33 @@ public:
 class HostKeyChangedError : public HostKeyError {
 public:
     HostKeyChangedError(const QString &msg, QString expectedFp, QString receivedFp,
-                        QString keyAlgorithm)
+                        QString keyAlgorithm, QString keyHost, int keyPort)
         : HostKeyError(msg), expected(std::move(expectedFp)),
-          received(std::move(receivedFp)), algorithm(std::move(keyAlgorithm)) {}
+          received(std::move(receivedFp)), algorithm(std::move(keyAlgorithm)),
+          host(std::move(keyHost)), port(keyPort) {}
 
     QString expected;
     QString received;
     QString algorithm;
+    QString host;   // der betroffene Server (bei ProxyJump ggf. der Sprung-Host)
+    int port = 22;
+};
+
+// Unbekannter Host-Key unter "accept-new": Abbruch VOR der Authentifizierung.
+// Erst wenn der Nutzer den Fingerprint bestaetigt hat, verbindet die Oberflaeche
+// erneut — gemerkt (HostKeyStore) oder nur fuer diesmal (ConnectControl::
+// trustedOnce). So gehen keine Zugangsdaten an einen ungeprueften Server.
+class HostKeyUnknownError : public HostKeyError {
+public:
+    HostKeyUnknownError(const QString &msg, QString fp, QString keyAlgorithm, QString keyHost,
+                        int keyPort)
+        : HostKeyError(msg), fingerprint(std::move(fp)), algorithm(std::move(keyAlgorithm)),
+          host(std::move(keyHost)), port(keyPort) {}
+
+    QString fingerprint;
+    QString algorithm;
+    QString host;
+    int port = 22;
 };
 
 class SFTPFileSystem;
@@ -160,7 +181,22 @@ struct ConnectControl {
     // TCP-Aufbaus geprueft; ein laufender libssh2-Aufruf endet erst mit seinem
     // Timeout (die Oberflaeche verwirft das Ergebnis dann).
     std::shared_ptr<std::atomic_bool> cancelled;
+    // Vom Nutzer "nur diesmal" bestaetigte Fingerprints je "host:port". Ein
+    // unbekannter Key mit genau diesem Fingerprint gilt fuer diese Verbindung
+    // als bestaetigt (wird aber nicht gespeichert); jeder andere bricht ab.
+    QHash<QString, QString> trustedOnce;
 };
+// Schluessel fuer ConnectControl::trustedOnce.
+QString hostKeyId(const QString &host, int port);
+
+// Entscheidung der Host-Key-Pruefung (ohne Netz, testbar). Liefert den Status
+// ("known" | "unknown" = nur diesmal bestaetigt | "ignored") oder wirft
+// HostKeyChangedError, HostKeyUnknownError (accept-new, noch nicht bestaetigt)
+// bzw. HostKeyError (strict). openssh() wird nur bei Bedarf gefragt: 1 = das
+// System-ssh kennt den Key, -1 = es kennt einen anderen, 0 = kein Eintrag.
+QString decideHostKey(const ServerProfile &profile, HostKeyStore *hostkeys, const QString &fp,
+                      const QString &algo, const ConnectControl &control,
+                      const std::function<int()> &openssh = {});
 SSHSessionPtr connectSession(const ServerProfile &profile, HostKeyStore *hostkeys,
                              const ConnectControl &control);
 

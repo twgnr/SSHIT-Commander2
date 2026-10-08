@@ -115,6 +115,17 @@ void ProfileStore::upsert(const ServerProfile &profile)
     }
 }
 
+bool ProfileStore::touchLastConnected(const QString &name, const QString &timestamp)
+{
+    const auto it = std::find_if(m_profiles.begin(), m_profiles.end(),
+                                 [&](const ServerProfile &p) { return p.name == name; });
+    if (name.isEmpty() || it == m_profiles.end())
+        return false;
+    it->lastConnected = timestamp;
+    save();
+    return true;
+}
+
 // Ersetzt in einem JSON-Baum jedes "profile": oldName durch newName
 // (gespeicherte Tab-Zustaende: Sitzungswiederherstellung, Tab-Favoriten).
 static QJsonValue replaceProfileRefs(const QJsonValue &value, const QString &oldName,
