@@ -5,15 +5,19 @@
 #include "ncssh/core/command_params.hpp"
 #include "ncssh/gui/ansi.hpp"
 #include "ncssh/gui/bridge.hpp"
+#include "ncssh/gui/command_builder.hpp"
 #include "ncssh/gui/console_panel.hpp"
 #include "ncssh/gui/param_dialog.hpp"
 #include "ncssh/gui/style.hpp"
 #include "ncssh/gui/terminal_widget.hpp"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QCoreApplication>
 #include <QDeadlineTimer>
+#include <QDebug>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QStyle>
 #include <QTextBlock>
@@ -246,6 +250,64 @@ TEST(command_params, param_button_and_dialog_append_in_order)
     const int before = tree->topLevelItemCount();
     dlg.addHelpOptions(core::parseHelpOptions(QString::fromUtf8(kLsHelp)));
     CHECK_EQ(tree->topLevelItemCount(), before + 6);
+}
+
+TEST(command_params, builder_checkboxes_reach_preview)
+{
+    // Assistent der Befehlspalette: Haekchen muessen in der Vorschau landen
+    // (frueher kam der Flag-Text statt "an" bei render() an -> nie gesetzt).
+    const core::CommandSpec *wc = specStartingWith(core::catalog(), QStringLiteral("wc "));
+    CHECK(wc != nullptr);
+    if (!wc)
+        return;
+    gui::CommandBuilder builder(*wc, QStringLiteral("posix"));
+    auto *preview = builder.findChild<QPlainTextEdit *>();
+    CHECK(preview != nullptr);
+    const auto box = [&](const QString &flagValue) -> QCheckBox * {
+        for (const core::CommandParam &p : wc->params)
+            if (p.flagValue == flagValue)
+                for (QCheckBox *c : builder.findChildren<QCheckBox *>())
+                    if (c->text() == p.label)
+                        return c;
+        return nullptr;
+    };
+    QCheckBox *lines = box(QStringLiteral("-l"));
+    QCheckBox *bytes = box(QStringLiteral("-c"));
+    CHECK(lines != nullptr);
+    CHECK(bytes != nullptr);   // Bytes (-c) war nicht waehlbar
+    if (!preview || !lines || !bytes)
+        return;
+    CHECK_EQ(preview->toPlainText(), QStringLiteral("wc -l"));   // Vorgabe "an"
+    bytes->setChecked(true);
+    CHECK_EQ(preview->toPlainText(), QStringLiteral("wc -l -c"));
+    lines->setChecked(false);
+    CHECK_EQ(preview->toPlainText(), QStringLiteral("wc -c"));
+
+    // Jeder Schalter des Katalogs wirkt sich auf die Vorschau aus.
+    for (const core::CommandSpec &spec : core::catalog()) {
+        gui::CommandBuilder b(spec, spec.platform == QLatin1String("windows")
+                                        ? QStringLiteral("windows") : QStringLiteral("posix"));
+        auto *pv = b.findChild<QPlainTextEdit *>();
+        for (const core::CommandParam &p : spec.params) {
+            if (p.kind != QLatin1String("flag"))
+                continue;
+            QCheckBox *check = nullptr;
+            for (QCheckBox *c : b.findChildren<QCheckBox *>())
+                if (c->text() == (p.description.isEmpty() ? p.label : p.description))
+                    check = c;
+            CHECK(check != nullptr);
+            if (!pv || !check)
+                continue;
+            check->setChecked(false);
+            const QString off = pv->toPlainText();
+            check->setChecked(true);
+            const QString on = pv->toPlainText();
+            if (on == off || !on.contains(p.flagValue.trimmed()))
+                qWarning() << "Schalter ohne Wirkung:" << spec.templateText << p.name;
+            CHECK(on != off);
+            CHECK(on.contains(p.flagValue.trimmed()));
+        }
+    }
 }
 
 TEST(command_params, light_theme_makes_terminal_light_and_readable)

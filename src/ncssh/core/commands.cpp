@@ -355,10 +355,11 @@ void addPosixFilesText(std::vector<CS> &c)
     c.push_back(CS{
         .name = _t("wc — zählen"), .category = _t("Dateien"),
         .description = _t("Zählt Zeilen (-l), Wörter (-w), Bytes (-c)."),
-        .templateText = "wc {lines} {words} {path}",
+        .templateText = "wc {lines} {words} {bytes} {path}",
         .params = {
             CP{.name = "lines", .label = _t("Zeilen (-l)"), .kind = "flag", .defaultValue = "on", .flagValue = "-l"},
             CP{.name = "words", .label = _t("Wörter (-w)"), .kind = "flag", .flagValue = "-w"},
+            CP{.name = "bytes", .label = _t("Bytes (-c)"), .kind = "flag", .flagValue = "-c"},
             CP{.name = "path", .label = _t("Datei"), .required = true},
         },
         .example = "wc -l datei"});

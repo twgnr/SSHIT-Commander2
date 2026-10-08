@@ -135,12 +135,10 @@ QString CommandBuilder::buildCommand() const
         values.insert(it.key(), it.value()->text());
     for (auto it = m_choiceInputs.begin(); it != m_choiceInputs.end(); ++it)
         values.insert(it.key(), it.value()->currentText());
-    for (const core::CommandParam &param : m_spec.params) {
-        if (param.kind != QLatin1String("flag"))
-            continue;
-        auto *check = m_flagInputs.value(param.name, nullptr);
-        values.insert(param.name, (check && check->isChecked()) ? param.flagValue : QString());
-    }
+    // render() erwartet bei Schaltern An/Aus ("1"/"0") und setzt flagValue
+    // selbst ein — den Flag-Text hier zu uebergeben hiesse immer "aus".
+    for (auto it = m_flagInputs.begin(); it != m_flagInputs.end(); ++it)
+        values.insert(it.key(), it.value()->isChecked() ? QStringLiteral("1") : QStringLiteral("0"));
     QString cmd = core::render(m_spec, values);
     if (m_sudo && m_sudo->isChecked())
         cmd = core::wrapPrivilege(cmd, true, m_sudoUser->text().trimmed());

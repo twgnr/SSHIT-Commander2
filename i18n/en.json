@@ -331,6 +331,7 @@
   "Branch": "Branch",
   "Breit (/w)": "Wide (/w)",
   "Broadcast": "Broadcast",
+  "Bytes (-c)": "Bytes (-c)",
   "CIDR, Bereich oder Komma-Liste von IPs/Hostnamen": "CIDR, range or comma list of IPs/hostnames",
   "CVE / Info": "CVE / Info",
   "Chiffren": "Ciphers",
