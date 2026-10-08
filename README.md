@@ -5,7 +5,7 @@
 Two panes for local and remote directories, paired with a full SSH console and a
 real terminal. Written in C++20 with Qt 6 and libssh2.
 
-> **Version 1.0.7.** The application is covered by 382 automated tests, and the
+> **Version 1.0.8.** The application is covered by 382 automated tests, and the
 > SSH layer has been validated against a real OpenSSH server. Testing across a
 > wider range of servers is still outstanding — see
 > [Known limitations](#known-limitations).

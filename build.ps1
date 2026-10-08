@@ -134,7 +134,7 @@ $exe = Join-Path $build "sshit-commander.exe"
 if (-not (Test-Path $exe)) { throw "sshit-commander.exe nicht gefunden - Build fehlgeschlagen?" }
 
 # Version und Entwicklungsstufe aus der CMakeLists lesen - eine Quelle fuer
-# Programm und Paketname. Ergebnis z. B.: SSHIT-Commander-1.0.7-win64
+# Programm und Paketname. Ergebnis z. B.: SSHIT-Commander-1.0.8-win64
 # (mit Stufe: SSHIT-Commander-1.1.0-beta.1-win64)
 $cmakeFile = Join-Path $root "CMakeLists.txt"
 $version = (Select-String -Path $cmakeFile `
@@ -177,6 +177,11 @@ if (Test-Path (Join-Path $root "licenses")) {
     Copy-Item -Recurse (Join-Path $root "licenses") $stage
 } else {
     Write-Warning "Ordner licenses/ fehlt - das Paket erfuellt die LGPL-Auflagen nicht."
+}
+# Benutzerhandbuch (deutsch/englisch) und Screenshot — die README im Paket
+# verlinkt beide relativ unter docs/.
+if (Test-Path (Join-Path $root "docs")) {
+    Copy-Item -Recurse (Join-Path $root "docs") $stage
 }
 if (Test-Path (Join-Path $root "plugins\README.txt")) {
     New-Item -ItemType Directory -Force (Join-Path $stage "plugins") | Out-Null
