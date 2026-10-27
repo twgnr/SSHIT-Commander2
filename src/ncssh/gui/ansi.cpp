@@ -37,9 +37,19 @@ static QColor ansiColor(int n)
     return QColor(v, v, v);
 }
 
-AnsiRenderer::AnsiRenderer(QPlainTextEdit *editor) : m_editor(editor)
+AnsiRenderer::AnsiRenderer(QPlainTextEdit *editor)
+    : m_editor(editor), m_top(editor->document())
 {
+    // Der Anker steht am Blockanfang; Text, der genau dort eingefuegt wird
+    // (Schreiben in Spalte 0), darf ihn nicht hinter sich schieben.
+    m_top.setKeepPositionOnInsert(true);
     reset();
+}
+
+void AnsiRenderer::setScreenSize(int cols, int rows)
+{
+    m_cols = std::max(0, cols);
+    m_rows = std::max(0, rows);
 }
 
 QString AnsiRenderer::stripAnsi(const QString &text)
@@ -113,6 +123,10 @@ void AnsiRenderer::reset()
     m_stringLen = 0;
     m_col = 0;
     m_g0Graphics = m_g1Graphics = m_shiftOut = false;
+    // Neuer Bildschirm ab der letzten Zeile (neue Shell bzw. "Leeren").
+    m_up = 0;
+    m_top.setPosition(m_editor->document()->lastBlock().position());
+    m_topRow = 0;
 }
 
 QTextCharFormat AnsiRenderer::format() const
@@ -197,11 +211,14 @@ void AnsiRenderer::applySgr(const QString &params)
     }
 }
 
-// Zeilenmodell: Gearbeitet wird immer in der LETZTEN Zeile des Dokuments, an
-// der Spalte m_col. Frueher begann jeder Chunk am Dokumentende und Text wurde
-// EINGEFUEGT: Shells, die beim Bearbeiten mitten in der Zeile mit Rueckschritt
-// bzw. Cursor-Sequenzen zurueckgehen und den Rest neu schreiben (bash/readline,
-// PowerShell/PSReadLine via ConPTY), erzeugten so doppelte Zeichen.
+// Zeilenmodell: Gearbeitet wird in der Cursorzeile (m_up Zeilen ueber der
+// letzten) an der Spalte m_col; Text UEBERSCHREIBT wie in einem Terminal.
+// Frueher begann jeder Chunk am Dokumentende und Text wurde EINGEFUEGT:
+// Shells, die beim Bearbeiten mitten in der Zeile zurueckgehen und den Rest
+// neu schreiben (bash/readline, PowerShell/PSReadLine via ConPTY), erzeugten
+// so doppelte Zeichen. ConPTY springt dafuer mit ABSOLUTEN Positionen
+// (ESC[Zeile;SpalteH) — die brauchen das Bildschirmmodell unten, sonst wurde
+// aus "cd " beim Neuzeichnen "cdcd ".
 //
 // Spalten sind Anzeigespalten: ein CJK-Zeichen ist EIN Zeichen im Dokument,
 // belegt aber ZWEI Spalten (die Shell schickt dafuer zwei Rueckschritte).
@@ -236,14 +253,178 @@ int posForCol(const QString &line, int col)
 }
 }  // namespace
 
+QTextBlock AnsiRenderer::cursorBlock() const
+{
+    // Begrenzt: Zeilen kann auch jemand anderes entfernen (z. B. "Leeren").
+    const QTextDocument *doc = m_editor->document();
+    const int up = std::clamp(m_up, 0, doc->blockCount() - 1);
+    return doc->findBlockByNumber(doc->blockCount() - 1 - up);
+}
+
+int AnsiRenderer::rowsOf(const QTextBlock &block, bool isCursorBlock) const
+{
+    if (m_cols <= 0)
+        return 1;
+    int width = core::textWidth(block.text());
+    if (isCursorBlock && m_col > width)
+        width = m_col + 1;   // Cursor hinter dem Text belegt seine Zeile mit
+    return std::max(1, (width + m_cols - 1) / m_cols);
+}
+
+int AnsiRenderer::cursorRowInBlock(const QTextBlock &block) const
+{
+    if (m_cols <= 0)
+        return 0;
+    // Steht der Cursor genau am Ende einer vollen Zeile, bleibt er (wie im
+    // Terminal, "pending wrap") noch in dieser Zeile.
+    return std::min(m_col / m_cols, rowsOf(block, true) - 1);
+}
+
+void AnsiRenderer::appendLine(QTextCursor &cur)
+{
+    cur.movePosition(QTextCursor::End);
+    cur.insertText(QStringLiteral("\n"));
+}
+
+void AnsiRenderer::normalizeScreen()
+{
+    if (m_rows <= 0)
+        return;
+    // Von unten zaehlen, bis m_rows Zeilen beisammen sind oder die bisherige
+    // oberste Zeile erreicht ist — Aufwand hoechstens m_rows Bloecke.
+    const QTextBlock cursor = cursorBlock();
+    const QTextBlock top = m_top.block();
+    int acc = 0;
+    for (QTextBlock b = m_editor->document()->lastBlock(); b.isValid(); b = b.previous()) {
+        const int rows = rowsOf(b, b == cursor);
+        if (b == top) {
+            if (acc + rows - m_topRow > m_rows)
+                m_topRow = rows - (m_rows - acc);   // innerhalb des Blocks weitergerollt
+            return;
+        }
+        if (acc + rows >= m_rows) {
+            m_top.setPosition(b.position());
+            m_topRow = rows - (m_rows - acc);
+            return;
+        }
+        acc += rows;
+    }
+}
+
+int AnsiRenderer::cursorScreenRow() const
+{
+    const QTextBlock cursor = cursorBlock();
+    int row = 0;
+    int skip = m_topRow;
+    for (QTextBlock b = m_top.block(); b.isValid(); b = b.next()) {
+        if (b == cursor)
+            return row + std::max(0, cursorRowInBlock(b) - skip);
+        row += rowsOf(b, false) - skip;
+        skip = 0;
+    }
+    return 0;   // Cursor oberhalb des Bildschirms (sollte nicht vorkommen)
+}
+
+void AnsiRenderer::moveToScreenRow(QTextCursor &cur, int row, int termCol)
+{
+    if (m_rows > 0)
+        row = std::min(row, m_rows - 1);
+    row = std::max(0, row);
+    const QTextBlock cursor = cursorBlock();
+    QTextBlock target;
+    int rowInBlock = 0;
+    int remaining = row;
+    int skip = m_topRow;
+    for (QTextBlock b = m_top.block(); b.isValid(); b = b.next()) {
+        const int avail = rowsOf(b, b == cursor) - skip;
+        if (remaining < avail) {
+            target = b;
+            rowInBlock = skip + remaining;
+            break;
+        }
+        remaining -= avail;
+        skip = 0;
+    }
+    if (!target.isValid()) {
+        // Unterhalb der letzten Zeile: die Bildschirmzeilen dort sind leer.
+        for (int k = 0; k <= remaining; ++k)
+            appendLine(cur);
+        target = m_editor->document()->lastBlock();
+        rowInBlock = 0;
+    }
+    m_up = m_editor->document()->blockCount() - 1 - target.blockNumber();
+    m_col = rowInBlock * std::max(0, m_cols) + std::max(0, termCol);
+}
+
+void AnsiRenderer::eraseDisplay(QTextCursor &cur, int mode)
+{
+    QTextDocument *doc = m_editor->document();
+    if (mode == 2) {
+        // Bildschirm loeschen: der alte Inhalt bleibt im Rollpuffer, darunter
+        // beginnt ein neuer, leerer Bildschirm (wie Windows Terminal). Die
+        // Spalte bleibt; ConPTY setzt den Cursor danach ohnehin (ESC[H).
+        if (!doc->lastBlock().text().isEmpty())
+            appendLine(cur);
+        m_up = 0;
+        m_top.setPosition(doc->lastBlock().position());
+        m_topRow = 0;
+        return;
+    }
+    if (mode == 3) {
+        // Rollpuffer loeschen (clear/cls): alles oberhalb des Bildschirms.
+        const int topPos = m_top.block().position();
+        if (topPos > 0) {
+            cur.setPosition(0);
+            cur.setPosition(topPos, QTextCursor::KeepAnchor);
+            cur.removeSelectedText();
+        }
+        return;
+    }
+    const QTextBlock block = cursorBlock();
+    if (mode == 0) {
+        // Ab Cursor bis Bildschirmende: Zeilen darunter weg, Rest der Zeile weg.
+        if (m_up > 0) {
+            cur.setPosition(block.position() + block.length() - 1);
+            cur.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+            cur.removeSelectedText();
+            m_up = 0;
+        }
+        const QTextBlock b = cursorBlock();
+        const QString line = b.text();
+        if (m_col < core::textWidth(line)) {
+            cur.setPosition(b.position() + posForCol(line, m_col));
+            cur.setPosition(b.position() + int(line.size()), QTextCursor::KeepAnchor);
+            cur.removeSelectedText();
+        }
+    } else if (mode == 1) {
+        // Bildschirmanfang bis Cursor: Zeilen darueber leeren, Zeile bis Cursor
+        // mit Leerzeichen ueberschreiben.
+        for (QTextBlock b = m_top.block(); b.isValid() && b != block; b = b.next()) {
+            if (b.length() > 1) {
+                cur.setPosition(b.position());
+                cur.setPosition(b.position() + b.length() - 1, QTextCursor::KeepAnchor);
+                cur.removeSelectedText();
+            }
+        }
+        const QTextBlock b = cursorBlock();
+        const QString line = b.text();
+        const int n = std::min(m_col + 1, core::textWidth(line));
+        if (n > 0) {
+            cur.setPosition(b.position());
+            cur.setPosition(b.position() + posForCol(line, n), QTextCursor::KeepAnchor);
+            cur.insertText(QString(n, QLatin1Char(' ')), format());
+        }
+    }
+}
+
 void AnsiRenderer::placeCursor(QTextCursor &cur, bool pad)
 {
-    QTextBlock block = cur.document()->lastBlock();
+    QTextBlock block = cursorBlock();
     const int len = core::textWidth(block.text());
     if (pad && m_col > len) {
         cur.setPosition(block.position() + block.length() - 1);
         cur.insertText(QString(m_col - len, QLatin1Char(' ')), format());
-        block = cur.document()->lastBlock();
+        block = cursorBlock();
     }
     cur.setPosition(block.position() + posForCol(block.text(), m_col));
 }
@@ -257,7 +438,7 @@ void AnsiRenderer::writeText(QTextCursor &cur, const QString &textIn)
             ch = QChar(static_cast<char16_t>(core::decSpecialGraphics(ch.unicode())));
     }
     placeCursor(cur, /*pad=*/true);
-    const QTextBlock block = cur.document()->lastBlock();
+    const QTextBlock block = cursorBlock();
     const QString line = block.text();
     const int width = core::textWidth(text);
     const int start = posForCol(line, m_col);
@@ -271,8 +452,12 @@ void AnsiRenderer::writeText(QTextCursor &cur, const QString &textIn)
 
 void AnsiRenderer::newline(QTextCursor &cur)
 {
-    cur.movePosition(QTextCursor::End);
-    cur.insertText(QStringLiteral("\n"));
+    // Zeile darunter vorhanden (Cursor wurde hochgesetzt): nur hinunter;
+    // sonst neue Zeile anhaengen — der Bildschirm rollt dann ggf. mit.
+    if (m_up > 0)
+        --m_up;
+    else
+        appendLine(cur);
     m_col = 0;
 }
 
@@ -284,12 +469,44 @@ void AnsiRenderer::handleCsi(QTextCursor &cur, const QString &params, QChar fina
         const int v = params.section(QLatin1Char(';'), 0, 0).toInt(&ok);
         return (!ok || v <= 0) ? def : std::min(v, 9999);
     };
-    const QTextBlock block = cur.document()->lastBlock();
+    const auto num2 = [&params](int def) {   // zweiter Parameter (Spalte bei H)
+        bool ok = false;
+        const int v = params.section(QLatin1Char(';'), 1, 1).toInt(&ok);
+        return (!ok || v <= 0) ? def : std::min(v, 9999);
+    };
+    const QTextBlock block = cursorBlock();
     const QString line = block.text();
     const int len = core::textWidth(line);   // Zeilenlaenge in Spalten
-    // Dokumentposition einer Spalte der letzten Zeile.
+    // Dokumentposition einer Spalte der Cursorzeile.
     const auto at = [&](int col) { return block.position() + posForCol(line, col); };
+    // Erste Spalte der sichtbaren Zeile, in der der Cursor steht (Umbruch).
+    const int rowStart = cursorRowInBlock(block) * std::max(0, m_cols);
     const ushort f = final.unicode();
+    if (f == 'H' || f == 'f') {     // Cursor absolut (Zeile;Spalte, 1-basiert)
+        normalizeScreen();
+        moveToScreenRow(cur, num(1) - 1, num2(1) - 1);
+        return;
+    }
+    if (f == 'd') {                 // Zeile absolut, Spalte bleibt
+        normalizeScreen();
+        moveToScreenRow(cur, num(1) - 1, m_col - rowStart);
+        return;
+    }
+    if (f == 'A' || f == 'F') {     // hoch (F: an den Zeilenanfang)
+        normalizeScreen();
+        moveToScreenRow(cur, cursorScreenRow() - num(1), f == 'F' ? 0 : m_col - rowStart);
+        return;
+    }
+    if (f == 'B' || f == 'E') {     // runter (E: an den Zeilenanfang)
+        normalizeScreen();
+        moveToScreenRow(cur, cursorScreenRow() + num(1), f == 'E' ? 0 : m_col - rowStart);
+        return;
+    }
+    if (f == 'J') {                 // Bildschirm loeschen: 0 ab, 1 bis Cursor, 2 ganz, 3 Rollpuffer
+        normalizeScreen();
+        eraseDisplay(cur, params.isEmpty() ? 0 : params.toInt());
+        return;
+    }
     if (f == 'm') {
         applySgr(params);
     } else if (f == 'K') {  // Zeile loeschen: 0 = ab Cursor, 1 = bis Cursor, 2 = ganz
@@ -314,8 +531,8 @@ void AnsiRenderer::handleCsi(QTextCursor &cur, const QString &params, QChar fina
         m_col += num(1);
     } else if (f == 'D') {          // Cursor links
         m_col = std::max(0, m_col - num(1));
-    } else if (f == 'G' || f == '`') {  // Spalte absolut (1-basiert)
-        m_col = num(1) - 1;
+    } else if (f == 'G' || f == '`') {  // Spalte absolut (1-basiert) in der sichtbaren Zeile
+        m_col = rowStart + num(1) - 1;
     } else if (f == 'P') {          // Zeichen ab Cursor loeschen (Rest rueckt nach)
         if (m_col < len) {
             cur.setPosition(at(m_col));
@@ -335,8 +552,8 @@ void AnsiRenderer::handleCsi(QTextCursor &cur, const QString &params, QChar fina
             cur.insertText(QString(n, QLatin1Char(' ')), format());
         }
     }
-    // andere (Zeilen hoch/runter, Bildschirm loeschen) werden ignoriert — im
-    // Rollpuffer-Modus gibt es nur die laufende Zeile.
+    // andere (Rollbereiche, Zeilen einfuegen/loeschen …) werden ignoriert —
+    // die kommen praktisch nur auf dem Alternate-Screen vor (TerminalEmulator).
 }
 
 void AnsiRenderer::feed(const QString &textIn)
@@ -447,9 +664,9 @@ void AnsiRenderer::feed(const QString &textIn)
             continue;
         }
         if (ch == QLatin1Char('\r')) {
-            // Wagenruecklauf: nur an den Zeilenanfang — folgender Text
-            // ueberschreibt (Fortschrittsanzeigen, Prompt-Neuzeichnen).
-            m_col = 0;
+            // Wagenruecklauf: an den Anfang der sichtbaren Zeile — folgender
+            // Text ueberschreibt (Fortschrittsanzeigen, Prompt-Neuzeichnen).
+            m_col = cursorRowInBlock(cursorBlock()) * std::max(0, m_cols);
             ++i;
             continue;
         }

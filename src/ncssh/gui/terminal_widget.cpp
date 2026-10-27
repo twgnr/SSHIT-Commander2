@@ -513,6 +513,7 @@ void TerminalWidget::startLocal()
     m_shellKind = localShellKind();
     auto *backend = new LocalShellBackend(this);
     attachBackend(backend);
+    m_renderer->setScreenSize(columns(), rows());   // dieselbe Groesse wie das PTY
     backend->start(columns(), rows());
 }
 
@@ -526,6 +527,7 @@ void TerminalWidget::startRemote(const net::SSHSessionPtr &session)
         return;
     auto *backend = new RemoteShellBackend(m_bridge, this);
     attachBackend(backend);
+    m_renderer->setScreenSize(columns(), rows());
     backend->start(session, columns(), rows());
 }
 
@@ -696,6 +698,8 @@ void TerminalWidget::resizeEvent(QResizeEvent *event)
 
 void TerminalWidget::syncTerminalSize()
 {
+    if (m_renderer)
+        m_renderer->setScreenSize(columns(), rows());
     if (m_backend)
         m_backend->resize(columns(), rows());
     if (m_altScreen && m_emu) {
